@@ -1,0 +1,57 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: hello-openshift
+  namespace: hello-openshift
+  labels:
+    app: hello-openshift
+spec:
+  containers:
+    - name: hello-openshift
+      image: mirror.hub.mylab.com:8443/openshift/origin-hello-openshift:4.16
+      ports:
+        - containerPort: 8888
+      volumeMounts:
+        - name: luna-secret
+          mountPath: /app/cfg
+          readOnly: true
+      securityContext:
+        privileged: false
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        runAsUser: 1001
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: RuntimeDefault
+  initContainers:
+    - name: ubi-cp
+      image: mirror.hub.mylab.com:8443/ubi9/ubi:latest
+      command: ["sh", "-c"]
+      args:
+        - |
+          cat /mnt/keys/luna-server.pem > /app/cfg/luna-server.pem
+      volumeMounts:
+        - name: luna-server
+          mountPath: /mnt/keys
+          readOnly: true
+        - name: luna-secret
+          mountPath: /app/cfg
+          readOnly: false
+      securityContext:
+        privileged: false
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        runAsUser: 1001
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: RuntimeDefault
+  volumes:
+    - name: luna-server
+      secret:
+        secretName: luna-server
+    - name: luna-secret
+      emptyDir: {}

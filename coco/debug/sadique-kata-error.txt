@@ -1,0 +1,350 @@
+Name:                hello-openshift
+Namespace:           default
+Priority:            0
+Runtime Class Name:  kata-cc
+Service Account:     default
+Node:                dell-per7525-29.lab.eng.pek2.redhat.com/10.73.225.42
+Start Time:          Fri, 02 May 2025 18:41:25 +0800
+Labels:              app=hello-openshift
+Annotations:         k8s.ovn.org/pod-networks:
+                       {"default":{"ip_addresses":["10.128.0.39/23"],"mac_address":"0a:58:0a:80:00:27","gateway_ips":["10.128.0.1"],"routes":[{"dest":"10.128.0.0...
+                     k8s.v1.cni.cncf.io/network-status:
+                       [{
+                           "name": "ovn-kubernetes",
+                           "interface": "eth0",
+                           "ips": [
+                               "10.128.0.39"
+                           ],
+                           "mac": "0a:58:0a:80:00:27",
+                           "default": true,
+                           "dns": {}
+                       }]
+Status:              Pending
+IP:                  10.128.0.39
+IPs:
+  IP:  10.128.0.39
+Containers:
+  hello-openshift:
+    Container ID:    
+    Image:           ec2-54-179-36-116.ap-southeast-1.compute.amazonaws.com:8443/hello-openshift/origin-hello-openshift:4.16
+    Image ID:        
+    Port:            8888/TCP
+    Host Port:       0/TCP
+    SeccompProfile:  RuntimeDefault
+    State:           Waiting
+      Reason:        CreateContainerError
+    Ready:           False
+    Restart Count:   0
+    Environment:     <none>
+    Mounts:
+      /var/run/secrets/kubernetes.io/serviceaccount from kube-api-access-gz5t9 (ro)
+Conditions:
+  Type                        Status
+  PodReadyToStartContainers   True 
+  Initialized                 True 
+  Ready                       False 
+  ContainersReady             False 
+  PodScheduled                True 
+Volumes:
+  kube-api-access-gz5t9:
+    Type:                    Projected (a volume that contains injected data from multiple sources)
+    TokenExpirationSeconds:  3607
+    ConfigMapName:           kube-root-ca.crt
+    ConfigMapOptional:       <nil>
+    DownwardAPI:             true
+    ConfigMapName:           openshift-service-ca.crt
+    ConfigMapOptional:       <nil>
+QoS Class:                   BestEffort
+Node-Selectors:              node-role.kubernetes.io/master=
+Tolerations:                 node.kubernetes.io/not-ready:NoExecute op=Exists for 300s
+                             node.kubernetes.io/unreachable:NoExecute op=Exists for 300s
+Events:
+  Type     Reason          Age   From               Message
+  ----     ------          ----  ----               -------
+  Normal   Scheduled       118s  default-scheduler  Successfully assigned default/hello-openshift to dell-per7525-29.lab.eng.pek2.redhat.com
+  Normal   AddedInterface  117s  multus             Add eth0 [10.128.0.39/23] from ovn-kubernetes
+  Warning  Failed          49s   kubelet            Error: CreateContainer failed: failed to handle layer: hasher sha256: failed to unpack `/run/kata-containers/image/layers/1/usr/lib64/libbrotlicommon.so.1.0.6`
+
+Caused by:
+    0: failed to unpack `./usr/lib64/libbrotlicommon.so.1.0.6` into `/run/kata-containers/image/layers/1/usr/lib64/libbrotlicommon.so.1.0.6`
+    1: No space left on device (os error 28)
+
+Stack backtrace:
+   0: <unknown>
+   1: <unknown>
+   2: <unknown>
+   3: <unknown>
+   4: <unknown>
+   5: <unknown>
+   6: <unknown>
+   7: <unknown>
+   8: <unknown>
+   9: <unknown>
+  10: <unknown>
+  11: <unknown>
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: <unknown>
+  18: <unknown>
+  19: start_thread
+  20: clone3
+
+Stack backtrace:
+   0: <unknown>
+   1: <unknown>
+   2: <unknown>
+   3: <unknown>
+   4: <unknown>
+   5: <unknown>
+   6: <unknown>
+   7: <unknown>
+   8: <unknown>
+   9: <unknown>
+  10: <unknown>
+  11: <unknown>
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: <unknown>
+  18: start_thread
+  19: clone3
+
+Stack backtrace:
+   0: <unknown>
+   1: <unknown>
+   2: <unknown>
+   3: <unknown>
+   4: <unknown>
+   5: <unknown>
+   6: <unknown>
+   7: <unknown>
+   8: <unknown>
+   9: <unknown>
+  10: <unknown>
+  11: <unknown>
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: start_thread
+  18: clone3: unknown
+  Warning  Failed  42s  kubelet  Error: CreateContainer failed: failed to handle layer: hasher sha256: failed to unpack `/run/kata-containers/image/layers/8/usr/lib64/libcrypto.so.1.1.1k`
+
+Caused by:
+    0: failed to unpack `usr/lib64/libcrypto.so.1.1.1k` into `/run/kata-containers/image/layers/8/usr/lib64/libcrypto.so.1.1.1k`
+    1: No space left on device (os error 28)
+
+Stack backtrace:
+   0: <unknown>
+   1: <unknown>
+   2: <unknown>
+   3: <unknown>
+   4: <unknown>
+   5: <unknown>
+   6: <unknown>
+   7: <unknown>
+   8: <unknown>
+   9: <unknown>
+  10: <unknown>
+  11: <unknown>
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: <unknown>
+  18: <unknown>
+  19: start_thread
+  20: clone3
+
+Stack backtrace:
+   0: <unknown>
+   1: <unknown>
+   2: <unknown>
+   3: <unknown>
+   4: <unknown>
+   5: <unknown>
+   6: <unknown>
+   7: <unknown>
+   8: <unknown>
+   9: <unknown>
+  10: <unknown>
+  11: <unknown>
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: <unknown>
+  18: start_thread
+  19: clone3
+
+Stack backtrace:
+   0: <unknown>
+   1: <unknown>
+   2: <unknown>
+   3: <unknown>
+   4: <unknown>
+   5: <unknown>
+   6: <unknown>
+   7: <unknown>
+   8: <unknown>
+   9: <unknown>
+  10: <unknown>
+  11: <unknown>
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: start_thread
+  18: clone3: unknown
+  Warning  Failed  24s  kubelet  Error: CreateContainer failed: failed to handle layer: hasher sha256: failed to unpack `/run/kata-containers/image/layers/13/usr/share/zoneinfo/posix/America/Rainy_River`
+
+Caused by:
+    0: failed to unpack `./usr/share/zoneinfo/posix/America/Rainy_River` into `/run/kata-containers/image/layers/13/usr/share/zoneinfo/posix/America/Rainy_River`
+    1: No space left on device (os error 28)
+
+Stack backtrace:
+   0: <unknown>
+   1: <unknown>
+   2: <unknown>
+   3: <unknown>
+   4: <unknown>
+   5: <unknown>
+   6: <unknown>
+   7: <unknown>
+   8: <unknown>
+   9: <unknown>
+  10: <unknown>
+  11: <unknown>
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: <unknown>
+  18: <unknown>
+  19: start_thread
+  20: clone3
+
+Stack backtrace:
+   0: <unknown>
+   1: <unknown>
+   2: <unknown>
+   3: <unknown>
+   4: <unknown>
+   5: <unknown>
+   6: <unknown>
+   7: <unknown>
+   8: <unknown>
+   9: <unknown>
+  10: <unknown>
+  11: <unknown>
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: <unknown>
+  18: start_thread
+  19: clone3
+
+Stack backtrace:
+   0: <unknown>
+   1: <unknown>
+   2: <unknown>
+   3: <unknown>
+   4: <unknown>
+   5: <unknown>
+   6: <unknown>
+   7: <unknown>
+   8: <unknown>
+   9: <unknown>
+  10: <unknown>
+  11: <unknown>
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: start_thread
+  18: clone3: unknown
+  Normal   Pulled  12s (x4 over 70s)  kubelet  Container image "ec2-54-179-36-116.ap-southeast-1.compute.amazonaws.com:8443/hello-openshift/origin-hello-openshift:4.16" already present on machine
+  Warning  Failed  9s                 kubelet  Error: CreateContainer failed: failed to handle layer: hasher sha256: failed to unpack `/run/kata-containers/image/layers/17/usr/share/cracklib/pw_dict.pwd`
+
+Caused by:
+    0: failed to unpack `./usr/share/cracklib/pw_dict.pwd` into `/run/kata-containers/image/layers/17/usr/share/cracklib/pw_dict.pwd`
+    1: No space left on device (os error 28)
+
+Stack backtrace:
+   0: <unknown>
+   1: <unknown>
+   2: <unknown>
+   3: <unknown>
+   4: <unknown>
+   5: <unknown>
+   6: <unknown>
+   7: <unknown>
+   8: <unknown>
+   9: <unknown>
+  10: <unknown>
+  11: <unknown>
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: <unknown>
+  18: <unknown>
+  19: start_thread
+  20: clone3
+
+Stack backtrace:
+   0: <unknown>
+   1: <unknown>
+   2: <unknown>
+   3: <unknown>
+   4: <unknown>
+   5: <unknown>
+   6: <unknown>
+   7: <unknown>
+   8: <unknown>
+   9: <unknown>
+  10: <unknown>
+  11: <unknown>
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: <unknown>
+  18: start_thread
+  19: clone3
+
+Stack backtrace:
+   0: <unknown>
+   1: <unknown>
+   2: <unknown>
+   3: <unknown>
+   4: <unknown>
+   5: <unknown>
+   6: <unknown>
+   7: <unknown>
+   8: <unknown>
+   9: <unknown>
+  10: <unknown>
+  11: <unknown>
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: start_thread
+  18: clone3: unknown

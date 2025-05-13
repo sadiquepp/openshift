@@ -1,0 +1,32 @@
+apiVersion: v1alpha1
+kind: AgentConfig
+metadata:
+  name: sno-cluster
+rendezvousIP: 192.168.122.99 
+hosts:
+  - hostname: worker1
+    interfaces:
+      - name: enp1s0
+        macAddress: 52:54:00:e2:54:99 
+    networkConfig:
+      interfaces:
+        - name: enp1s0
+          type: ethernet
+          state: up
+          mac-address: 52:54:00:e2:54:99
+          ipv4:
+            enabled: true
+            address:
+              - ip: 192.168.122.99 
+                prefix-length: 24 
+            dhcp: false
+      dns-resolver:
+        config:
+          server:
+            - 192.168.122.1
+      routes:
+        config:
+          - destination: 0.0.0.0/0
+            next-hop-address: 192.168.122.1 
+            next-hop-interface: enp1s0
+            table-id: 254
