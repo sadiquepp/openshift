@@ -1,0 +1,23 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "VisualEditor0",
+            "Effect": "Allow",
+            "Action": [
+                "iam:DeleteAccessKey",
+                "iam:SimulatePrincipalPolicy",
+                "iam:GetUserPolicy",
+                "iam:PutUserPolicy",
+                "iam:DeleteUserPolicy",
+                "iam:DeleteUser",
+                "iam:GetUser",
+                "iam:CreateUser",
+                "iam:TagUser",
+                "iam:CreateAccessKey",
+                "iam:ListAccessKeys"
+            ],
+            "Resource": "*"
+        }
+    ]
+}
