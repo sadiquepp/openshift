@@ -38,20 +38,32 @@ oc patch OperatorHub cluster --type json -p '[{"op": "add", "path": "/spec/disab
 
 Install From OpenShift GUI by following the default steps to install an Operator.
 
+* Set trustee version 0.2.0 or 0.3.0
+
+```
+export TRUSTEE_VERSION="0.3.0"
+```
 Or Install from CLI.
 * Create a Namespace, OperatorGorup and Subscription.
 
 ```
-oc create -f trustee/ns.yaml
-oc create -f trustee/og.yaml
-oc create -f trustee/subscription.yaml
+oc create -f trustee/${TRUSTEE_VERSION}/ns.yaml
+oc create -f trustee/${TRUSTEE_VERSION}/og.yaml
+oc create -f trustee/${TRUSTEE_VERSION}/subscription.yaml
 ```
 * For disconnected environment, installation of operator may fail which requires editing csv and changing the URL for registry.redhat.io/openshift4/ose-kube-rbac-proxy-rhel9 to use the @sha256 which can be obtained from mirror registry.
 
 * Patch the csv to specify image for Trustee.
+
+For Trustee 0.2.0
 ```
 export TRUSTEE_IMAGE=<mirror-registtry-url:/openshift_sandboxed_containers/kbs:v0.10.1
 oc patch -n trustee-operator-system clusterserviceversion.operators.coreos.com/trustee-operator.v0.2.0 --type=json -p="[{"op": "replace","path": "/spec/install/spec/deployments/0/spec/template/spec/containers/1/env/1/value","value": "$TRUSTEE_IMAGE"}]"
+```
+For Trustee 0.3.0
+```
+export TRUSTEE_IMAGE="<mirror-registtry-url:/redhat-user-workloads/ose-osc-tenant/trustee/trustee:345aef3985efea5d4f91ffbffb597cb44087b96a"
+oc patch -n trustee-operator-system clusterserviceversion.operators.coreos.com/trustee-operator.v0.3.0 --type=json -p="[{"op": "replace","path": "/spec/install/spec/deployments/0/spec/template/spec/containers/0/env/1/value","value": "$TRUSTEE_IMAGE"}]"
 ```
 * Create secrets
 
@@ -66,17 +78,17 @@ oc create secret generic kbs-auth-public-key --from-file=publicKey -n trustee-op
 
 * Create KBS configmap
 ```
-oc create -f trustee/kbs-cm.yaml
+oc create -f trustee/${TRUSTEE_VERSION}/kbs-cm.yaml
 ```
 
 * Create RVPS configmap
 ```
-oc create -f trustee/rvps-cm.yaml
+oc create -f trustee/${TRUSTEE_VERSION}/rvps-cm.yaml
 ```
 
 * Create resource policy configmap
 ```
-oc create -f trustee/resource-policy-cm.yaml
+oc create -f trustee/${TRUSTEE_VERSION}/resource-policy-cm.yaml
 ```
 
 * Create few secrets to serve via Trustee. Create kbsres1 secret only if it doesn't exist. This is just an example. May need to create different secrets for application use cases.
@@ -86,7 +98,7 @@ oc create secret generic kbsres1 --from-literal key1=res1val1 -n trustee-operato
 
 * Create KBSConfig. Update the HTTP_PROXY, HTTPS_PROXY and NO_PROXY variables if needed and uncomment proxy lines including KbsEnvVars if proxy needs to be configured to reach AMD site.
 ```
-oc create -f trustee/kbsconfig.yaml
+oc create -f trustee/${TRUSTEE_VERSION}/kbsconfig.yaml
 ```
 # Install OSC and Configure CoCo
 
