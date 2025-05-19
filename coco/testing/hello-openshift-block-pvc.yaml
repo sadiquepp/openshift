@@ -1,0 +1,60 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: hello-openshift
+  namespace: hello-openshift
+  labels:
+    app: hello-openshift
+spec:
+  runtimeClassName: kata
+  containers:
+    - name: hello-openshift
+      image: mirror.hub.mylab.com:8443/openshift/origin-hello-openshift:4.16
+      ports:
+        - containerPort: 8888
+      volumeDevices:
+        - name: luna-server
+          devicePath: /dev/sda
+      command: ["/bin/sh", "-c"]
+      args:
+        - | 
+          set -e
+          mkdir -p /mnt/storage
+          mount /dev/sda /mnt/storage
+          /hello-openshift
+      securityContext:
+        privileged: true
+        runAsUser: 0
+  initContainers:
+  - name: format-disk
+    image: mirror.hub.mylab.com:8443/rh-ee-chbutler/ubi-storage-util:latest
+    securityContext:
+      privileged: true # scope down!!!
+    command: ["/bin/sh", "-c"]
+    args:
+      - |
+        set -e
+        if ! blkid /dev/sda; then
+          echo "creating block device"
+          mkfs.xfs /dev/sda
+        fi
+    volumeDevices:
+      - name: luna-server
+        devicePath: /dev/sda
+  volumes:
+    - name: luna-server
+      persistentVolumeClaim:
+        claimName: kata-claim
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kata-claim
+spec:
+  storageClassName: "local-sc2"
+  accessModes:
+    - ReadWriteOnce
+  volumeMode: Block  # Critical for raw block access
+  resources:
+    requests:
+      storage: 20Gi
