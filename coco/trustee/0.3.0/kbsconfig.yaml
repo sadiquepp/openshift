@@ -24,4 +24,4 @@ spec:
   #   kbsTdxConfigMapName: tdx-config
 
   # Override attestation policy (optional)
-  # kbsAttestationPolicyConfigMapName: attestation-policy
+  kbsAttestationPolicyConfigMapName: attestation-policy

@@ -62,7 +62,7 @@ oc patch -n trustee-operator-system clusterserviceversion.operators.coreos.com/t
 ```
 For Trustee 0.3.0
 ```
-export TRUSTEE_IMAGE="<mirror-registtry-url:/redhat-user-workloads/ose-osc-tenant/trustee/trustee:345aef3985efea5d4f91ffbffb597cb44087b96a"
+export TRUSTEE_IMAGE="<mirror-registtry-url:/bpradipt/kbs:v0.12.0-offline-genoa-embedded"
 oc patch -n trustee-operator-system clusterserviceversion.operators.coreos.com/trustee-operator.v0.3.0 --type=json -p="[{"op": "replace","path": "/spec/install/spec/deployments/0/spec/template/spec/containers/0/env/1/value","value": "$TRUSTEE_IMAGE"}]"
 ```
 * Create secrets
@@ -91,6 +91,10 @@ oc create -f trustee/${TRUSTEE_VERSION}/rvps-cm.yaml
 oc create -f trustee/${TRUSTEE_VERSION}/resource-policy-cm.yaml
 ```
 
+* Only for Trustee 0.3.0. Create attestation Policy ConfigMap.
+```
+oc create -f trustee/${TRUSTEE_VERSION}/attestation-policy.yaml
+```
 * Create few secrets to serve via Trustee. Create kbsres1 secret only if it doesn't exist. This is just an example. May need to create different secrets for application use cases.
 ```
 oc create secret generic kbsres1 --from-literal key1=res1val1 -n trustee-operator-system
