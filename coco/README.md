@@ -62,7 +62,7 @@ oc patch -n trustee-operator-system clusterserviceversion.operators.coreos.com/t
 ```
 For Trustee 0.3.0
 ```
-export TRUSTEE_IMAGE="<mirror-registtry-url:/bpradipt/kbs:v0.12.0-offline-genoa-embedded"
+export TRUSTEE_IMAGE="<mirror-registtry-url:/location_/kbs:version"
 oc patch -n trustee-operator-system clusterserviceversion.operators.coreos.com/trustee-operator.v0.3.0 --type=json -p="[{"op": "replace","path": "/spec/install/spec/deployments/0/spec/template/spec/containers/0/env/1/value","value": "$TRUSTEE_IMAGE"}]"
 ```
 * Create secrets
