@@ -6,7 +6,7 @@ metadata:
   labels:
     app: storage-unencrypted
 spec:
-  runtimeClassName: kata
+  runtimeClassName: kata-cc
   shareProcessNamespace: true # This is critical to allow access to containers 
   containers:
   - name: hello-openshift
