@@ -1,0 +1,35 @@
+apiVersion: v1
+baseDomain: hub.mylab.com
+compute:
+- name: worker
+  replicas: 0
+controlPlane:
+  name: master
+  replicas: 1
+metadata:
+  name: sno
+networking:
+  clusterNetwork:
+  - cidr: 10.128.0.0/14
+    hostPrefix: 23
+  machineNetwork:
+  - cidr: 192.168.122.0/24
+  networkType: OVNKubernetes
+  serviceNetwork:
+  - 172.30.0.0/16
+platform:
+  none: {}
+#bootstrapInPlace:
+#  installationDisk: '/dev/disk/by-path/pci-0000:04:00.0'
+pullSecret: '{"auths":{"mirror.hub.mylab.com:8443": {"auth": "base64 of username:password"} }}'
+imageContentSources:
+- mirrors:
+  - mirror.hub.mylab.com:8443/openshift/release-images
+  source: quay.io/openshift-release-dev/ocp-release
+- mirrors:
+  - mirror.hub.mylab.com:8443/openshift/release
+  source: quay.io/openshift-release-dev/ocp-v4.0-art-dev
+sshKey: |
+additionalTrustBundle: |
+    -----BEGIN CERTIFICATE-----
+    -----END CERTIFICATE-----

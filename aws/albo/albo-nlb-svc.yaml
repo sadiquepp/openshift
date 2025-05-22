@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: hello-openshift-nlb
+  namespace: hello-world
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: external
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: instance
+    service.beta.kubernetes.io/aws-load-balancer-scheme: internal
+spec:
+  loadBalancerSourceRanges:
+  - 172.16.0.0/16
+  - 172.17.0.0/16
+  ports:
+    - port: 31446
+      targetPort: 8080
+      protocol: TCP
+      nodePort: 31446
+      name: port1
+    - port: 31447
+      targetPort: 8888
+      protocol: TCP
+      nodePort: 31447
+      name: port2
+  type: LoadBalancer
+  selector:
+    deployment: hello-openshift
