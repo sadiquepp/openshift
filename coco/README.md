@@ -3,11 +3,7 @@
 # Install Disconnected SNO
 
 * Set up mirror registry for disconnected SNO. An example ImageSetConfiguration can be found at imageset-config.yaml
-Below Images needs to be mirrored explicitly.
-```
-  - name: quay.io/openshift_sandboxed_containers/rhcos-layer/ocp-4.16:snp-0.1.0
-  - name: quay.io/openshift_sandboxed_containers/kbs:v0.10.1
-```
+
 * Develop install-config.yaml using the example given. Update baseDomain, machineNetwork, installationDisk, pullSecret, imageContentSource, sshKey and additionalTrustBundle as needed.
 
 * Develop agent-config.yaml using the example given. Update rendezvousIP, interface name, macAddress and other details appropriately.
