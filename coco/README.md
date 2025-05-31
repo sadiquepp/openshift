@@ -233,7 +233,7 @@ oc exec -it ocp-cc-pod -- curl -s http://127.0.0.1:8006/cdh/resource/default/kbs
 
 # Support Mirror Registry with CustomCA and Authentication - OCP 4.16 only
 
-* Do not follow this procedure for OCP-4.18. Follow the procedure to rebuild the rhcoc-layer image instead available at https://github.com/openshift/confidential-compute-artifacts/tree/main/rhcos-layer/initrd and then use that rebuild rhcos-layer image in the configmap
+* Do not follow this procedure for OCP-4.18. Follow the procedure to rebuild the rhcoc-layer image instead available at https://github.com/sadiquepp/openshift/tree/main/coco#rebuild-rhcos-layer-image-to-inject-custom-ca-and-registry-auth---ocp-418-only and then use that rebuild rhcos-layer image in the configmap
 
 * Delete all the pods that use runtime class "kata" or "kata-cc"
 
