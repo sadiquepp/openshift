@@ -334,3 +334,62 @@ oc apply -f osc/set-kernel-parameter-kata-agent.yaml
 ```
 io.katacontainers.config.hypervisor.default_memory: "4096"
 ```
+
+# Rebuild RHCOS Layer Image to Inject custom CA and Registry Auth - OCP 4.18 Only
+
+* By default coco baremtal rhcos layer image only supports unauthenticated mirror registry that uses certificates signed by a Public CA. To support authenticated mirror registry that uses a certificate singed by internal corporate CA, both authentication credentials and Coporate CA certificate needs to be injected to the initrd within the layer image by rebuilding the image. Follow the below steps for that.
+
+* Mirror original rhcos layer image to mirror registry
+
+```
+quay.io/openshift_sandboxed_containers/rhcos-layer/ocp-4.18:snp-0.2.0
+```
+* Extract the pull secret and keep it handy for use in a later step.
+```
+oc get secrets -n openshift-config pull-secret -o jsonpath="{.data.\.dockerconfigjson}" | base64 -d > auth.json
+```
+* Follow below steps on RHEL node with podman or using oc debug.
+
+* Combine all the CA certs to a single file 
+
+* If additionalTrustBundle: is used in install-config.yaml, easiest way is to locat it on the node at /etc/pki/ca-trust/source/anchors/openshift-config-user-ca-bundle.crt. If no, create the file manually.
+
+```
+mkdir /tmp/rhcos-layer-image-custom
+cat cert1.crt cert2.crt > tls.crt
+
+or (only works on oc debug session) 
+
+cp /etc/pki/ca-trust/source/anchors/openshift-config-user-ca-bundle.crt tls.crt
+```
+* Add registry auth details to the /tmp/rhcos-layer-image-custom. The content of auth.json is the pull secret extracted in previous step. Can use vi and copy paste the pull secret if the file is not on the node.
+
+* Download the Containerfile from https://raw.githubusercontent.com/openshift/confidential-compute-artifacts/refs/heads/main/rhcos-layer/initrd/Containerfile
+
+* Build the new layer image. Specify the source image
+
+```
+export RHCOS_BASE_IMAGE="<mirror_registry>/openshift_sandboxed_containers/rhcos-layer/ocp-4.18:snp-0.2.0"
+```
+
+* Set the name of the new layer image.
+```
+export RHCOS_NEW_IMAGE="<mirror_registry>/openshift_sandboxed_containers/rhcos-layer/ocp-4.18-ca-auth:snp-0.2.0"
+```
+
+* Build the image. Ensure you have the tls.crt and auth.json files in the current directory along with the Containerfile.
+
+```
+sudo podman build --build-arg RHCOS_COCO_IMAGE=$RHCOS_BASE_IMAGE \
+             --build-arg CA_CERTS_FILE=tls.crt \
+             --build-arg REGISTRY_AUTH_FILE=auth.json \
+             --env CA_CERTS_FILE=tls.crt \
+             --env REGISTRY_AUTH_FILE=auth.json \
+             -t $RHCOS_NEW_IMAGE -f Containerfile .
+```
+
+* Push the image to the registry
+
+```
+podman push <mirror_registry>/openshift_sandboxed_containers/rhcos-layer/ocp-4.18-ca-auth:snp-0.2.0 
+```
