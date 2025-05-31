@@ -118,7 +118,7 @@ oc create -f osc/subscription.yaml
 ```
 oc create -f osc/osc-fg-cm.yaml
 ```
-* For OCP 4.18 - Follow the procedure available at https://github.com/openshift/confidential-compute-artifacts/tree/main/rhcos-layer/initrd to rebuild the rhcos-layer image to inject customer CA and registry authentication, push the rebuild rhcos-layer image to mirror registry and then use that rebuilt rhcos-layer image in the configmap below.
+* For OCP 4.18 - Follow the procedure available at https://github.com/sadiquepp/openshift/tree/main/coco#rebuild-rhcos-layer-image-to-inject-custom-ca-and-registry-auth---ocp-418-only to rebuild the rhcos-layer image to inject customer CA and registry authentication, push the rebuilt rhcos-layer image to mirror registry and then use that rebuilt rhcos-layer image in the configmap below.
 
 * Create Layered Image FG ConfigMap. Update the Image location to local mirror for disconnected environment.
 
@@ -231,7 +231,7 @@ oc project default
 oc exec -it ocp-cc-pod -- curl -s http://127.0.0.1:8006/cdh/resource/default/kbsres1/key1 && echo ""
 ```
 
-# Support Mirror Registry with CustomCA and Authentication
+# Support Mirror Registry with CustomCA and Authentication - OCP 4.16 only
 
 * Do not follow this procedure for OCP-4.18. Follow the procedure to rebuild the rhcoc-layer image instead available at https://github.com/openshift/confidential-compute-artifacts/tree/main/rhcos-layer/initrd and then use that rebuild rhcos-layer image in the configmap
 
