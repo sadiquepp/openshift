@@ -394,7 +394,7 @@ sudo podman build --build-arg RHCOS_COCO_IMAGE=$RHCOS_BASE_IMAGE \
 podman push <mirror_registry>/openshift_sandboxed_containers/rhcos-layer/ocp-4.18-ca-auth:snp-0.2.0 
 ```
 
-# Rebuild Trustee Image to Embedd SNP/EV node certs for disconnected attestation
+# Rebuild Trustee Image to Embedd SNP/SEV node certs for disconnected attestation
 
 * Mirror the base image and support image to the local mirror.
 
