@@ -508,7 +508,7 @@ RUN mkdir -p /etc/kbs/snp/ek
 
 COPY ek/genoa/* /etc/kbs/snp/ek/
 ```
-* If the trustee manages milan system copy the milan certs also.
+* If the trustee manages milan system copy the milan certs and change the KBS_IMAGE to use milan image.
 
 * Build a new image that includes the certs.
 
