@@ -417,7 +417,7 @@ echo "VCEK_BASE_URL: $vcek_base_url_$nodename.txt"
 ```
 * Make sure that it shows a URL like below.
 ```
-https://kdsintf.amd.com/vcek/v1/Genoa/126A06A956658EF040D5DF52D438BB78DBB8E8C1C6244B420513B00ECCF1E6E2456C925FD913E8F5A80C209F83052077871919E4F1EBB62B296B36E084B57095
+https://kdsintf.amd.com/vcek/v1/Genoa/126A06A956658EF040D5DF52D438BB78DBB8E8C1C6244B420513B00ECCF1E6P2556C926FD913N8F5A80C209M83042077871919E4F1EBB62B296B36E084B57096
 ```
 
 * Get microcode details. Create a CoCo pod using the following manifest. Note the nodeName attribute to specify the node name.
