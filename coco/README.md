@@ -364,7 +364,7 @@ cp /etc/pki/ca-trust/source/anchors/openshift-config-user-ca-bundle.crt tls.crt
 ```
 * Add registry auth details to the /tmp/rhcos-layer-image-custom. The content of auth.json is the pull secret extracted in previous step. Can use vi and copy paste the pull secret if the file is not on the node.
 
-* Download the Containerfile from https://raw.githubusercontent.com/openshift/confidential-compute-artifacts/refs/heads/main/rhcos-layer/initrd/Containerfile
+* Download the Containerfile osc/Containerfile
 
 * Build the new layer image. Specify the source image
 
