@@ -175,7 +175,7 @@ export trustee_url="Trustee URL"
 
 * Set Kernel Paratmer variable
 ```
-export kernel_params="agent.aa_kbc_params=cc_kbc::$trustee_url"
+export kernel_params="agent.aa_kbc_params=cc_kbc::$trustee_url agent.image_registry_auth=file:///.docker/config.json"
 ```
 * Set the base64 into a variable called source
 ```
