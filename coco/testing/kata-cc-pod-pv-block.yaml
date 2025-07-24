@@ -1,0 +1,104 @@
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: storage-unencrypted
+  labels:
+    app: storage-unencrypted
+spec:
+  runtimeClassName: kata-cc
+  shareProcessNamespace: true # This is critical to allow access to containers 
+  containers:
+  - name: hello-openshift
+    env:
+      - name: DATA_PROC_DIR
+        value: 'find /proc -maxdepth 1 -type d -regex "/proc/[0-9]*" | head -2 | tail -1' # finds the process for the sidecar
+      - name: DATA_DIR # change this dir to meet your apps's requirements.
+        value: /data
+    lifecycle:
+      postStart:
+        exec:
+          command:
+            - /bin/sh
+            - -c
+            - |
+              chmod ug+w $(dirname $DATA_DIR)
+              ln -s $(eval $DATA_PROC_DIR)/root/mnt/storage $DATA_DIR 
+    securityContext: 
+      privileged: true # security must be elevated, however, it's within the kata vim
+    image: mirror.hub.mylab.com:8443/openshift/origin-hello-openshift:4.16
+    ports:
+      - containerPort: 8888
+  initContainers: # note. If you have init containers already for the container *append* them to this list.
+  - name: format-disk
+    image: mirror.hub.mylab.com:8443/rh-ee-chbutler/ubi-storage-util:latest
+    securityContext:
+      privileged: true 
+    restartPolicy: Always  # Native sidecar so it doesn't block boot
+    command: ["/bin/sh", "-c"]
+    args:
+      - |
+        set -e # error out
+        DEVICE=/dev/block-device
+        TARGETPOINT=/mnt/storage
+        if ! blkid $DEVICE; then
+          echo "creating block device"
+          mkfs.xfs $DEVICE
+        fi
+        if ! mount | grep -q "$DEVICE"; then
+            mkdir -p "$TARGETPOINT"
+            mount "$DEVICE" "$TARGETPOINT"
+            echo "$DEVICE mounted at $TARGETPOINT"
+        else
+            echo "$DEVICE is already mounted."
+        fi
+        touch $TARGETPOINT/.ready
+        tail -f /dev/null
+    volumeDevices:
+      - name: csi-block
+        devicePath: /dev/block-device # Don't change the device path.
+  - name: check-ready # this container is used to make sure the formatting is done before the main container is launched.
+    image: mirror.hub.mylab.com:8443/rh-ee-chbutler/ubi-storage-util:latest
+    securityContext:
+      privileged: true 
+    env:
+      - name: DATA_PROC_DIR
+        value: 'find /proc -maxdepth 1 -type d -regex "/proc/[0-9]*" | head -2 | tail -1'
+    command: ["/bin/sh", "-c"]
+    args:
+      - |
+        set -e 
+        FILE=$(eval $DATA_PROC_DIR)/root/mnt/storage/.ready
+        echo $FILE
+        MAX_WAIT=3600 # seconds
+        WAITED=0
+
+        while [ ! -e "$FILE" ] && [ $WAITED -lt $MAX_WAIT ]; do
+          sleep 1
+          WAITED=$((WAITED + 1))
+          echo "Waited: ${WAITED} s"
+        done
+        if [ -e "$FILE" ]; then
+          exit 0
+        else
+          echo "Timed out"
+          exit 1
+        fi
+  volumes:
+  - name: csi-block 
+    persistentVolumeClaim:
+      claimName: storage-unencrypted 
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: storage-unencrypted 
+spec:
+  storageClassName: "local-sc2"
+  accessModes:
+    - ReadWriteOnce
+  volumeMode: Block  # Critical for raw block access
+  resources:
+    requests:
+      storage: 1Gi
+---

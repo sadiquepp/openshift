@@ -1,0 +1,46 @@
+kind: ImageSetConfiguration
+apiVersion: mirror.openshift.io/v1alpha2
+archiveSize: 4                                                      
+storageConfig:                                                      
+  registry:
+    imageURL: mirror.hub.mylab.com:8443/mirror/oc-mirror-metadata                 
+    skipTLS: false
+mirror:
+  platform:
+    channels:
+    - name: stable-4.16
+      minVersion: 4.16.x                       
+      maxVersion: 4.16.x                                    
+      type: ocp
+    graph: true                                                     
+  operators:
+  - catalog: registry.redhat.io/redhat/redhat-operator-index:v4.16
+    packages:
+    - name: sandboxed-containers-operator         
+      channels:
+      - name: stable                                        
+        minVersion: 1.8.1
+        maxVersion: 1.9.0
+    - name: trustee-operator
+      channels:
+      - name: stable                                                
+        minVersion: 0.2.0
+        maxVersion: 0.3.0
+    - name: nfd                                
+      channels:
+      - name: stable                                                
+    - name: rhacs-operator                            
+      channels:
+      - name: stable                                                
+    - name: local-storage-operator                        
+      channels:
+      - name: stable                                                
+    - name: lvms-operator                     
+      channels:
+      - name: stable-4.16                                              
+  additionalImages:
+  - name: registry.redhat.io/ubi9/ubi:latest                        
+  - name: quay.io/openshift_sandboxed_containers/rhcos-layer/ocp-4.16:snp-0.1.0
+  - name: quay.io/coreos/coreos-installer:release
+  - name: quay.io/openshift_sandboxed_containers/kbs:v0.10.1
+  helm: {}

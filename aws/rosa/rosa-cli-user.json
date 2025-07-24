@@ -1,0 +1,36 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "VisualEditor0",
+            "Effect": "Allow",
+            "Action": [
+                "iam:GetRole",
+                "iam:UpdateAssumeRolePolicy",
+                "iam:ListRoleTags",
+                "iam:GetPolicy",
+                "iam:TagRole",
+                "iam:ListRoles",
+                "iam:CreateRole",
+                "iam:DeleteRole",
+                "iam:AttachRolePolicy",
+                "iam:CreateOpenIDConnectProvider",
+                "iam:ListInstanceProfilesForRole",
+                "iam:DetachRolePolicy",
+                "ec2:DescribeAvailabilityZones",
+                "iam:ListOpenIDConnectProviders",
+                "iam:ListAttachedRolePolicies",
+                "iam:ListOpenIDConnectProviderTags",
+                "elasticloadbalancing:DescribeAccountLimits",
+                "iam:ListPolicyTags",
+                "ec2:DescribeSubnets",
+                "iam:ListRolePolicies",
+                "iam:DeleteOpenIDConnectProvider",
+                "servicequotas:ListServiceQuotas",
+                "ec2:DescribeRouteTables",
+                "iam:TagOpenIDConnectProvider"
+            ],
+            "Resource": "*"
+        }
+    ]
+}

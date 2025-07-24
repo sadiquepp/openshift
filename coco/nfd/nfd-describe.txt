@@ -1,0 +1,232 @@
+$ oc describe po -n openshift-nfd
+Name:             nfd-controller-manager-5cd7cfcc5b-lw5sj
+Namespace:        openshift-nfd
+Priority:         0
+Service Account:  nfd-operator
+Node:             ip-172-16-1-160.ap-southeast-1.compute.internal/172.16.1.160
+Start Time:       Mon, 07 Apr 2025 09:58:03 +0000
+Labels:           control-plane=controller-manager
+                  pod-template-hash=5cd7cfcc5b
+Annotations:      alm-examples:
+                    [
+                      {
+                        "apiVersion": "nfd.openshift.io/v1",
+                        "kind": "NodeFeatureDiscovery",
+                        "metadata": {
+                          "name": "nfd-instance",
+                          "namespace": "openshift-nfd"
+                        },
+                        "spec": {
+                          "customConfig": {
+                            "configData": "#    - name: \"more.kernel.features\"\n#      matchOn:\n#      - loadedKMod: [\"example_kmod3\"]\n#    - name: \"mo...
+                          },
+                          "operand": {
+                            "image": "registry.redhat.io/openshift4/ose-node-feature-discovery-rhel9@sha256:e49f59d6edc1c2175030de62be57eb8670e26c734dd33d178e...
+                            "imagePullPolicy": "IfNotPresent",
+                            "servicePort": 12000
+                          },
+                          "workerConfig": {
+                            "configData": "core:\n#  labelWhiteList:\n#  noPublish: false\n  sleepInterval: 60s\n#  sources: [all]\n#  klog:\n#    addDirHeade...
+                          }
+                        }
+                      },
+                      {
+                        "apiVersion": "nfd.openshift.io/v1alpha1",
+                        "kind": "NodeFeatureRule",
+                        "metadata": {
+                          "name": "my-sample-rule-object"
+                        },
+                        "spec": {
+                          "rules": [
+                            {
+                              "labels": {
+                                "my-sample-feature": "true"
+                              },
+                              "matchFeatures": [
+                                {
+                                  "feature": "kernel.loadedmodule",
+                                  "matchExpressions": {
+                                    "dummy": {
+                                      "op": "Exists"
+                                    }
+                                  }
+                                },
+                                {
+                                  "feature": "kernel.config",
+                                  "matchExpressions": {
+                                    "X86": {
+                                      "op": "In",
+                                      "value": [
+                                        "y"
+                                      ]
+                                    }
+                                  }
+                                }
+                              ],
+                              "name": "my sample rule"
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  capabilities: Deep Insights
+                  categories: Integration & Delivery,OpenShift Optional
+                  containerImage:
+                    registry.redhat.io/openshift4/ose-cluster-nfd-rhel9-operator@sha256:a2bf9af2d2aad11bf61359b3f283a3e3ee38b135f4be9b12c404f7566414a085
+                  description:
+                    The Node Feature Discovery Operator manages the detection of hardware features and configuration in a Kubernetes cluster by labeling the n...
+                    
+                    NFD consists  of the following software components:
+                    
+                    The NFD Operator is based on the Operator Framework an open source toolkit to manage Kubernetes native applications, called Operators, in ...
+                    
+                    ##NFD-Master
+                    NFD-Master is the daemon responsible for communication towards the Kubernetes API. That is, it receives labeling requests from the worker ...
+                    
+                    ##NFD-Worker
+                    NFD-Worker is a daemon responsible for feature detection. It then communicates the information to nfd-master which does the actual node la...
+                    
+                    ##NFD-Topology-Updater
+                    NFD-Topology-Updater is a daemon responsible for examining allocated resources on a worker node to account for resources available to be a...
+                  features.operators.openshift.io/cnf: false
+                  features.operators.openshift.io/cni: false
+                  features.operators.openshift.io/csi: false
+                  features.operators.openshift.io/disconnected: true
+                  features.operators.openshift.io/fips-compliant: true
+                  features.operators.openshift.io/proxy-aware: true
+                  features.operators.openshift.io/tls-profiles: false
+                  features.operators.openshift.io/token-auth-aws: false
+                  features.operators.openshift.io/token-auth-azure: false
+                  features.operators.openshift.io/token-auth-gcp: false
+                  k8s.ovn.org/pod-networks:
+                    {"default":{"ip_addresses":["10.131.0.18/23"],"mac_address":"0a:58:0a:83:00:12","gateway_ips":["10.131.0.1"],"routes":[{"dest":"10.128.0.0...
+                  k8s.v1.cni.cncf.io/network-status:
+                    [{
+                        "name": "ovn-kubernetes",
+                        "interface": "eth0",
+                        "ips": [
+                            "10.131.0.18"
+                        ],
+                        "mac": "0a:58:0a:83:00:12",
+                        "default": true,
+                        "dns": {}
+                    }]
+                  olm.operatorGroup: openshift-nfd-n8ndl
+                  olm.operatorNamespace: openshift-nfd
+                  olm.skipRange: >=4.9.0 <4.16.0-202503121138
+                  olm.targetNamespaces: openshift-nfd
+                  openshift.io/scc: restricted-v2
+                  operatorframework.io/cluster-monitoring: true
+                  operatorframework.io/properties:
+                    {"properties":[{"type":"olm.gvk","value":{"group":"nfd.openshift.io","kind":"NodeFeature","version":"v1alpha1"}},{"type":"olm.gvk","value"...
+                  operatorframework.io/suggested-namespace: openshift-nfd
+                  operators.openshift.io/infrastructure-features: ["disconnected"]
+                  operators.openshift.io/valid-subscription: ["OpenShift Kubernetes Engine", "OpenShift Container Platform", "OpenShift Platform Plus"]
+                  operators.operatorframework.io/builder: operator-sdk-v1.16.0+git
+                  operators.operatorframework.io/internal-objects: ["noderesourcetopologies.topology.node.k8s.io"]
+                  operators.operatorframework.io/project_layout: go.kubebuilder.io/v3
+                  provider: Red Hat
+                  repository: https://github.com/openshift/cluster-nfd-operator
+                  seccomp.security.alpha.kubernetes.io/pod: runtime/default
+                  support: Red Hat
+Status:           Running
+SeccompProfile:   RuntimeDefault
+IP:               10.131.0.18
+IPs:
+  IP:           10.131.0.18
+Controlled By:  ReplicaSet/nfd-controller-manager-5cd7cfcc5b
+Containers:
+  kube-rbac-proxy:
+    Container ID:  cri-o://d91296fdf78662b7933bc383688cf2b65fcd7f660db9de263e6b92939af43f3b
+    Image:         registry.redhat.io/openshift4/ose-kube-rbac-proxy-rhel9@sha256:27398947432dd34625c7a8c537c273dc0e8af85d2fcce6749519acd379bb64ca
+    Image ID:      registry.redhat.io/openshift4/ose-kube-rbac-proxy-rhel9@sha256:1c3e3a7cd6084c1f6edbaa4bc5dba91603d7fb604b94379b24d029cd4279f28f
+    Port:          8443/TCP
+    Host Port:     0/TCP
+    Args:
+      --secure-listen-address=0.0.0.0:8443
+      --upstream=http://127.0.0.1:8080/
+      --logtostderr=true
+      --v=6
+      --tls-cert-file=/etc/secrets/tls.crt
+      --tls-private-key-file=/etc/secrets/tls.key
+      --tls-cipher-suites=TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_RSA_WITH_AES_128_CBC_SHA256,TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256,TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256
+    State:          Running
+      Started:      Mon, 07 Apr 2025 09:58:06 +0000
+    Ready:          True
+    Restart Count:  0
+    Limits:
+      cpu:     500m
+      memory:  128Mi
+    Requests:
+      cpu:     250m
+      memory:  64Mi
+    Environment:
+      OPERATOR_CONDITION_NAME:  nfd.4.16.0-202503121138
+    Mounts:
+      /etc/secrets from node-feature-discovery-operator-tls (rw)
+      /var/run/secrets/kubernetes.io/serviceaccount from kube-api-access-rjn87 (ro)
+  manager:
+    Container ID:    cri-o://75725b69613b2674a59991bd9b368b56ba66290c26f6eee6093ccc6e2d584ada
+    Image:           registry.redhat.io/openshift4/ose-cluster-nfd-rhel9-operator@sha256:a2bf9af2d2aad11bf61359b3f283a3e3ee38b135f4be9b12c404f7566414a085
+    Image ID:        registry.redhat.io/openshift4/ose-cluster-nfd-rhel9-operator@sha256:1c32ce99d92e6b34e8cbab92965f5ef149141bb03bf3864556a207881c396f5c
+    Port:            8080/TCP
+    Host Port:       0/TCP
+    SeccompProfile:  RuntimeDefault
+    Command:
+      /node-feature-discovery-operator
+    Args:
+      --metrics-bind-address=127.0.0.1:8080
+      --leader-elect
+    State:          Running
+      Started:      Mon, 07 Apr 2025 09:58:08 +0000
+    Ready:          True
+    Restart Count:  0
+    Liveness:       http-get http://:8081/healthz delay=15s timeout=1s period=20s #success=1 #failure=3
+    Readiness:      http-get http://:8081/readyz delay=5s timeout=1s period=10s #success=1 #failure=3
+    Environment:
+      SSL_CERT_DIR:                  /etc/pki/tls/certs
+      POD_NAMESPACE:                 openshift-nfd (v1:metadata.namespace)
+      POD_NAME:                      nfd-controller-manager-5cd7cfcc5b-lw5sj (v1:metadata.name)
+      OPERATOR_NAME:                 cluster-nfd-operator
+      NODE_FEATURE_DISCOVERY_IMAGE:  registry.redhat.io/openshift4/ose-node-feature-discovery-rhel9@sha256:e49f59d6edc1c2175030de62be57eb8670e26c734dd33d178eb33a64c4fc3f2a
+      OPERATOR_CONDITION_NAME:       nfd.4.16.0-202503121138
+    Mounts:
+      /var/run/secrets/kubernetes.io/serviceaccount from kube-api-access-rjn87 (ro)
+Conditions:
+  Type                        Status
+  PodReadyToStartContainers   True 
+  Initialized                 True 
+  Ready                       True 
+  ContainersReady             True 
+  PodScheduled                True 
+Volumes:
+  node-feature-discovery-operator-tls:
+    Type:        Secret (a volume populated by a Secret)
+    SecretName:  node-feature-discovery-operator-tls
+    Optional:    false
+  kube-api-access-rjn87:
+    Type:                    Projected (a volume that contains injected data from multiple sources)
+    TokenExpirationSeconds:  3607
+    ConfigMapName:           kube-root-ca.crt
+    ConfigMapOptional:       <nil>
+    DownwardAPI:             true
+    ConfigMapName:           openshift-service-ca.crt
+    ConfigMapOptional:       <nil>
+QoS Class:                   Burstable
+Node-Selectors:              <none>
+Tolerations:                 node.kubernetes.io/memory-pressure:NoSchedule op=Exists
+                             node.kubernetes.io/not-ready:NoExecute op=Exists for 300s
+                             node.kubernetes.io/unreachable:NoExecute op=Exists for 300s
+Events:
+  Type    Reason          Age    From               Message
+  ----    ------          ----   ----               -------
+  Normal  Scheduled       5m12s  default-scheduler  Successfully assigned openshift-nfd/nfd-controller-manager-5cd7cfcc5b-lw5sj to ip-172-16-1-160.ap-southeast-1.compute.internal
+  Normal  AddedInterface  5m11s  multus             Add eth0 [10.131.0.18/23] from ovn-kubernetes
+  Normal  Pulling         5m11s  kubelet            Pulling image "registry.redhat.io/openshift4/ose-kube-rbac-proxy-rhel9@sha256:27398947432dd34625c7a8c537c273dc0e8af85d2fcce6749519acd379bb64ca"
+  Normal  Pulled          5m9s   kubelet            Successfully pulled image "registry.redhat.io/openshift4/ose-kube-rbac-proxy-rhel9@sha256:27398947432dd34625c7a8c537c273dc0e8af85d2fcce6749519acd379bb64ca" in 2.329s (2.329s including waiting)
+  Normal  Created         5m9s   kubelet            Created container kube-rbac-proxy
+  Normal  Started         5m9s   kubelet            Started container kube-rbac-proxy
+  Normal  Pulling         5m9s   kubelet            Pulling image "registry.redhat.io/openshift4/ose-cluster-nfd-rhel9-operator@sha256:a2bf9af2d2aad11bf61359b3f283a3e3ee38b135f4be9b12c404f7566414a085"
+  Normal  Pulled          5m7s   kubelet            Successfully pulled image "registry.redhat.io/openshift4/ose-cluster-nfd-rhel9-operator@sha256:a2bf9af2d2aad11bf61359b3f283a3e3ee38b135f4be9b12c404f7566414a085" in 1.568s (1.568s including waiting)
+  Normal  Created         5m7s   kubelet            Created container manager
+  Normal  Started         5m7s   kubelet            Started container manager

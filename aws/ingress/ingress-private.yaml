@@ -1,0 +1,27 @@
+apiVersion: operator.openshift.io/v1
+kind: IngressController
+metadata:
+  finalizers:
+  - ingresscontroller.operator.openshift.io/finalizer-ingresscontroller
+  name: "{{cluster_name}}"
+  namespace: openshift-ingress-operator
+spec:
+  clientTLS:
+    clientCA:
+      name: ""
+    clientCertificatePolicy: ""
+  defaultCertificate:
+    name: sadiqueonline
+  domain: "{{external_domain}}"
+  endpointPublishingStrategy:
+    type: Private
+  httpCompression: {}
+  httpEmptyRequestsPolicy: Respond
+  httpErrorCodePages:
+    name: ""
+  namespaceSelector:
+    matchLabels:
+      ingress: custom
+  tuningOptions:
+    reloadInterval: 0s
+  unsupportedConfigOverrides: null

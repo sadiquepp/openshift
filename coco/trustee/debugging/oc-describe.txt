@@ -1,0 +1,154 @@
+[ec2-user@ip-172-17-1-133 ~]$ oc get po -n trustee-operator-system
+NAME                                                   READY   STATUS             RESTARTS   AGE
+trustee-operator-controller-manager-5dbb67fcb7-kd5q4   1/2     ImagePullBackOff   0          2m57s
+[ec2-user@ip-172-17-1-133 ~]$ oc describe po trustee-operator-controller-manager-5dbb67fcb7-kd5q4 -n trustee-operator-system
+Name:             trustee-operator-controller-manager-5dbb67fcb7-kd5q4
+Namespace:        trustee-operator-system
+Priority:         0
+Service Account:  trustee-operator-controller-manager
+Node:             ip-172-16-3-109.ap-southeast-1.compute.internal/172.16.3.109
+Start Time:       Mon, 07 Apr 2025 09:43:05 +0000
+Labels:           control-plane=controller-manager
+                  pod-template-hash=5dbb67fcb7
+Annotations:      alm-examples: []
+                  capabilities: Basic Install
+                  categories: Security
+                  containerImage:
+                    registry.redhat.io/confidential-compute-attestation-tech-preview/trustee-rhel9-operator@sha256:3cbd7eef2943bc120765c22d8314e0c5e777dbb310b...
+                  createdAt: 2024-06-07T10:06:06Z
+                  features.operators.openshift.io/cnf: false
+                  features.operators.openshift.io/cni: false
+                  features.operators.openshift.io/csi: false
+                  features.operators.openshift.io/disconnected: true
+                  features.operators.openshift.io/fips-compliant: false
+                  features.operators.openshift.io/proxy-aware: false
+                  features.operators.openshift.io/tls-profiles: false
+                  features.operators.openshift.io/token-auth-aws: false
+                  features.operators.openshift.io/token-auth-azure: false
+                  features.operators.openshift.io/token-auth-gcp: false
+                  k8s.ovn.org/pod-networks:
+                    {"default":{"ip_addresses":["10.129.2.23/23"],"mac_address":"0a:58:0a:81:02:17","gateway_ips":["10.129.2.1"],"routes":[{"dest":"10.128.0.0...
+                  k8s.v1.cni.cncf.io/network-status:
+                    [{
+                        "name": "ovn-kubernetes",
+                        "interface": "eth0",
+                        "ips": [
+                            "10.129.2.23"
+                        ],
+                        "mac": "0a:58:0a:81:02:17",
+                        "default": true,
+                        "dns": {}
+                    }]
+                  kubectl.kubernetes.io/default-container: manager
+                  olm.operatorGroup: trustee-operator-system-cxgjj
+                  olm.operatorNamespace: trustee-operator-system
+                  olm.targetNamespaces: trustee-operator-system
+                  openshift.io/scc: restricted-v2
+                  operatorframework.io/properties:
+                    {"properties":[{"type":"olm.gvk","value":{"group":"confidentialcontainers.org","kind":"KbsConfig","version":"v1alpha1"}},{"type":"olm.pack...
+                  operatorframework.io/suggested-namespace: trustee-operator-system
+                  operators.openshift.io/valid-subscription: ["OpenShift Container Platform", "OpenShift Platform Plus"]
+                  operators.operatorframework.io/builder: operator-sdk-v1.36.1
+                  operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
+                  repository: https://github.com/openshift/trustee-operator
+                  seccomp.security.alpha.kubernetes.io/pod: runtime/default
+                  support: Confidential Containers Community
+Status:           Pending
+SeccompProfile:   RuntimeDefault
+IP:               10.129.2.23
+IPs:
+  IP:           10.129.2.23
+Controlled By:  ReplicaSet/trustee-operator-controller-manager-5dbb67fcb7
+Containers:
+  kube-rbac-proxy:
+    Container ID:  
+    Image:         registry.redhat.io/openshift4/ose-kube-rbac-proxy-rhel9
+    Image ID:      
+    Port:          8443/TCP
+    Host Port:     0/TCP
+    Args:
+      --secure-listen-address=0.0.0.0:8443
+      --upstream=http://127.0.0.1:8080/
+      --logtostderr=true
+      --v=0
+    State:          Waiting
+      Reason:       ImagePullBackOff
+    Ready:          False
+    Restart Count:  0
+    Limits:
+      cpu:     500m
+      memory:  128Mi
+    Requests:
+      cpu:     5m
+      memory:  64Mi
+    Environment:
+      OPERATOR_CONDITION_NAME:  trustee-operator.v0.2.0
+    Mounts:
+      /var/run/secrets/kubernetes.io/serviceaccount from kube-api-access-44spg (ro)
+  manager:
+    Container ID:  cri-o://d2970f04a13169bd250a9dcd2518fed1f5bf967ea1b65e452e907f2e04568e2f
+    Image:         registry.redhat.io/confidential-compute-attestation-tech-preview/trustee-rhel9-operator@sha256:3cbd7eef2943bc120765c22d8314e0c5e777dbb310ba58a62910b04676a5d03b
+    Image ID:      registry.redhat.io/confidential-compute-attestation-tech-preview/trustee-rhel9-operator@sha256:36e710db41bad8c5804c6f08940b55342b0dfb56da8b81bc2c7beb38f231ab9a
+    Port:          <none>
+    Host Port:     <none>
+    Command:
+      /manager
+    Args:
+      --health-probe-bind-address=:8081
+      --metrics-bind-address=127.0.0.1:8080
+      --leader-elect
+    State:          Running
+      Started:      Mon, 07 Apr 2025 09:44:05 +0000
+    Ready:          True
+    Restart Count:  0
+    Limits:
+      cpu:     500m
+      memory:  128Mi
+    Requests:
+      cpu:      10m
+      memory:   64Mi
+    Liveness:   http-get http://:8081/healthz delay=15s timeout=1s period=20s #success=1 #failure=3
+    Readiness:  http-get http://:8081/readyz delay=5s timeout=1s period=10s #success=1 #failure=3
+    Environment:
+      POD_NAMESPACE:            trustee-operator-system (v1:metadata.namespace)
+      KBS_IMAGE_NAME:           registry.redhat.io/confidential-compute-attestation-tech-preview/trustee-rhel9@sha256:71f73e370dbfd3de319975f860247af7a3587ef1d342f8b56592314dfc556902
+      AS_IMAGE_NAME:            ghcr.io/confidential-containers/staged-images/coco-as-grpc:latest
+      RVPS_IMAGE_NAME:          ghcr.io/confidential-containers/staged-images/rvps:latest
+      OPERATOR_CONDITION_NAME:  trustee-operator.v0.2.0
+    Mounts:
+      /var/run/secrets/kubernetes.io/serviceaccount from kube-api-access-44spg (ro)
+Conditions:
+  Type                        Status
+  PodReadyToStartContainers   True 
+  Initialized                 True 
+  Ready                       False 
+  ContainersReady             False 
+  PodScheduled                True 
+Volumes:
+  kube-api-access-44spg:
+    Type:                    Projected (a volume that contains injected data from multiple sources)
+    TokenExpirationSeconds:  3607
+    ConfigMapName:           kube-root-ca.crt
+    ConfigMapOptional:       <nil>
+    DownwardAPI:             true
+    ConfigMapName:           openshift-service-ca.crt
+    ConfigMapOptional:       <nil>
+QoS Class:                   Burstable
+Node-Selectors:              <none>
+Tolerations:                 node.kubernetes.io/memory-pressure:NoSchedule op=Exists
+                             node.kubernetes.io/not-ready:NoExecute op=Exists for 300s
+                             node.kubernetes.io/unreachable:NoExecute op=Exists for 300s
+Events:
+  Type     Reason          Age                 From               Message
+  ----     ------          ----                ----               -------
+  Normal   Scheduled       3m                  default-scheduler  Successfully assigned trustee-operator-system/trustee-operator-controller-manager-5dbb67fcb7-kd5q4 to ip-172-16-3-109.ap-southeast-1.compute.internal
+  Normal   AddedInterface  3m                  multus             Add eth0 [10.129.2.23/23] from ovn-kubernetes
+  Normal   Pulled          2m                  kubelet            Container image "registry.redhat.io/confidential-compute-attestation-tech-preview/trustee-rhel9-operator@sha256:3cbd7eef2943bc120765c22d8314e0c5e777dbb310ba58a62910b04676a5d03b" already present on machine
+  Normal   Created         2m                  kubelet            Created container manager
+  Normal   Started         2m                  kubelet            Started container manager
+  Warning  Failed          37s (x2 over 2m)    kubelet            Failed to pull image "registry.redhat.io/openshift4/ose-kube-rbac-proxy-rhel9": rpc error: code = DeadlineExceeded desc = pinging container registry registry.redhat.io: Get "https://registry.redhat.io/v2/": dial tcp 118.215.81.123:443: i/o timeout
+  Warning  Failed          37s (x2 over 2m)    kubelet            Error: ErrImagePull
+  Normal   BackOff         24s (x4 over 119s)  kubelet            Back-off pulling image "registry.redhat.io/openshift4/ose-kube-rbac-proxy-rhel9"
+  Warning  Failed          24s (x4 over 119s)  kubelet            Error: ImagePullBackOff
+  Normal   Pulling         11s (x3 over 3m)    kubelet            Pulling image "registry.redhat.io/openshift4/ose-kube-rbac-proxy-rhel9"
+

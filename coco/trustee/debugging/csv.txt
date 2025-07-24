@@ -1,0 +1,511 @@
+apiVersion: operators.coreos.com/v1alpha1
+kind: ClusterServiceVersion
+metadata:
+  annotations:
+    alm-examples: '[]'
+    capabilities: Basic Install
+    categories: Security
+    containerImage: registry.redhat.io/confidential-compute-attestation-tech-preview/trustee-rhel9-operator@sha256:3cbd7eef2943bc120765c22d8314e0c5e777dbb310ba58a62910b04676a5d03b
+    createdAt: "2024-06-07T10:06:06Z"
+    features.operators.openshift.io/cnf: "false"
+    features.operators.openshift.io/cni: "false"
+    features.operators.openshift.io/csi: "false"
+    features.operators.openshift.io/disconnected: "true"
+    features.operators.openshift.io/fips-compliant: "false"
+    features.operators.openshift.io/proxy-aware: "false"
+    features.operators.openshift.io/tls-profiles: "false"
+    features.operators.openshift.io/token-auth-aws: "false"
+    features.operators.openshift.io/token-auth-azure: "false"
+    features.operators.openshift.io/token-auth-gcp: "false"
+    olm.operatorGroup: trustee-operator-system-cxgjj
+    olm.operatorNamespace: trustee-operator-system
+    olm.targetNamespaces: trustee-operator-system
+    operatorframework.io/properties: '{"properties":[{"type":"olm.gvk","value":{"group":"confidentialcontainers.org","kind":"KbsConfig","version":"v1alpha1"}},{"type":"olm.package","value":{"packageName":"trustee-operator","version":"0.2.0"}}]}'
+    operatorframework.io/suggested-namespace: trustee-operator-system
+    operators.openshift.io/valid-subscription: '["OpenShift Container Platform", "OpenShift
+      Platform Plus"]'
+    operators.operatorframework.io/builder: operator-sdk-v1.36.1
+    operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
+    repository: https://github.com/openshift/trustee-operator
+    support: Confidential Containers Community
+  creationTimestamp: "2025-04-07T09:43:02Z"
+  finalizers:
+  - operators.coreos.com/csv-cleanup
+  generation: 1
+  labels:
+    olm.managed: "true"
+    operatorframework.io/arch.amd64: supported
+    operatorframework.io/arch.s390x: supported
+    operatorframework.io/os.linux: supported
+    operators.coreos.com/trustee-operator.trustee-operator-system: ""
+  name: trustee-operator.v0.2.0
+  namespace: trustee-operator-system
+  resourceVersion: "73869"
+  uid: 7942b75f-b7eb-482b-86fa-97657c66daa5
+spec:
+  apiservicedefinitions: {}
+  cleanup:
+    enabled: false
+  customresourcedefinitions:
+    owned:
+    - description: KbsConfig is the Schema for the kbsconfigs API
+      displayName: Kbs Config
+      kind: KbsConfig
+      name: kbsconfigs.confidentialcontainers.org
+      version: v1alpha1
+  description: Remote attestation operator for confidential containers
+  displayName: confidential compute attestation
+  icon:
+  - base64data: PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNTguNTEgMjU4LjUxIj48ZGVmcz48c3R5bGU+LmNscy0xe2ZpbGw6I2QxZDFkMTt9LmNscy0ye2ZpbGw6IzhkOGQ4Zjt9PC9zdHlsZT48L2RlZnM+PHRpdGxlPkFzc2V0IDQ8L3RpdGxlPjxnIGlkPSJMYXllcl8yIiBkYXRhLW5hbWU9IkxheWVyIDIiPjxnIGlkPSJMYXllcl8xLTIiIGRhdGEtbmFtZT0iTGF5ZXIgMSI+PHBhdGggY2xhc3M9ImNscy0xIiBkPSJNMTI5LjI1LDIwQTEwOS4xLDEwOS4xLDAsMCwxLDIwNi40LDIwNi40LDEwOS4xLDEwOS4xLDAsMSwxLDUyLjExLDUyLjExLDEwOC40NSwxMDguNDUsMCwwLDEsMTI5LjI1LDIwbTAtMjBoMEM1OC4xNiwwLDAsNTguMTYsMCwxMjkuMjVIMGMwLDcxLjA5LDU4LjE2LDEyOS4yNiwxMjkuMjUsMTI5LjI2aDBjNzEuMDksMCwxMjkuMjYtNTguMTcsMTI5LjI2LTEyOS4yNmgwQzI1OC41MSw1OC4xNiwyMDAuMzQsMCwxMjkuMjUsMFoiLz48cGF0aCBjbGFzcz0iY2xzLTIiIGQ9Ik0xNzcuNTQsMTAzLjQxSDE0MS42NkwxNTQuOSw2NS43NmMxLjI1LTQuNC0yLjMzLTguNzYtNy4yMS04Ljc2SDEwMi45M2E3LjMyLDcuMzIsMCwwLDAtNy40LDZsLTEwLDY5LjYxYy0uNTksNC4xNywyLjg5LDcuODksNy40LDcuODloMzYuOUwxMTUuNTUsMTk3Yy0xLjEyLDQuNDEsMi40OCw4LjU1LDcuMjQsOC41NWE3LjU4LDcuNTgsMCwwLDAsNi40Ny0zLjQ4TDE4NCwxMTMuODVDMTg2Ljg2LDEwOS4yNCwxODMuMjksMTAzLjQxLDE3Ny41NCwxMDMuNDFaIi8+PC9nPjwvZz48L3N2Zz4=
+    mediatype: image/svg+xml
+  install:
+    spec:
+      clusterPermissions:
+      - rules:
+        - apiGroups:
+          - ""
+          resources:
+          - configmaps
+          verbs:
+          - get
+          - list
+          - watch
+        - apiGroups:
+          - ""
+          resources:
+          - namespaces
+          verbs:
+          - get
+          - update
+        - apiGroups:
+          - ""
+          resources:
+          - secrets
+          verbs:
+          - get
+          - list
+          - watch
+        - apiGroups:
+          - apps
+          resources:
+          - deployments
+          verbs:
+          - create
+          - delete
+          - get
+          - list
+          - patch
+          - update
+          - watch
+        - apiGroups:
+          - confidentialcontainers.org
+          resources:
+          - kbsconfigs
+          verbs:
+          - create
+          - delete
+          - get
+          - list
+          - patch
+          - update
+          - watch
+        - apiGroups:
+          - confidentialcontainers.org
+          resources:
+          - kbsconfigs/finalizers
+          verbs:
+          - update
+        - apiGroups:
+          - confidentialcontainers.org
+          resources:
+          - kbsconfigs/status
+          verbs:
+          - get
+          - patch
+          - update
+        - apiGroups:
+          - ""
+          resources:
+          - services
+          verbs:
+          - create
+          - delete
+          - get
+          - list
+          - patch
+          - update
+          - watch
+        - apiGroups:
+          - authentication.k8s.io
+          resources:
+          - tokenreviews
+          verbs:
+          - create
+        - apiGroups:
+          - authorization.k8s.io
+          resources:
+          - subjectaccessreviews
+          verbs:
+          - create
+        serviceAccountName: trustee-operator-controller-manager
+      deployments:
+      - label:
+          app.kubernetes.io/component: manager
+          app.kubernetes.io/created-by: trustee-operator
+          app.kubernetes.io/instance: controller-manager
+          app.kubernetes.io/managed-by: kustomize
+          app.kubernetes.io/name: deployment
+          app.kubernetes.io/part-of: trustee-operator
+          control-plane: controller-manager
+        name: trustee-operator-controller-manager
+        spec:
+          replicas: 1
+          selector:
+            matchLabels:
+              control-plane: controller-manager
+          strategy: {}
+          template:
+            metadata:
+              annotations:
+                kubectl.kubernetes.io/default-container: manager
+              creationTimestamp: null
+              labels:
+                control-plane: controller-manager
+            spec:
+              affinity:
+                nodeAffinity:
+                  requiredDuringSchedulingIgnoredDuringExecution:
+                    nodeSelectorTerms:
+                    - matchExpressions:
+                      - key: kubernetes.io/arch
+                        operator: In
+                        values:
+                        - amd64
+                        - arm64
+                        - ppc64le
+                        - s390x
+                      - key: kubernetes.io/os
+                        operator: In
+                        values:
+                        - linux
+              containers:
+              - args:
+                - --secure-listen-address=0.0.0.0:8443
+                - --upstream=http://127.0.0.1:8080/
+                - --logtostderr=true
+                - --v=0
+                image: registry.redhat.io/openshift4/ose-kube-rbac-proxy-rhel9
+                name: kube-rbac-proxy
+                ports:
+                - containerPort: 8443
+                  name: https
+                  protocol: TCP
+                resources:
+                  limits:
+                    cpu: 500m
+                    memory: 128Mi
+                  requests:
+                    cpu: 5m
+                    memory: 64Mi
+                securityContext:
+                  allowPrivilegeEscalation: false
+                  capabilities:
+                    drop:
+                    - ALL
+              - args:
+                - --health-probe-bind-address=:8081
+                - --metrics-bind-address=127.0.0.1:8080
+                - --leader-elect
+                command:
+                - /manager
+                env:
+                - name: POD_NAMESPACE
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.namespace
+                - name: KBS_IMAGE_NAME
+                  value: registry.redhat.io/confidential-compute-attestation-tech-preview/trustee-rhel9@sha256:71f73e370dbfd3de319975f860247af7a3587ef1d342f8b56592314dfc556902
+                - name: AS_IMAGE_NAME
+                  value: ghcr.io/confidential-containers/staged-images/coco-as-grpc:latest
+                - name: RVPS_IMAGE_NAME
+                  value: ghcr.io/confidential-containers/staged-images/rvps:latest
+                image: registry.redhat.io/confidential-compute-attestation-tech-preview/trustee-rhel9-operator@sha256:3cbd7eef2943bc120765c22d8314e0c5e777dbb310ba58a62910b04676a5d03b
+                livenessProbe:
+                  httpGet:
+                    path: /healthz
+                    port: 8081
+                  initialDelaySeconds: 15
+                  periodSeconds: 20
+                name: manager
+                readinessProbe:
+                  httpGet:
+                    path: /readyz
+                    port: 8081
+                  initialDelaySeconds: 5
+                  periodSeconds: 10
+                resources:
+                  limits:
+                    cpu: 500m
+                    memory: 128Mi
+                  requests:
+                    cpu: 10m
+                    memory: 64Mi
+                securityContext:
+                  allowPrivilegeEscalation: false
+                  capabilities:
+                    drop:
+                    - ALL
+              securityContext:
+                runAsNonRoot: true
+              serviceAccountName: trustee-operator-controller-manager
+              terminationGracePeriodSeconds: 10
+      permissions:
+      - rules:
+        - apiGroups:
+          - ""
+          resources:
+          - configmaps
+          verbs:
+          - get
+          - list
+          - watch
+          - create
+          - update
+          - patch
+          - delete
+        - apiGroups:
+          - coordination.k8s.io
+          resources:
+          - leases
+          verbs:
+          - get
+          - list
+          - watch
+          - create
+          - update
+          - patch
+          - delete
+        - apiGroups:
+          - ""
+          resources:
+          - events
+          verbs:
+          - create
+          - patch
+        serviceAccountName: trustee-operator-controller-manager
+    strategy: deployment
+  installModes:
+  - supported: true
+    type: OwnNamespace
+  - supported: true
+    type: SingleNamespace
+  - supported: false
+    type: MultiNamespace
+  - supported: false
+    type: AllNamespaces
+  keywords:
+  - trustee
+  - Confidential Computing
+  - Attestation
+  links:
+  - name: confidential compute attestation
+    url: https://github.com/openshift/trustee-operator
+  maintainers:
+  - email: support@redhat.com
+    name: Red Hat
+  maturity: beta
+  provider:
+    name: Red Hat
+  version: 0.2.0
+status:
+  cleanup: {}
+  conditions:
+  - lastTransitionTime: "2025-04-07T09:43:02Z"
+    lastUpdateTime: "2025-04-07T09:43:02Z"
+    message: requirements not yet checked
+    phase: Pending
+    reason: RequirementsUnknown
+  - lastTransitionTime: "2025-04-07T09:43:02Z"
+    lastUpdateTime: "2025-04-07T09:43:02Z"
+    message: one or more requirements couldn't be found
+    phase: Pending
+    reason: RequirementsNotMet
+  - lastTransitionTime: "2025-04-07T09:43:04Z"
+    lastUpdateTime: "2025-04-07T09:43:04Z"
+    message: all requirements found, attempting install
+    phase: InstallReady
+    reason: AllRequirementsMet
+  - lastTransitionTime: "2025-04-07T09:43:04Z"
+    lastUpdateTime: "2025-04-07T09:43:04Z"
+    message: waiting for install components to report healthy
+    phase: Installing
+    reason: InstallSucceeded
+  - lastTransitionTime: "2025-04-07T09:43:04Z"
+    lastUpdateTime: "2025-04-07T09:43:05Z"
+    message: 'installing: waiting for deployment trustee-operator-controller-manager
+      to become ready: waiting for spec update of deployment "trustee-operator-controller-manager"
+      to be observed...'
+    phase: Installing
+    reason: InstallWaiting
+  - lastTransitionTime: "2025-04-07T09:48:03Z"
+    lastUpdateTime: "2025-04-07T09:48:03Z"
+    message: install timeout
+    phase: Failed
+    reason: InstallCheckFailed
+  - lastTransitionTime: "2025-04-07T09:48:04Z"
+    lastUpdateTime: "2025-04-07T09:48:04Z"
+    message: 'installing: waiting for deployment trustee-operator-controller-manager
+      to become ready: deployment "trustee-operator-controller-manager" not available:
+      Deployment does not have minimum availability.'
+    phase: Pending
+    reason: NeedsReinstall
+  - lastTransitionTime: "2025-04-07T09:48:04Z"
+    lastUpdateTime: "2025-04-07T09:48:04Z"
+    message: all requirements found, attempting install
+    phase: InstallReady
+    reason: AllRequirementsMet
+  - lastTransitionTime: "2025-04-07T09:48:04Z"
+    lastUpdateTime: "2025-04-07T09:48:04Z"
+    message: waiting for install components to report healthy
+    phase: Installing
+    reason: InstallSucceeded
+  - lastTransitionTime: "2025-04-07T09:48:04Z"
+    lastUpdateTime: "2025-04-07T09:48:05Z"
+    message: 'installing: waiting for deployment trustee-operator-controller-manager
+      to become ready: waiting for spec update of deployment "trustee-operator-controller-manager"
+      to be observed...'
+    phase: Installing
+    reason: InstallWaiting
+  - lastTransitionTime: "2025-04-07T09:53:03Z"
+    lastUpdateTime: "2025-04-07T09:53:03Z"
+    message: install timeout
+    phase: Failed
+    reason: InstallCheckFailed
+  - lastTransitionTime: "2025-04-07T09:53:04Z"
+    lastUpdateTime: "2025-04-07T09:53:04Z"
+    message: 'installing: waiting for deployment trustee-operator-controller-manager
+      to become ready: deployment "trustee-operator-controller-manager" not available:
+      Deployment does not have minimum availability.'
+    phase: Pending
+    reason: NeedsReinstall
+  - lastTransitionTime: "2025-04-07T09:53:04Z"
+    lastUpdateTime: "2025-04-07T09:53:04Z"
+    message: all requirements found, attempting install
+    phase: InstallReady
+    reason: AllRequirementsMet
+  - lastTransitionTime: "2025-04-07T09:53:05Z"
+    lastUpdateTime: "2025-04-07T09:53:05Z"
+    message: waiting for install components to report healthy
+    phase: Installing
+    reason: InstallSucceeded
+  - lastTransitionTime: "2025-04-07T09:53:05Z"
+    lastUpdateTime: "2025-04-07T09:53:05Z"
+    message: 'installing: waiting for deployment trustee-operator-controller-manager
+      to become ready: waiting for spec update of deployment "trustee-operator-controller-manager"
+      to be observed...'
+    phase: Installing
+    reason: InstallWaiting
+  - lastTransitionTime: "2025-04-07T09:53:05Z"
+    lastUpdateTime: "2025-04-07T09:53:05Z"
+    message: 'install failed: deployment trustee-operator-controller-manager not ready
+      before timeout: deployment "trustee-operator-controller-manager" exceeded its
+      progress deadline'
+    phase: Failed
+    reason: InstallCheckFailed
+  - lastTransitionTime: "2025-04-07T10:15:23Z"
+    lastUpdateTime: "2025-04-07T10:15:23Z"
+    message: 'installing: waiting for deployment trustee-operator-controller-manager
+      to become ready: deployment "trustee-operator-controller-manager" not available:
+      Deployment does not have minimum availability.'
+    phase: Pending
+    reason: NeedsReinstall
+  - lastTransitionTime: "2025-04-07T10:15:23Z"
+    lastUpdateTime: "2025-04-07T10:15:23Z"
+    message: all requirements found, attempting install
+    phase: InstallReady
+    reason: AllRequirementsMet
+  - lastTransitionTime: "2025-04-07T10:15:23Z"
+    lastUpdateTime: "2025-04-07T10:15:23Z"
+    message: waiting for install components to report healthy
+    phase: Installing
+    reason: InstallSucceeded
+  - lastTransitionTime: "2025-04-07T10:15:23Z"
+    lastUpdateTime: "2025-04-07T10:15:23Z"
+    message: 'installing: waiting for deployment trustee-operator-controller-manager
+      to become ready: waiting for spec update of deployment "trustee-operator-controller-manager"
+      to be observed...'
+    phase: Installing
+    reason: InstallWaiting
+  lastTransitionTime: "2025-04-07T10:15:23Z"
+  lastUpdateTime: "2025-04-07T10:15:23Z"
+  message: 'installing: waiting for deployment trustee-operator-controller-manager
+    to become ready: deployment "trustee-operator-controller-manager" not available:
+    Deployment does not have minimum availability.'
+  phase: Installing
+  reason: InstallWaiting
+  requirementStatus:
+  - group: apiextensions.k8s.io
+    kind: CustomResourceDefinition
+    message: CRD is present and Established condition is true
+    name: kbsconfigs.confidentialcontainers.org
+    status: Present
+    uuid: 3866aa15-c6a5-4d07-b575-d79d1b05ed09
+    version: v1
+  - dependents:
+    - group: rbac.authorization.k8s.io
+      kind: PolicyRule
+      message: cluster rule:{"verbs":["get","list","watch"],"apiGroups":[""],"resources":["configmaps"]}
+      status: Satisfied
+      version: v1
+    - group: rbac.authorization.k8s.io
+      kind: PolicyRule
+      message: cluster rule:{"verbs":["get","update"],"apiGroups":[""],"resources":["namespaces"]}
+      status: Satisfied
+      version: v1
+    - group: rbac.authorization.k8s.io
+      kind: PolicyRule
+      message: cluster rule:{"verbs":["get","list","watch"],"apiGroups":[""],"resources":["secrets"]}
+      status: Satisfied
+      version: v1
+    - group: rbac.authorization.k8s.io
+      kind: PolicyRule
+      message: cluster rule:{"verbs":["create","delete","get","list","patch","update","watch"],"apiGroups":["apps"],"resources":["deployments"]}
+      status: Satisfied
+      version: v1
+    - group: rbac.authorization.k8s.io
+      kind: PolicyRule
+      message: cluster rule:{"verbs":["create","delete","get","list","patch","update","watch"],"apiGroups":["confidentialcontainers.org"],"resources":["kbsconfigs"]}
+      status: Satisfied
+      version: v1
+    - group: rbac.authorization.k8s.io
+      kind: PolicyRule
+      message: cluster rule:{"verbs":["update"],"apiGroups":["confidentialcontainers.org"],"resources":["kbsconfigs/finalizers"]}
+      status: Satisfied
+      version: v1
+    - group: rbac.authorization.k8s.io
+      kind: PolicyRule
+      message: cluster rule:{"verbs":["get","patch","update"],"apiGroups":["confidentialcontainers.org"],"resources":["kbsconfigs/status"]}
+      status: Satisfied
+      version: v1
+    - group: rbac.authorization.k8s.io
+      kind: PolicyRule
+      message: cluster rule:{"verbs":["create","delete","get","list","patch","update","watch"],"apiGroups":[""],"resources":["services"]}
+      status: Satisfied
+      version: v1
+    - group: rbac.authorization.k8s.io
+      kind: PolicyRule
+      message: cluster rule:{"verbs":["create"],"apiGroups":["authentication.k8s.io"],"resources":["tokenreviews"]}
+      status: Satisfied
+      version: v1
+    - group: rbac.authorization.k8s.io
+      kind: PolicyRule
+      message: cluster rule:{"verbs":["create"],"apiGroups":["authorization.k8s.io"],"resources":["subjectaccessreviews"]}
+      status: Satisfied
+      version: v1
+    group: ""
+    kind: ServiceAccount
+    message: ""
+    name: trustee-operator-controller-manager
+    status: Present
+    version: v1
+

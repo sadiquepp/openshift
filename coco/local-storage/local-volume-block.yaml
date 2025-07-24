@@ -1,0 +1,19 @@
+apiVersion: "local.storage.openshift.io/v1"
+kind: "LocalVolume"
+metadata:
+  name: "local-disks-block"
+  namespace: "openshift-local-storage" 
+spec:
+  nodeSelector: 
+    nodeSelectorTerms:
+    - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values:
+          - master-0
+  storageClassDevices:
+    - storageClassName: "local-sc-block" 
+      forceWipeDevicesAndDestroyAllData: false 
+      volumeMode: Block 
+      devicePaths: 
+        - /path/to/device 

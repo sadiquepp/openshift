@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rvps-reference-values
+  namespace: trustee-operator-system
+data:
+  reference-values.json: |
+    [ 
+      {
+        "name": "measurement",
+        "expiration": "2026-01-01T00:00:00Z",
+        "hash-value": [
+           {
+             "alg": "sha256",
+             "value": "AQqOW3wnDR2bPHnfJHNmCn2sQnqjEhqlQdZZRs2yTCEBMUlf5gAD6Orqyjv57MYb"
+           }
+        ]
+      }
+    ]

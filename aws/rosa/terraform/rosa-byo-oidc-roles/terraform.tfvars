@@ -1,0 +1,13 @@
+create_vpc=false
+create_account_roles=false
+create_operator_roles=false
+account_role_prefix=""
+oidc_config_id=""
+operator_role_prefix=""
+cluster_name=""
+multi_az=true
+aws_region=""
+vpc_cidr_block=""
+aws_subnet_ids=["", "", ""]
+rosa_openshift_version=""
+private_cluster = true
