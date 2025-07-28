@@ -138,6 +138,7 @@
       state: present
       subnet_id: "{{ connected_public_subnet_info_az1.subnet.id }}"
       wait: yes
+      if_exist_do_not_create: true
       region: "{{ aws_region }}"
     register: nat_gateway_public_subnet_az1
 
