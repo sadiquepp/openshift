@@ -1,0 +1,170 @@
+---
+- name: Create Connected Environment
+  hosts: localhost
+  gather_facts: false
+  vars:
+    prefix_for_name: project_name
+    aws_region: ap-southeast-1
+    aws_availability_zone_1: "{{ aws_region }}a"
+    aws_availability_zone_2: "{{ aws_region }}b"
+    aws_availability_zone_3: "{{ aws_region }}c"
+    aws_connected_vpc_name: "{{ prefix_for_name }}-connected"
+    aws_connected_vpc_cidr: 172.16.0.0/16
+    aws_connected_subnet_cidr_az1: 172.16.1.0/24
+    aws_connected_subnet_cidr_az2: 172.16.2.0/24
+    aws_connected_subnet_cidr_az3: 172.16.3.0/24
+    aws_connected_public_subnet_cidr_az1: 172.16.4.0/24
+    aws_connected_public_subnet_cidr_az2: 172.16.5.0/24
+    aws_connected_public_subnet_cidr_az3: 172.16.6.0/24
+    aws_security_group_for_endpoint: vpc-endpoint-allow
+    aws_iam_role_name: "{{ prefix_for_name }}-ocp-install-ec2"
+  tasks:
+
+  - name: Create a role for ec2 instance to assume to install openshift
+    community.aws.iam_role:
+      name: "{{ aws_iam_role_name }}"
+      assume_role_policy_document: "{{ lookup('file','policy.json') }}"
+      managed_policies:
+        - arn:aws:iam::aws:policy/AmazonEC2FullAccess
+        - arn:aws:iam::aws:policy/IAMFullAccess
+        - arn:aws:iam::aws:policy/AutoScalingFullAccess
+        - arn:aws:iam::aws:policy/ElasticLoadBalancingFullAccess
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - arn:aws:iam::aws:policy/ResourceGroupsandTagEditorFullAccess
+        - arn:aws:iam::aws:policy/AmazonRoute53FullAccess
+        - arn:aws:iam::aws:policy/ServiceQuotasFullAccess
+        - arn:aws:iam::aws:policy/CloudFrontFullAccess
+
+  - name: Create Connected VPC
+    amazon.aws.ec2_vpc_net:
+      name: "{{ aws_connected_vpc_name }}"
+      state: present
+      cidr_block: "{{ aws_connected_vpc_cidr }}"
+      region: "{{ aws_region }}"
+    register: connected_vpc_info
+
+  - name: Create Connected Private Subnet on Az1
+    amazon.aws.ec2_vpc_subnet:
+      state: present
+      vpc_id: "{{ connected_vpc_info.vpc.id }}"
+      cidr: "{{ aws_connected_subnet_cidr_az1 }}"
+      region: "{{ aws_region }}"
+      az: "{{ aws_availability_zone_1 }}"
+      tags:
+        Name: "{{ aws_connected_vpc_name }}-subnet-az1"
+    register: connected_subnet_info_az1
+
+  - name: Create Connected Private Subnet on Az2
+    amazon.aws.ec2_vpc_subnet:
+      state: present
+      vpc_id: "{{ connected_vpc_info.vpc.id }}"
+      cidr: "{{ aws_connected_subnet_cidr_az2 }}"
+      region: "{{ aws_region }}"
+      az: "{{ aws_availability_zone_2 }}"
+      tags:
+        Name: "{{ aws_connected_vpc_name }}-subnet-az2"
+    register: connected_subnet_info_az2
+
+  - name: Create Connected Private Subnet on Az3
+    amazon.aws.ec2_vpc_subnet:
+      state: present
+      vpc_id: "{{ connected_vpc_info.vpc.id }}"
+      cidr: "{{ aws_connected_subnet_cidr_az3 }}"
+      region: "{{ aws_region }}"
+      az: "{{ aws_availability_zone_3 }}"
+      tags:
+        Name: "{{ aws_connected_vpc_name }}-subnet-az3"
+    register: connected_subnet_info_az3
+
+  - name: Create Connected Public Subnet on Az1
+    amazon.aws.ec2_vpc_subnet:
+      state: present
+      vpc_id: "{{ connected_vpc_info.vpc.id }}"
+      cidr: "{{ aws_connected_public_subnet_cidr_az3 }}"
+      region: "{{ aws_region }}"
+      az: "{{ aws_availability_zone_1 }}"
+      tags:
+        Name: "{{ aws_connected_vpc_name }}-public-subnet-az1"
+    register: connected_public_subnet_info_az1
+
+  - name: Create Connected Public Subnet on Az2
+    amazon.aws.ec2_vpc_subnet:
+      state: present
+      vpc_id: "{{ connected_vpc_info.vpc.id }}"
+      cidr: "{{ aws_connected_public_subnet_cidr_az2 }}"
+      region: "{{ aws_region }}"
+      az: "{{ aws_availability_zone_2 }}"
+      tags:
+        Name: "{{ aws_connected_vpc_name }}-public-subnet-az2"
+    register: connected_public_subnet_info_az2
+
+  - name: Create Connected Public Subnet on Az3
+    amazon.aws.ec2_vpc_subnet:
+      state: present
+      vpc_id: "{{ connected_vpc_info.vpc.id }}"
+      cidr: "{{ aws_connected_public_subnet_cidr_az3 }}"
+      region: "{{ aws_region }}"
+      az: "{{ aws_availability_zone_3 }}"
+      tags:
+        Name: "{{ aws_connected_vpc_name }}-public-subnet-az3"
+    register: connected_public_subnet_info_az3
+
+  - name: Create Internet Gateway on Egress VPC
+    amazon.aws.ec2_vpc_igw:
+      vpc_id: "{{ connected_vpc_info.vpc.id }}"
+      state: present
+      region: "{{ aws_region }}"
+      tags:
+        Name: "{{ aws_connected_vpc_name }}-igw"
+    register: igw
+
+  - name: Connect Public Subnets to IGW and gateway for Connected VPC to be transit gateway
+    amazon.aws.ec2_vpc_route_table:
+      vpc_id: "{{ connected_vpc_info.vpc.id }}"
+      region: "{{ aws_region }}"
+      tags:
+        Name: "{{ prefix_for_name }}-connected-rt-igw"
+      subnets:
+        - "{{ connected_public_subnet_info_az1.subnet.id }}"
+        - "{{ connected_public_subnet_info_az2.subnet.id }}"
+        - "{{ connected_public_subnet_info_az3.subnet.id }}"
+      routes:
+        - dest: 0.0.0.0/0
+          gateway_id: "{{ igw.gateway_id }}"
+    register: connected_rt_public
+
+  - name: Create NAT Gateway in Public Subnet AZ1
+    amazon.aws.ec2_vpc_nat_gateway:
+      state: present
+      subnet_id: "{{ connected_public_subnet_info_az1.subnet.id }}"
+      wait: yes
+      region: "{{ aws_region }}"
+      if_exist_do_not_create: yes
+    register: nat_gateway_public_subnet_az1
+
+  - name: Connect Private Subnets to NAT Gateway on AZ1
+    amazon.aws.ec2_vpc_route_table:
+      vpc_id: "{{ connected_vpc_info.vpc.id }}"
+      region: "{{ aws_region }}"
+      resource_tags:
+        Name: "{{ prefix_for_name }}--rt-nat"
+      subnets:
+        - "{{ connected_subnet_info_az1.subnet.id }}"
+        - "{{ connected_subnet_info_az2.subnet.id }}"
+        - "{{ connected_subnet_info_az3.subnet.id }}"
+      routes:
+        - dest: 0.0.0.0/0
+          gateway_id: "{{ nat_gateway_public_subnet_az1.nat_gateway_id }}"
+    register: connected_rt_private
+
+  - name: Create S3 VPC Endpoints required for Openshift installation in connected mode
+    amazon.aws.ec2_vpc_endpoint:
+      state: present
+      region: "{{ aws_region }}"
+      vpc_id: "{{ connected_vpc_info.vpc.id }}"
+      service: "com.amazonaws.{{ aws_region }}.s3"
+      route_table_ids:
+        - "{{ connected_rt_public.route_table_id }}"
+        - "{{ connected_rt_private.route_table_id }}"
+      tags:
+        Name: "{{ prefix_for_name }}-s3-connected"
