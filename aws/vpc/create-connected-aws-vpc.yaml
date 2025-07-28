@@ -80,7 +80,7 @@
     amazon.aws.ec2_vpc_subnet:
       state: present
       vpc_id: "{{ connected_vpc_info.vpc.id }}"
-      cidr: "{{ aws_connected_public_subnet_cidr_az3 }}"
+      cidr: "{{ aws_connected_public_subnet_cidr_az1 }}"
       region: "{{ aws_region }}"
       az: "{{ aws_availability_zone_1 }}"
       tags:
