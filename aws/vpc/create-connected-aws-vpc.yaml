@@ -140,7 +140,7 @@
   - name: Create NAT Gateway in Public Subnet AZ1
     amazon.aws.ec2_vpc_nat_gateway:
       state: present
-      subnet_id: "{{ connected_public_subnet_info_az1.subnet.id }}"
+      subnet_id: "{{ connected_public_subnet_info_az2.subnet.id }}"
       wait: yes
       if_exist_do_not_create: true
       region: "{{ aws_region }}"
