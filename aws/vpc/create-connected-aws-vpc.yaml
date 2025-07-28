@@ -118,7 +118,7 @@
         Name: "{{ aws_connected_vpc_name }}-igw"
     register: igw
 
-  - name: Connect Public Subnets to IGW and gateway for Connected VPC to be transit gateway
+  - name: Connect Public Subnets to IGW
     amazon.aws.ec2_vpc_route_table:
       vpc_id: "{{ connected_vpc_info.vpc.id }}"
       region: "{{ aws_region }}"
@@ -145,6 +145,7 @@
       if_exist_do_not_create: true
       region: "{{ aws_region }}"
       connectivity_type: public
+      allocation_id: eipalloc-01aec85646a9b6c41
     register: nat_gateway_public_subnet_az1
 
   - name: Connect Private Subnets to NAT Gateway on AZ1
