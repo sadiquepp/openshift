@@ -140,6 +140,7 @@
       wait: yes
       if_exist_do_not_create: true
       region: "{{ aws_region }}"
+      connectivity_type: public
     register: nat_gateway_public_subnet_az1
 
   - name: Connect Private Subnets to NAT Gateway on AZ1
