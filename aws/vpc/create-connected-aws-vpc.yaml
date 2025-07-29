@@ -148,7 +148,7 @@
       vpc_id: "{{ connected_vpc_info.vpc.id }}"
       region: "{{ aws_region }}"
       resource_tags:
-        Name: "{{ prefix_for_name }}--rt-nat"
+        Name: "{{ prefix_for_name }}-rt-nat"
       subnets:
         - "{{ connected_subnet_info_az1.subnet.id }}"
         - "{{ connected_subnet_info_az2.subnet.id }}"
@@ -165,7 +165,7 @@
       vpc_id: "{{ connected_vpc_info.vpc.id }}"
       service: "com.amazonaws.{{ aws_region }}.s3"
       route_table_ids:
-        - "{{ connected_rt_public.route_table_id }}"
-        - "{{ connected_rt_private.route_table_id }}"
+        - "{{ connected_rt_public.route_table.route_table_id }}"
+        - "{{ connected_rt_private.route_table.route_table_id }}"
       tags:
         Name: "{{ prefix_for_name }}-s3-connected"
