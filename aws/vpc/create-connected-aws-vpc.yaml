@@ -133,10 +133,6 @@
           gateway_id: "{{ igw.gateway_id }}"
     register: connected_rt_public
 
-  - name: Pause for 30 seconds
-    ansible.builtin.pause:
-      seconds: 30
-
   - name: Create NAT Gateway in Public Subnet AZ1
     amazon.aws.ec2_vpc_nat_gateway:
       state: present
