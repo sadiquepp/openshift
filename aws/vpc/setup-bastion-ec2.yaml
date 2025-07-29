@@ -1,0 +1,127 @@
+- name: Setup Bastion Node
+  hosts: aws_ec2
+  gather_facts: false
+  remote_user: ec2-user
+  vars:
+    prefix_for_name: project_name
+    openshift_major_version: 4.18
+    openshift_minor_version: 20
+    openshift_version: "{{ openshift_major_version }}.{{ openshift_minor_version }}"
+    pull_secret_location: /home/ec2-user/pull-secret.txt
+    aws_region: ap-southeast-1
+    openshift_base_domain: example.com
+    openshift_cluster_name_suffix: xx1
+    openshift_cluster_name: "{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}"
+    sts_suffix: "{{ openshift_cluster_name }}-sts"
+  tasks:
+
+  - name: Wait for SSH banners
+    wait_for_connection:
+      delay: 5
+      timeout: 300
+
+  - name: Install Required RPM Packages
+    dnf:
+      name:
+        - tmux
+        - wget
+        - podman
+        - jq
+        - golang
+        - unzip
+        - bind-utils
+        - squid
+        - openssl-devel
+        - git
+        - yum-utils
+        - tigervnc
+        - tigervnc-server
+        - ansible-core
+        - '@Server with GUI'
+      state: present
+    become: true
+
+  - name: Create VNC User
+    ansible.builtin.user:
+      name: vncuser
+    become: true
+
+  - name: Creates .aws directory to store files
+    file:
+      path: /home/ec2-user/.aws
+      state: directory
+
+  - name: Update .aws/config with region
+    copy:
+      dest: /home/ec2-user/.aws/config
+      content: |
+        [default]
+        region = {{ aws_region }}
+
+  - name: Get the Mirror Registry, OC and OPM Tarball
+    get_url:
+      url: "{{ item }}"
+      dest: /home/ec2-user/
+    loop:
+      - https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/{{ openshift_major_version }}.{{ openshift_minor_version }}/openshift-client-linux.tar.gz
+      - https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/{{ openshift_major_version }}.{{ openshift_minor_version }}/openshift-install-linux.tar.gz
+      - https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/{{ openshift_major_version }}.{{ openshift_minor_version }}/ccoctl-linux-rhel9.tar.gz
+      - https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip
+      - https://mirror.openshift.com/pub/openshift-v4/clients/rosa/latest/rosa-linux.tar.gz
+
+  - name: Unarchive Downloaded Tarballs
+    unarchive:
+      src: "/home/ec2-user/{{ item }}"
+      dest: /home/ec2-user/
+      remote_src: yes
+    loop:
+      - openshift-client-linux.tar.gz
+      - awscli-exe-linux-x86_64.zip
+      - rosa-linux.tar.gz
+      - openshift-install-linux.tar.gz
+      - ccoctl-linux-rhel9.tar.gz
+
+  - name: Copy OC CLI to /usr/bin
+    copy:
+      src: "/home/ec2-user/{{ item }}"
+      dest: "/usr/bin/{{ item }}"
+      remote_src: yes
+      mode: 0755
+    loop:
+      - oc
+      - rosa
+      - kubectl
+      - openshift-install
+      - ccoctl
+    become: yes
+
+  - name: Create credentials directory
+    file:
+      path: "/home/ec2-user/{{ item }}"
+      state: directory
+    loop:
+      - install-dir
+      - sts
+
+  - name: Delete existing sts resources
+    shell: |
+      cd /home/ec2-user/sts
+      ccoctl aws delete --name {{ sts_suffix }} --region {{ aws_region }}
+
+  - name: Extract the list of CredentialsRequest objects from the OpenShift Container Platform release image
+    shell: |
+      cd /home/ec2-user/sts
+      RELEASE_IMAGE=$(openshift-install version | awk '/release image/ {print $3}')
+      oc adm release extract --credentials-requests \
+      --cloud=aws \
+      --to=/home/ec2-user/sts/credrequests \
+      ${RELEASE_IMAGE}
+
+  - name: Create All STS Files
+    shell: |
+      cd /home/ec2-user/sts
+      ccoctl aws create-all \
+      --credentials-requests-dir /home/ec2-user/sts/credrequests/ \
+      --name {{ sts_suffix }} \
+      --region {{ aws_region }} \
+      --create-private-s3-bucket

@@ -1,0 +1,22 @@
+# aws ec2 ansible dynamic inventory plugin
+plugin: amazon.aws.aws_ec2
+
+# set the regions. 
+regions: 
+  - ap-southeast-1
+
+strict: False
+
+keyed_groups:
+  - key: tags
+    prefix: tag
+
+filters:
+  tag:Automation:
+    - osc-aws_installer
+hostnames:
+  - ip-address
+  - dns-name
+  - tag:Name
+  - tag:env
+  - private-ip-address
