@@ -128,7 +128,7 @@
       security_group: "{{ aws_security_group_for_ec2 }}"
       instance_role: "{{ aws_iam_role_name }}"
       tags:
-        Automation: sputhenp_ocp_installer
+        Automation: "{{ prefix_for_name }}_installer"
       volumes:
         - device_name: /dev/sda1
           ebs:
@@ -143,6 +143,9 @@
         connected_subnet_id_a: "{{ connected_subnet_info_az1.subnets[0].subnet_id }}"
         connected_subnet_id_b: "{{ connected_subnet_info_az2.subnets[0].subnet_id }}"
         connected_subnet_id_c: "{{ connected_subnet_info_az3.subnets[0].subnet_id }}"
+        connected_public_subnet_id_a: "{{ connected_public_subnet_info_az1.subnets[0].subnet_id }}"
+        connected_public_subnet_id_b: "{{ connected_public_subnet_info_az2.subnets[0].subnet_id }}"
+        connected_public_subnet_id_c: "{{ connected_public_subnet_info_az3.subnets[0].subnet_id }}"
         hosted_zone_id_for_domain: "{{ hosted_zone_info.zone_id }}"
         connected_vpc_cidr: "{{ connected_vpc_info.vpcs[0].cidr_block }}"
         connected_vpc_id: "{{ connected_vpc_info.vpcs[0].vpc_id }}"
