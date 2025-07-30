@@ -157,7 +157,7 @@
       security_group: "{{ aws_security_group_for_ec2 }}"
       instance_role: "{{ aws_iam_role_name }}"
       tags:
-        Automation: "{{ prefix_for_name }}_installer"
+        Automation: "openshift_connected_installer"
       volumes:
         - device_name: /dev/sda1
           ebs:

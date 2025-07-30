@@ -13,7 +13,7 @@ keyed_groups:
 
 filters:
   tag:Automation:
-    - osc-aws_installer
+    - openshift_connected_installer
 hostnames:
   - ip-address
   - dns-name
