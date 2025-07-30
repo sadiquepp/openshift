@@ -20,21 +20,6 @@
     aws_iam_role_name: "{{ prefix_for_name }}-ocp-install-ec2"
   tasks:
 
-  - name: Create a role for ec2 instance to assume to install openshift
-    community.aws.iam_role:
-      name: "{{ aws_iam_role_name }}"
-      assume_role_policy_document: "{{ lookup('file','policy.json') }}"
-      managed_policies:
-        - arn:aws:iam::aws:policy/AmazonEC2FullAccess
-        - arn:aws:iam::aws:policy/IAMFullAccess
-        - arn:aws:iam::aws:policy/AutoScalingFullAccess
-        - arn:aws:iam::aws:policy/ElasticLoadBalancingFullAccess
-        - arn:aws:iam::aws:policy/AmazonS3FullAccess
-        - arn:aws:iam::aws:policy/ResourceGroupsandTagEditorFullAccess
-        - arn:aws:iam::aws:policy/AmazonRoute53FullAccess
-        - arn:aws:iam::aws:policy/ServiceQuotasFullAccess
-        - arn:aws:iam::aws:policy/CloudFrontFullAccess
-
   - name: Create Connected VPC
     amazon.aws.ec2_vpc_net:
       name: "{{ aws_connected_vpc_name }}"

@@ -17,6 +17,35 @@
     ssh_public_key_for_ec2_and_openshit_node: ""
   tasks:
 
+  - name: Create a role for ec2 instance to assume to install openshift
+    amazon.aws.iam_role:
+      name: "{{ aws_iam_role_name }}"
+      assume_role_policy_document: "{{ lookup('file','policy.json') }}"
+
+  - name: Create Installer policy and attach to the role
+    amazon.aws.iam_policy:
+      policy_name: openshift-install-cluster-4-18
+      iam_type: role
+      iam_name: "{{ aws_iam_role_name }}"
+      policy_json: "{{ lookup('template', '4.18/install-cluster-policy.json') }}"
+      state: present
+
+  - name: Create CCOCTL policy and attach to the role
+    amazon.aws.iam_policy:
+      policy_name: ccoctl-policy-4-18
+      iam_type: role
+      iam_name: "{{ aws_iam_role_name }}"
+      policy_json: "{{ lookup('template', '4.18/ccoctl-policy.json') }}"
+      state: present
+
+  - name: Create policy to Delete Cluster and attach to the role
+    amazon.aws.iam_policy:
+      policy_name: openshift-delete-cluster-4-18
+      iam_type: role
+      iam_name: "{{ aws_iam_role_name }}"
+      policy_json: "{{ lookup('template', '4.18/delete-cluster-policy.json') }}"
+      state: present
+
   - name: Creae ssh key pair using the given public key
     amazon.aws.ec2_key:
       name: "{{ aws_key_name }}"
