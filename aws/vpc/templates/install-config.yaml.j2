@@ -35,13 +35,5 @@ platform:
     hostedZone: {{ hosted_zone_id_for_domain }} 
 publish: Internal
 pullSecret: {{ pull_secret }}
-imageContentSources:
-- mirrors:
-  - {{ installer_quay_hostname.stdout }}:8443/openshift/release-images
-  source: quay.io/openshift-release-dev/ocp-release
-- mirrors:
-  - {{ installer_quay_hostname.stdout }}:8443/openshift/release
-  source: quay.io/openshift-release-dev/ocp-v4.0-art-dev
 sshKey: |
   {{ ssh_public_key_for_ec2_and_openshit_node }}
-additionalTrustBundle: |
