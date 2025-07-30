@@ -34,7 +34,7 @@ platform:
     - {{ connected_subnet_id_c }}
     hostedZone: {{ hosted_zone_id_for_domain }} 
 publish: Internal
-pullSecret: '{"auths":{"{{ installer_quay_hostname.stdout }}:8443": {"auth": {{ quay_credential.stdout }}} }}'
+pullSecret: {{ pull_secret }}
 imageContentSources:
 - mirrors:
   - {{ installer_quay_hostname.stdout }}:8443/openshift/release-images
