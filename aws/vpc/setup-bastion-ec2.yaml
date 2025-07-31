@@ -45,6 +45,13 @@
       name: vncuser
     become: true
 
+  - name: Linsten for vnc server on port 5999
+    ansible.builtin.lineinfile:
+      path: /etc/tigervnc/vncserver.users
+      insertafter: EOF
+      line: ":99=vncuser"
+    become: true
+
   - name: Creates .aws directory to store files
     file:
       path: /home/ec2-user/.aws
