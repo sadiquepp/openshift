@@ -137,7 +137,9 @@
           cidr_ip:
             - "{{ connected_vpc_info.vpcs[0].cidr_block }}"
         - proto: tcp
-          ports: 22
+          ports:
+            - 22
+            - 5999
           cidr_ip: 0.0.0.0/0
     register: sg_info
 
