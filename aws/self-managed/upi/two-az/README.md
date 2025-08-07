@@ -164,7 +164,6 @@ SUBNET_ID_AZ2=<subnet_id_of_az2>
 CERTIFICATE_AUTHORITY=$(cat install-dir/master.ign | cut -f8 -d{ | cut -f2,3 -d: | cut -f1 -d})
 
 ````
-* Inspect install-dir/master.ign
 * Replace the variables in control plane parameters.json file.
 ```
 sed -i "s/infra_id/$INFRA_ID/g" control-plane-parameters.json
