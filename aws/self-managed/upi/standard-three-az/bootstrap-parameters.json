@@ -1,0 +1,50 @@
+[
+  {
+    "ParameterKey": "InfrastructureName", 
+    "ParameterValue": "infra_id" 
+  },
+  {
+    "ParameterKey": "RhcosAmi", 
+    "ParameterValue": "rhcos_ami_id" 
+  },
+  {
+    "ParameterKey": "AllowedBootstrapSshCidr", 
+    "ParameterValue": "0.0.0.0/0" 
+  },
+  {
+    "ParameterKey": "PrivateSubnet", 
+    "ParameterValue": "subnet_id" 
+  },
+  {
+    "ParameterKey": "MasterSecurityGroupId", 
+    "ParameterValue": "master_sg_id" 
+  },
+  {
+    "ParameterKey": "VpcId", 
+    "ParameterValue": "vpc_id" 
+  },
+  {
+    "ParameterKey": "BootstrapIgnitionLocation", 
+    "ParameterValue": "s3://infra_id/bootstrap.ign" 
+  },
+  {
+    "ParameterKey": "AutoRegisterELB", 
+    "ParameterValue": "no" 
+  },
+  {
+    "ParameterKey": "RegisterNlbIpTargetsLambdaArn", 
+    "ParameterValue": "arn:aws:lambda:<aws_region>:<account_number>:function:<dns_stack_name>-RegisterNlbIpTargets-<random_string>" 
+  },
+  {
+    "ParameterKey": "ExternalApiTargetGroupArn", 
+    "ParameterValue": "arn:aws:elasticloadbalancing:<aws_region>:<account_number>:targetgroup/<dns_stack_name>-Exter-<random_string>" 
+  },
+  {
+    "ParameterKey": "InternalApiTargetGroupArn", 
+    "ParameterValue": "arn:aws:elasticloadbalancing:<aws_region>:<account_number>:targetgroup/<dns_stack_name>-Inter-<random_string>" 
+  },
+  {
+    "ParameterKey": "InternalServiceTargetGroupArn", 
+    "ParameterValue": "arn:aws:elasticloadbalancing:<aws_region>:<account_number>:targetgroup/<dns_stack_name>-Inter-<random_string>" 
+  }
+]
