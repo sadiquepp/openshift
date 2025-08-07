@@ -1,0 +1,50 @@
+apiVersion: v1
+baseDomain: domainname
+credentialsMode: Manual
+compute:
+- architecture: amd64
+  hyperthreading: Enabled
+  name: worker
+  platform: {}
+  replicas: 3
+controlPlane:
+  architecture: amd64
+  hyperthreading: Enabled
+  name: master
+  platform: {}
+  replicas: 3
+metadata:
+  creationTimestamp: null
+  name: cluster-name
+networking:
+  clusterNetwork:
+  - cidr: 10.128.0.0/14
+    hostPrefix: 23
+  machineNetwork:
+  - cidr: 172.16.0.0/16
+  networkType: OVNKubernetes
+  serviceNetwork:
+  - 172.30.0.0/16
+platform:
+  aws:
+    region: ap-southeast-1
+    subnets: 
+    - subnet-id-1
+    - subnet-id-2
+    serviceEndpoints:
+      - name: sts
+        url: https://sts.ap-southeast-1.amazonaws.com
+publish: Internal
+pullSecret: '{"auths":{"mirror-registry:8443": {"auth": "password"} }}'
+imageContentSources:
+- mirrors:
+  - mirror-registry:8443/openshift/release-images
+  source: quay.io/openshift-release-dev/ocp-release
+- mirrors:
+  - mirror-registry:8443/openshift/release
+  source: quay.io/openshift-release-dev/ocp-v4.0-art-dev
+sshKey: |
+  ssh-rsa key
+additionalTrustBundle: |
+    -----BEGIN CERTIFICATE-----
+    -----END CERTIFICATE-----
