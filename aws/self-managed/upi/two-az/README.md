@@ -125,8 +125,8 @@ aws cloudformation create-stack --stack-name security-group-role --template-body
 * Once CloudFormation stack creation is successful, set below variables after getting values from AWS Console -> CloudFormation Stack -> Select the Stack -> Outputs
 
 ~~~
-MasterInstanceProfile=<master_instance_profile>
-MasterSecurityGroupId=<master_sg_id>
+export MasterInstanceProfile=<master_instance_profile>
+export MasterSecurityGroupId=<master_sg_id>
 ~~~
 
 # Create Bootstrap Node
