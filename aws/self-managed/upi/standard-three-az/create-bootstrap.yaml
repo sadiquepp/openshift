@@ -54,6 +54,9 @@ Parameters:
     Description: Instance type for the bootstrap EC2 instance
     Default: "i3.large"
     Type: String
+  BootStrapPrivateIP:
+    Description: Private IP for BootStrap Node
+    Type: String
 
 Metadata:
   AWS::CloudFormation::Interface:
@@ -170,6 +173,7 @@ Resources:
         - !Ref "BootstrapSecurityGroup"
         - !Ref "MasterSecurityGroupId"
         SubnetId: !Ref "PrivateSubnet"
+        PrivateIpAddress: !Ref "BootStrapPrivateIP"
       Tags:
       - Key: Name
         Value: !Join ["-", [!Ref InfrastructureName, "bootstrap"]]

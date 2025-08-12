@@ -36,6 +36,15 @@ Parameters:
   MasterSecurityGroupId:
     Description: The master security group ID to associate with master nodes.
     Type: AWS::EC2::SecurityGroup::Id
+  Master0PrivateIP:
+    Description: Private IP for Master in AZ1
+    Type: String
+  Master1PrivateIP:
+    Description: Private IP for Master in AZ2
+    Type: String
+  Master2PrivateIP:
+    Description: Private IP for Master in AZ3
+    Type: String
   IgnitionLocation:
     Default: https://api-int.$CLUSTER_NAME.$DOMAIN:22623/config/master
     Description: Ignition config file location.
@@ -150,6 +159,7 @@ Resources:
         GroupSet:
         - !Ref "MasterSecurityGroupId"
         SubnetId: !Ref "Master0Subnet"
+        PrivateIpAddress: !Ref "Master0PrivateIP"
       UserData:
         Fn::Base64: !Sub
         - '{"ignition":{"config":{"merge":[{"source":"${SOURCE}"}]},"security":{"tls":{"certificateAuthorities":[{"source":"${CA_BUNDLE}"}]}},"version":"3.1.0"}}'
@@ -204,6 +214,7 @@ Resources:
         GroupSet:
         - !Ref "MasterSecurityGroupId"
         SubnetId: !Ref "Master1Subnet"
+        PrivateIpAddress: !Ref "Master1PrivateIP"
       UserData:
         Fn::Base64: !Sub
         - '{"ignition":{"config":{"merge":[{"source":"${SOURCE}"}]},"security":{"tls":{"certificateAuthorities":[{"source":"${CA_BUNDLE}"}]}},"version":"3.1.0"}}'
@@ -258,6 +269,7 @@ Resources:
         GroupSet:
         - !Ref "MasterSecurityGroupId"
         SubnetId: !Ref "Master2Subnet"
+        PrivateIpAddress: !Ref "Master2PrivateIP"
       UserData:
         Fn::Base64: !Sub
         - '{"ignition":{"config":{"merge":[{"source":"${SOURCE}"}]},"security":{"tls":{"certificateAuthorities":[{"source":"${CA_BUNDLE}"}]}},"version":"3.1.0"}}'

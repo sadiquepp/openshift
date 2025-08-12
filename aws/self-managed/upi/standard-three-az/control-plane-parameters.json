@@ -51,6 +51,18 @@
     "ParameterKey": "MasterInstanceType", 
     "ParameterValue": "m5.xlarge" 
   },
+    {
+    "ParameterKey": "Master0PrivateIP",
+    "ParameterValue": "master0-private-ip" 
+  },
+  {
+    "ParameterKey": "Master1PrivateIP",
+    "ParameterValue": "master1-private-ip"
+  },
+  {
+    "ParameterKey": "Master2PrivateIP",
+    "ParameterValue": "master2-private-ip"
+  },
   {
     "ParameterKey": "AutoRegisterELB", 
     "ParameterValue": "no" 
