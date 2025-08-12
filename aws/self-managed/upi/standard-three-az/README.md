@@ -125,18 +125,18 @@ aws cloudformation create-stack --stack-name security-group-role --template-body
 * Once CloudFormation stack creation is successful, set below variables after getting values from AWS Console -> CloudFormation Stack -> Select the Stack -> Outputs
 
 ~~~
-MasterInstanceProfile=<master_instance_profile>
-MasterSecurityGroupId=<master_sg_id>
+export MasterInstanceProfile=<master_instance_profile>
+export MasterSecurityGroupId=<master_sg_id>
 ~~~
 
 # Create Bootstrap Node
 * Get the rhcos AMI ID for your region and for the version of openshift going to be installed from official DOC. An example for 4.18 the list is here - https://docs.redhat.com/en/documentation/openshift_container_platform/4.18/html/installing_on_aws/user-provisioned-infrastructure#installation-aws-user-infra-rhcos-ami_installing-restricted-networks-aws
 ```
-RHCOS_AMI_ID=<rhcos_ami_id>
+export RHCOS_AMI_ID=<rhcos_ami_id>
 ```
 * Set the private ip of bootstrap node into a variable.
 ```
-export BOOTSTRAP_PRIVATE_IP=<bootstrap-_private_ip>
+export BOOTSTRAP_PRIVATE_IP=<bootstrap_private_ip>
 ```
 * Replace the variables in bootstrap-parameters.json
 ```
@@ -152,50 +152,45 @@ sed -i "s/bootstrap-private-ip/$BOOTSTRAP_PRIVATE_IP/g" bootstrap-parameters.jso
 ```
 aws cloudformation create-stack --stack-name bootstrap --template-body file://create-bootstrap.yaml --parameters file://bootstrap-parameters.json --capabilities CAPABILITY_NAMED_IAM
 ```
-* Once CloudFormation stack creation is successful, set below variables after getting values from AWS Console -> CloudFormation Stack -> Select the Stack -> Outputs
 
-~~~
-BootstrapPrivateIp=<boot_strap_private_ip>
-~~~
-
-* Once bootstrap private IP is available, Configure LoadBalancer to route 6443 and 22623 for both api and api-int to that ip address. Please do not proceed to next step before the LoadBalancer shows the bootstrap node as a healthy target and it's ready to send request to bootstrap node.
+* The API will now be available via Load Balancer if DNS and LB is already set up to have bootstrap node as the backend.
 
 # Create ControlPlane Nodes
 * Set Cluster Name into a variable.
 ```
-CLUSTER_NAME=<cluster-name>
+export CLUSTER_NAME=<cluster-name>
 ```
 * Set Cluster Domain Name into a variable.
 ```
-CLUSTER_DOMAIN_NAME=<cluster-domain-name>
+export CLUSTER_DOMAIN_NAME=<cluster-domain-name>
 ```
 * Set Subnet ID from AZ1 to a variable.
 ```
-SUBNET_ID_AZ1=<subnet_id_of_az1>
+export SUBNET_ID_AZ1=<subnet_id_of_az1>
 ```
 * Set Subnet ID from AZ2 to a variable.
 ```
-SUBNET_ID_AZ2=<subnet_id_of_az2>
+export SUBNET_ID_AZ2=<subnet_id_of_az2>
 ```
 * Set Subnet ID from AZ2 to a variable.
 ```
-SUBNET_ID_AZ3=<subnet_id_of_az3>
+export SUBNET_ID_AZ3=<subnet_id_of_az3>
 ```
 * Set the private ip of master0 into a variable
 ```
-MASTER0_PRIVATE_IP=<private_ip_of_master0>
+export MASTER0_PRIVATE_IP=<private_ip_of_master0>
 ```
 * Set the private ip of master1 into a variable
 ```
-MASTER1_PRIVATE_IP=<private_ip_of_master1>
+export MASTER1_PRIVATE_IP=<private_ip_of_master1>
 ```
 * Set the private ip of master2 into a variable
 ```
-MASTER2_PRIVATE_IP=<private_ip_of_master2>
+export MASTER2_PRIVATE_IP=<private_ip_of_master2>
 ```
 * Extract certfiicate from master.ign and set into a variable.
 ```
-CERTIFICATE_AUTHORITY=$(cat install-dir/master.ign | cut -f8 -d{ | cut -f2,3 -d: | cut -f1 -d})
+export CERTIFICATE_AUTHORITY=$(cat install-dir/master.ign | cut -f8 -d{ | cut -f2,3 -d: | cut -f1 -d})
 ````
 
 * Replace the variables in control plane parameters.json file.
@@ -218,10 +213,6 @@ sed -i "s/master2-private-ip/$MASTER2_PRIVATE_IP/g" control-plane-parameters.jso
 ```
 aws cloudformation create-stack --stack-name control-plane --template-body file://create-control-plane.yaml --parameters file://control-plane-parameters.json
 ```
-
-* Once CloudFormation stack creation is successful, get the private ip of the master nodes from AWS Console -> CloudFormation Stack -> Select the Stack -> Outputs
-
-* Configure LoadBalancer to route 6443 and 22623 for both api and api-int to those ip addresses too in addition to he bootstrap nodes.
 
 # Monitoring Cluster Status
 
