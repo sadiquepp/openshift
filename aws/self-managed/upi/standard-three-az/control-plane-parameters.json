@@ -51,7 +51,7 @@
     "ParameterKey": "MasterInstanceType", 
     "ParameterValue": "m5.xlarge" 
   },
-    {
+  {
     "ParameterKey": "Master0PrivateIP",
     "ParameterValue": "master0-private-ip" 
   },

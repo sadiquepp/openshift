@@ -27,7 +27,7 @@
     "ParameterKey": "BootstrapIgnitionLocation", 
     "ParameterValue": "s3://infra_id/bootstrap.ign" 
   },
-    {
+  {
     "ParameterKey": "BootStrapPrivateIP",
     "ParameterValue": "bootstrap-private-ip"
   },

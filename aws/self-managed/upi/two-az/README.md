@@ -12,11 +12,10 @@ This doc will cover deployment of disconnected OpenShift using UPI in just two a
 # Requirements
 * A disconnected vpc with all the required vpc endpoints like s3, ec2, sts, elasticloadbalancing
 * A mirror registry with the required release images and operator images alread mirrored and accessible from the vpc.
-* DNS should be managed outside of Openshift. There will be no route53 integration. 
-* DNS must be set up to resolve api.<clustername>.<cluster-domain>, api-int.<clustername>.<cluster-domain>  and *.apps.<clustername>.<cluster-domain> to the LoadBalancer.
-* External LoadBalncer for api, api-int and *.apps must be set up while backend nodes will be configured during the installation. A better way is to give predictive IP address to bootstrap node and master nodes so that LoadBalancer can be configured upfront. Current CloudFormation templates do not set pre-determined ips to these nodes. Feel free to customize CF templates if that is desired.
-* LoadBalancer should accept 6443 for api and api-int and be able to forward to bootstrap and master nodes during the deployment when those backend nodes are added.
-* LoadBalancer should accept 22623 for api and api-int and be able to forward to bootstrap and master nodes during the deployment when those backend nodes are added.
+* Pre-determine and reserve the ip for bootstrap node (From any AZ1 or AZ2 ) master0 (From AZ1), master1 (from AZ1), and master2 (From AZ2). It's recommended to do an explicit reservation for these ip addresses in AWS VCP -> Subnets -> Actions -> Edit IPv4 CIDR Reservation section.
+* Configure external LoadBalncer to listen on 6443 and 22623 for api, api-int using the above nodes (1 bootstrap and 3 master) as the backend nodes.
+* DNS should be managed outside of Openshift. There will be no route53 integration.
+* Set up DNS to resolve api.., api-int.. and *.apps.. to the LoadBalancer.
 
 # Generate STS resources on AWS and openshift artifacts.
 * Extract openshift-install from mirror registry.
@@ -87,7 +86,7 @@ vi install-dir/manifests/cluster-dns-02-config.yml
 
 * Get the infraId
 ```
-INFRA_ID=$(jq -r .infraID install-dir/metadata.json)
+export INFRA_ID=$(jq -r .infraID install-dir/metadata.json)
 echo $INFRA_ID
 ```
 
@@ -98,12 +97,17 @@ aws s3 cp install-dir/bootstrap.ign s3://${INFRA_ID}/bootstrap.ign
 ```
 # Create Security Groups and IAM roles
 
-* Set Variables
-
+* Set VPC ID into a variable
 ```
-VPC_ID=<vpc_id>
-VPC_CIDR=<vpc_cidr>
-SUBNET_ID=<subnet_id_from_any_az>
+export VPC_ID=<vpc_id>
+```
+* Set VPC CIDR into a variable
+```
+export VPC_CIDR=<vpc_cidr>
+```
+* Set Subnet ID into a variable.
+```
+export SUBNET_ID=<subnet_id_from_any_az>
 ```
 
 * Replace Variables in CloudFormation Parameter file to create security group and IAM roles.
@@ -123,16 +127,17 @@ aws cloudformation create-stack --stack-name security-group-role --template-body
 ~~~
 MasterInstanceProfile=<master_instance_profile>
 MasterSecurityGroupId=<master_sg_id>
-WorkerInstanceProfile=<worker_instance_profile>
-WorkerSecurityGroupId=<worker_sg_id>
 ~~~
 
 # Create Bootstrap Node
 * Get the rhcos AMI ID for your region and for the version of openshift going to be installed from official DOC. An example for 4.18 the list is here - https://docs.redhat.com/en/documentation/openshift_container_platform/4.18/html/installing_on_aws/user-provisioned-infrastructure#installation-aws-user-infra-rhcos-ami_installing-restricted-networks-aws
 ```
-RHCOS_AMI_ID=<rhcos_ami_id>
+export RHCOS_AMI_ID=<rhcos_ami_id>
 ```
-
+* Set the private ip of bootstrap node into a variable.
+```
+export BOOTSTRAP_PRIVATE_IP=<bootstrap_private_ip>
+```
 * Replace the variables in bootstrap-parameters.json
 ```
 sed -i "s/infra_id/$INFRA_ID/g" bootstrap-parameters.json
@@ -140,6 +145,7 @@ sed -i "s/vpc_id/$VPC_ID/g" bootstrap-parameters.json
 sed -i "s/subnet_id/$SUBNET_ID/g" bootstrap-parameters.json
 sed -i "s/master_sg_id/$MasterSecurityGroupId/g" bootstrap-parameters.json
 sed -i "s/rhcos_ami_id/$RHCOS_AMI_ID/g" bootstrap-parameters.json
+sed -i "s/bootstrap-private-ip/$BOOTSTRAP_PRIVATE_IP/g" bootstrap-parameters.json
 ```
 
 * Create the stack to deploy bootstrap node
@@ -155,13 +161,37 @@ BootstrapPrivateIp=<boot_strap_private_ip>
 * Once bootstrap private IP is available, Configure LoadBalancer to route 6443 and 22623 for both api and api-int to that ip address. Please do not proceed to next step before the LoadBalancer shows the bootstrap node as a healthy target and it's ready to send request to bootstrap node.
 
 # Create ControlPlane Nodes
-* Set required variables
+* Set Cluster Name into a variable.
 ```
-CLUSTER_NAME=<cluster-name>
-CLUSTER_DOMAIN_NAME=<cluster-domain-name>
-SUBNET_ID_AZ1=<subnet_id_of_az1>
-SUBNET_ID_AZ2=<subnet_id_of_az2>
-CERTIFICATE_AUTHORITY=$(cat install-dir/master.ign | cut -f8 -d{ | cut -f2,3 -d: | cut -f1 -d})
+export CLUSTER_NAME=<cluster-name>
+```
+* Set Cluster Domain Name into a variable.
+```
+export CLUSTER_DOMAIN_NAME=<cluster-domain-name>
+```
+* Set Subnet ID from AZ1 to a variable.
+```
+export SUBNET_ID_AZ1=<subnet_id_of_az1>
+```
+* Set Subnet ID from AZ2 to a variable.
+```
+export SUBNET_ID_AZ2=<subnet_id_of_az2>
+```
+* Set the private ip of master0 into a variable
+```
+export MASTER0_PRIVATE_IP=<private_ip_of_master0>
+```
+* Set the private ip of master1 into a variable
+```
+export MASTER1_PRIVATE_IP=<private_ip_of_master1>
+```
+* Set the private ip of master2 into a variable
+```
+export MASTER2_PRIVATE_IP=<private_ip_of_master2>
+```
+* Extract certfiicate from master.ign and set into a variable.
+```
+export CERTIFICATE_AUTHORITY=$(cat install-dir/master.ign | cut -f8 -d{ | cut -f2,3 -d: | cut -f1 -d})
 
 ````
 * Replace the variables in control plane parameters.json file.
@@ -174,16 +204,15 @@ sed -i "s/subnet_id_az2/$SUBNET_ID_AZ2/g" control-plane-parameters.json
 sed -i "s/clustername/$CLUSTER_NAME/g" control-plane-parameters.json
 sed -i "s/domainname/$CLUSTER_DOMAIN_NAME/g" control-plane-parameters.json
 sed -i "s#certificate_authority#$CERTIFICATE_AUTHORITY#g" control-plane-parameters.json
+sed -i "s/master0-private-ip/$MASTER0_PRIVATE_IP/g" control-plane-parameters.json
+sed -i "s/master1-private-ip/$MASTER1_PRIVATE_IP/g" control-plane-parameters.json
+sed -i "s/master2-private-ip/$MASTER2_PRIVATE_IP/g" control-plane-parameters.json
 ```
 
 * Create the stack to deploy ControlPlane node
 ```
 aws cloudformation create-stack --stack-name control-plane --template-body file://create-control-plane.yaml --parameters file://control-plane-parameters.json
 ```
-
-* Once CloudFormation stack creation is successful, get the private ip of the master nodes from AWS Console -> CloudFormation Stack -> Select the Stack -> Outputs
-
-* Configure LoadBalancer to route 6443 and 22623 for both api and api-int to those ip addresses too in addition to he bootstrap nodes.
 
 # Monitoring Cluster Status
 
