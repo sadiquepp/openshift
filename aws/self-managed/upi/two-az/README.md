@@ -152,11 +152,6 @@ sed -i "s/bootstrap-private-ip/$BOOTSTRAP_PRIVATE_IP/g" bootstrap-parameters.jso
 ```
 aws cloudformation create-stack --stack-name bootstrap --template-body file://create-bootstrap.yaml --parameters file://bootstrap-parameters.json --capabilities CAPABILITY_NAMED_IAM
 ```
-* Once CloudFormation stack creation is successful, set below variables after getting values from AWS Console -> CloudFormation Stack -> Select the Stack -> Outputs
-
-~~~
-BootstrapPrivateIp=<boot_strap_private_ip>
-~~~
 
 * The API will now be available via Load Balancer if DNS and LB is already set up to have bootstrap node as the backend.
 
