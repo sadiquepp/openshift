@@ -158,7 +158,7 @@ aws cloudformation create-stack --stack-name bootstrap --template-body file://cr
 BootstrapPrivateIp=<boot_strap_private_ip>
 ~~~
 
-* Once bootstrap private IP is available, Configure LoadBalancer to route 6443 and 22623 for both api and api-int to that ip address. Please do not proceed to next step before the LoadBalancer shows the bootstrap node as a healthy target and it's ready to send request to bootstrap node.
+* The API will now be available via Load Balancer if DNS and LB is already set up to have bootstrap node as the backend.
 
 # Create ControlPlane Nodes
 * Set Cluster Name into a variable.
