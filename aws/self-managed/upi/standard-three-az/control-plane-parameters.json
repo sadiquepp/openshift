@@ -41,7 +41,7 @@
   },
   {
     "ParameterKey": "CertificateAuthorities",
-    "ParameterValue": "certificate_authority"
+    "ParameterValue": certificate_authority
   },
   {
     "ParameterKey": "MasterInstanceProfileName", 
