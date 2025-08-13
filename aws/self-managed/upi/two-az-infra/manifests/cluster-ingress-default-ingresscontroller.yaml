@@ -10,9 +10,7 @@ spec:
       name: ""
     clientCertificatePolicy: ""
   endpointPublishingStrategy:
-    loadBalancer:
-      scope: Internal
-    type: LoadBalancerService
+    type: HostNetwork
   httpCompression: {}
   httpErrorCodePages:
     name: ""

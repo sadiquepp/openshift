@@ -7,8 +7,6 @@ spec:
   domain: apps.clustername.domainname
   loadBalancer:
     platform:
-      aws:
-        type: Classic
-      type: AWS
+      type: ""
 status:
   defaultPlacement: Workers
