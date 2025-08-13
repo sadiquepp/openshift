@@ -53,15 +53,15 @@
   },
   {
     "ParameterKey": "Master0PrivateIP",
-    "ParameterValue": "master0-private-ip" 
+    "ParameterValue": "master0_private_ip" 
   },
   {
     "ParameterKey": "Master1PrivateIP",
-    "ParameterValue": "master1-private-ip"
+    "ParameterValue": "master1_private_ip"
   },
   {
     "ParameterKey": "Master2PrivateIP",
-    "ParameterValue": "master2-private-ip"
+    "ParameterValue": "master2_private_ip"
   },
   {
     "ParameterKey": "AutoRegisterELB", 

@@ -145,7 +145,7 @@ sed -i "s/vpc_id/$VPC_ID/g" bootstrap-parameters.json
 sed -i "s/subnet_id/$SUBNET_ID/g" bootstrap-parameters.json
 sed -i "s/master_sg_id/$MasterSecurityGroupId/g" bootstrap-parameters.json
 sed -i "s/rhcos_ami_id/$RHCOS_AMI_ID/g" bootstrap-parameters.json
-sed -i "s/bootstrap-private-ip/$BOOTSTRAP_PRIVATE_IP/g" bootstrap-parameters.json
+sed -i "s/bootstrap_private_ip/$BOOTSTRAP_PRIVATE_IP/g" bootstrap-parameters.json
 ```
 
 * Create the stack to deploy bootstrap node
@@ -204,9 +204,9 @@ sed -i "s/subnet_id_az3/$SUBNET_ID_AZ3/g" control-plane-parameters.json
 sed -i "s/clustername/$CLUSTER_NAME/g" control-plane-parameters.json
 sed -i "s/domainname/$CLUSTER_DOMAIN_NAME/g" control-plane-parameters.json
 sed -i "s#certificate_authority#$CERTIFICATE_AUTHORITY#g" control-plane-parameters.json
-sed -i "s/master0-private-ip/$MASTER0_PRIVATE_IP/g" control-plane-parameters.json
-sed -i "s/master1-private-ip/$MASTER1_PRIVATE_IP/g" control-plane-parameters.json
-sed -i "s/master2-private-ip/$MASTER2_PRIVATE_IP/g" control-plane-parameters.json
+sed -i "s/master0_private_ip/$MASTER0_PRIVATE_IP/g" control-plane-parameters.json
+sed -i "s/master1_private_ip/$MASTER1_PRIVATE_IP/g" control-plane-parameters.json
+sed -i "s/master2_private_ip/$MASTER2_PRIVATE_IP/g" control-plane-parameters.json
 ```
 
 * Create the stack to deploy ControlPlane node

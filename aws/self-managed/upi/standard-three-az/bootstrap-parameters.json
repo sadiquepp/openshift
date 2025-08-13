@@ -29,7 +29,7 @@
   },
   {
     "ParameterKey": "BootStrapPrivateIP",
-    "ParameterValue": "bootstrap-private-ip"
+    "ParameterValue": "bootstrap_private_ip"
   },
   {
     "ParameterKey": "AutoRegisterELB", 
