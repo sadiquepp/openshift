@@ -207,6 +207,7 @@ sed -i "s/master2_private_ip/$MASTER2_PRIVATE_IP/g" control-plane-parameters.jso
 * Create the stack to deploy ControlPlane node
 ```
 aws cloudformation create-stack --stack-name control-plane --template-body file://create-control-plane.yaml --parameters file://control-plane-parameters.json
+```
 
 # Create Infra Nodes
 * Set Cluster Name into a variable.
