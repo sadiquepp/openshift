@@ -232,7 +232,7 @@ export INFRA1_PRIVATE_IP==<private_ip_of_infra1>
 ```
 * Set the private ip of infra2 into a variable
 ```
-export INFRA3_PRIVATE_IP=<private_ip_of_infra2>
+export INFRA2_PRIVATE_IP=<private_ip_of_infra2>
 ```
 * Set the private ip of infra3 into a variable
 ```
