@@ -14,8 +14,10 @@ This doc will cover deployment of disconnected OpenShift using UPI in just two a
 * A mirror registry with the required release images and operator images alread mirrored and accessible from the vpc.
 * Pre-determine and reserve the ip for bootstrap node (From any AZ1 or AZ2 ) master0 (From AZ1), master1 (from AZ1), and master2 (From AZ2). It's recommended to do an explicit reservation for these ip addresses in AWS VCP -> Subnets -> Actions -> Edit IPv4 CIDR Reservation section.
 * Configure external LoadBalncer to listen on 6443 and 22623 for api, api-int using the above nodes (1 bootstrap and 3 master) as the backend nodes.
+* Pre-determine and reserve the ip for infra nodes infra1 (From AZ1), infra2 (from AZ1), and infra3 (From AZ2). It's recommended to do an explicit reservation for these ip addresses in AWS VCP -> Subnets -> Actions -> Edit IPv4 CIDR Reservation section.
+* Configure external LoadBalncer to listen on 443 and 80 for *.apps and configure the infra nodes as its backend nodes.
 * DNS should be managed outside of Openshift. There will be no route53 integration.
-* Set up DNS to resolve api.., api-int.. and *.apps.. to the LoadBalancer.
+* Set up DNS to resolve api., api-int. and *.apps. to the respective LoadBalancer ips.
 
 # Generate STS resources on AWS and openshift artifacts.
 * Extract openshift-install from mirror registry.
@@ -153,7 +155,8 @@ aws cloudformation create-stack --stack-name bootstrap --template-body file://cr
 
 * The API will now be available via Load Balancer if DNS and LB is already set up to have bootstrap node as the backend.
 
-# Create ControlPlane Nodes
+
+# Create Infra Nodes
 * Set Cluster Name into a variable.
 ```
 export CLUSTER_NAME=<cluster-name>
@@ -162,50 +165,78 @@ export CLUSTER_NAME=<cluster-name>
 ```
 export CLUSTER_DOMAIN_NAME=<cluster-domain-name>
 ```
-* Set Subnet ID for AZ1 to a variable.
+* Set Subnet ID of AZ1 to a variable.
 ```
 export SUBNET_ID_AZ1=<subnet_id_of_az1>
 ```
-* Set Subnet ID for AZ2 to a variable.
+* Set Subnet ID of AZ2 to a variable.
 ```
 export SUBNET_ID_AZ2=<subnet_id_of_az2>
 ```
-* Set the private ip of master0 into a variable
+* Set the private ip of inra1 into a variable
 ```
-export MASTER0_PRIVATE_IP=<private_ip_of_master0>
+export INFRA1_PRIVATE_IP==<private_ip_of_infra1>
 ```
-* Set the private ip of master1 into a variable
+* Set the private ip of infra2 into a variable
 ```
-export MASTER1_PRIVATE_IP=<private_ip_of_master1>
+export INFRA3_PRIVATE_IP=<private_ip_of_infra2>
 ```
-* Set the private ip of master2 into a variable
+* Set the private ip of infra3 into a variable
 ```
-export MASTER2_PRIVATE_IP=<private_ip_of_master2>
+export INFRA3_PRIVATE_IP==<private_ip_of_infra3>
 ```
 * Extract certfiicate from master.ign and set into a variable.
 ```
-export CERTIFICATE_AUTHORITY=$(cat install-dir/master.ign | cut -f8 -d{ | cut -f2,3 -d: | cut -f1 -d})
-
+export CERTIFICATE_AUTHORITY_WORKER=$(cat install-dir/worker.ign | cut -f8 -d{ | cut -f2,3 -d: | cut -f1 -d})
 ````
 * Replace the variables in control plane parameters.json file.
 ```
-sed -i "s/infra_id/$INFRA_ID/g" control-plane-parameters.json
-sed -i "s/rhcos_ami_id/$RHCOS_AMI_ID/g" control-plane-parameters.json
-sed -i "s/master_sg_id/$MasterSecurityGroupId/g" control-plane-parameters.json
-sed -i "s/subnet_id_az1/$SUBNET_ID_AZ1/g" control-plane-parameters.json
-sed -i "s/subnet_id_az2/$SUBNET_ID_AZ2/g" control-plane-parameters.json
-sed -i "s/clustername/$CLUSTER_NAME/g" control-plane-parameters.json
-sed -i "s/domainname/$CLUSTER_DOMAIN_NAME/g" control-plane-parameters.json
-sed -i "s#certificate_authority#$CERTIFICATE_AUTHORITY#g" control-plane-parameters.json
-sed -i "s/master0_private_ip/$MASTER0_PRIVATE_IP/g" control-plane-parameters.json
-sed -i "s/master1_private_ip/$MASTER1_PRIVATE_IP/g" control-plane-parameters.json
-sed -i "s/master2_private_ip/$MASTER2_PRIVATE_IP/g" control-plane-parameters.json
+sed -i "s/infra_id/$INFRA_ID/g" infra1-parameters.json infra2-parameters.json infra3-parameters.json
+sed -i "s/rhcos_ami_id/$RHCOS_AMI_ID/g"  infra1-parameters.json  infra2-parameters.json  infra3-parameters.json
+sed -i "s/worker_sg_id/$WorkerSecurityGroupId/g" infra1-parameters.json infra2-parameters.json infra3-parameters.json
+sed -i "s/subnet_id/$SUBNET_ID_AZ1/g" infra1-parameters.json infra2-parameters.json
+sed -i "s/subnet_id/$SUBNET_ID_AZ2/g" infra3-parameters.json
+sed -i "s/clustername/$CLUSTER_NAME/g"  infra1-parameters.json infra2-parameters.json infra3-parameters.json
+sed -i "s/domainname/$CLUSTER_DOMAIN_NAME/g"  infra1-parameters.json infra2-parameters.json infra3-parameters.json
+sed -i "s#certificate_authority#$CERTIFICATE_AUTHORITY_WORKER#g" infra1-parameters.json infra2-parameters.json infra3-parameters.json
+sed -i "s/infra_private_ip/$INFRA1_PRIVATE_IP/g" infra1-parameters.json
+sed -i "s/infra_private_ip/$INFRA2_PRIVATE_IP/g" infra2-parameters.json
+sed -i "s/infra_private_ip/$INFRA3_PRIVATE_IP/g" infra3-parameters.json
 ```
 
-* Create the stack to deploy ControlPlane node
+* Create the stack to deploy Infra1 node
 ```
-aws cloudformation create-stack --stack-name control-plane --template-body file://create-control-plane.yaml --parameters file://control-plane-parameters.json
+aws cloudformation create-stack --stack-name infra1 --template-body file://create-infra.yaml --parameters file://infra1-parameters.json
 ```
+* Create the stack to deploy Infra1 node
+```
+aws cloudformation create-stack --stack-name infra2 --template-body file://create-infra.yaml --parameters file://infra2-parameters.json
+```
+* Create the stack to deploy Infra1 node
+```
+aws cloudformation create-stack --stack-name infra3 --template-body file://create-infra.yaml --parameters file://infra3-parameters.json
+```
+* Approve Pending CSR
+```
+for i in `oc get csr| grep Pending | awk '{print $1}'`; do oc adm certificate approve $i; done
+sleep 30
+for i in `oc get csr| grep Pending | awk '{print $1}'`; do oc adm certificate approve $i; done
+```
+* Add infra label to the newly created infra ndoes. Repeat it for each node after gettign it from "oc get nodes". Right node can be identified by looking its ip address.
+```
+oc label node <node> node-role.kubernetes.io/infra=
+```
+* Add proper taints to the infra nodes to avoid user workloads from going there.
+```
+oc adm taint nodes <node>  node-role.kubernetes.io/infra=reserved:NoSchedule
+```
+* Add additinal Ingress controllers using a different domain name.
+```
+oc create -f additional-ingress-controller.yaml
+```
+* Change the default ingress controller to use HostNetwork instead of LoadBalancerService. Need to figure out how to do this. WIP
+
+* Research cloudformation template customization to open up 443, 80 and 1936 on infra node security group from external load balancer. WIP
 
 # Monitoring Cluster Status
 
