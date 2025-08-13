@@ -155,6 +155,58 @@ aws cloudformation create-stack --stack-name bootstrap --template-body file://cr
 
 * The API will now be available via Load Balancer if DNS and LB is already set up to have bootstrap node as the backend.
 
+# Create ControlPlane Nodes
+* Set Cluster Name into a variable.
+```
+export CLUSTER_NAME=<cluster-name>
+```
+* Set Cluster Domain Name into a variable.
+```
+export CLUSTER_DOMAIN_NAME=<cluster-domain-name>
+```
+* Set Subnet ID for AZ1 to a variable.
+```
+export SUBNET_ID_AZ1=<subnet_id_of_az1>
+```
+* Set Subnet ID for AZ2 to a variable.
+```
+export SUBNET_ID_AZ2=<subnet_id_of_az2>
+```
+* Set the private ip of master0 into a variable
+```
+export MASTER0_PRIVATE_IP=<private_ip_of_master0>
+```
+* Set the private ip of master1 into a variable
+```
+export MASTER1_PRIVATE_IP=<private_ip_of_master1>
+```
+* Set the private ip of master2 into a variable
+```
+export MASTER2_PRIVATE_IP=<private_ip_of_master2>
+```
+* Extract certfiicate from master.ign and set into a variable.
+```
+export CERTIFICATE_AUTHORITY=$(cat install-dir/master.ign | cut -f8 -d{ | cut -f2,3 -d: | cut -f1 -d})
+
+````
+* Replace the variables in control plane parameters.json file.
+```
+sed -i "s/infra_id/$INFRA_ID/g" control-plane-parameters.json
+sed -i "s/rhcos_ami_id/$RHCOS_AMI_ID/g" control-plane-parameters.json
+sed -i "s/master_sg_id/$MasterSecurityGroupId/g" control-plane-parameters.json
+sed -i "s/subnet_id_az1/$SUBNET_ID_AZ1/g" control-plane-parameters.json
+sed -i "s/subnet_id_az2/$SUBNET_ID_AZ2/g" control-plane-parameters.json
+sed -i "s/clustername/$CLUSTER_NAME/g" control-plane-parameters.json
+sed -i "s/domainname/$CLUSTER_DOMAIN_NAME/g" control-plane-parameters.json
+sed -i "s#certificate_authority#$CERTIFICATE_AUTHORITY#g" control-plane-parameters.json
+sed -i "s/master0_private_ip/$MASTER0_PRIVATE_IP/g" control-plane-parameters.json
+sed -i "s/master1_private_ip/$MASTER1_PRIVATE_IP/g" control-plane-parameters.json
+sed -i "s/master2_private_ip/$MASTER2_PRIVATE_IP/g" control-plane-parameters.json
+```
+
+* Create the stack to deploy ControlPlane node
+```
+aws cloudformation create-stack --stack-name control-plane --template-body file://create-control-plane.yaml --parameters file://control-plane-parameters.json
 
 # Create Infra Nodes
 * Set Cluster Name into a variable.
@@ -185,7 +237,7 @@ export INFRA3_PRIVATE_IP=<private_ip_of_infra2>
 ```
 export INFRA3_PRIVATE_IP==<private_ip_of_infra3>
 ```
-* Extract certfiicate from master.ign and set into a variable.
+* Extract certfiicate from worker.ign and set into a variable.
 ```
 export CERTIFICATE_AUTHORITY_WORKER=$(cat install-dir/worker.ign | cut -f8 -d{ | cut -f2,3 -d: | cut -f1 -d})
 ````
