@@ -80,7 +80,7 @@ rm -f install-dir/openshift/99_openshift-cluster-api_worker-machineset-2.yaml
 ```
 vi install-dir/manifests/cluster-dns-02-config.yml
 ```
-* Edit install-dir/manifests/cluster-ingress-02-config.yml and spec.loadBalancer.platform.type to "" [as seen here example file](https://github.com/sadiquepp/openshift/blob/main/aws/self-managed/upi/two-az-infra/manifests/cluster-ingress-02-config.yml)
+* Edit install-dir/manifests/cluster-ingress-02-config.yml and set spec.loadBalancer.platform.type to "" [as seen here example file](https://github.com/sadiquepp/openshift/blob/main/aws/self-managed/upi/two-az-infra/manifests/cluster-ingress-02-config.yml)
 
 * Edit install-dir/manifests/cluster-ingress-default-ingresscontroller.yaml and set spec.endpointPublishingStrategy.type to HostNetwork [as seen here in the example file](https://github.com/sadiquepp/openshift/blob/main/aws/self-managed/upi/two-az-infra/manifests/cluster-ingress-default-ingresscontroller.yaml)
 
@@ -283,7 +283,7 @@ for i in `oc get csr| grep Pending | awk '{print $1}'`; do oc adm certificate ap
 sleep 30
 for i in `oc get csr| grep Pending | awk '{print $1}'`; do oc adm certificate approve $i; done
 ```
-* Add infra label to the newly created infra ndoes. Repeat it for each node after gettign it from "oc get nodes". Right node can be identified by looking its ip address.
+* Add infra label to the newly created infra ndoes.
 ```
 for i in $INFRA1_PRIVATE_IP $INFRA2_PRIVATE_IP $INFRA3_PRIVATE_IP; do J=$(oc get nodes -o wide | grep $i| awk '{print $1}'); echo "Labelling Node $J"; oc label node $J node-role.kubernetes.io/infra= ;done
 ```
@@ -306,7 +306,10 @@ oc edit ingressController -n openshift-ingress-operator default
       key: node-role.kubernetes.io/infra
       value: reserved
 ```
-
+* Confirm that the ingress pods are moved to Infra ndoes.
+```
+oc get po -n openshift-ingress -o wide
+```
 # Monitoring Cluster Status
 
 * Once master nodes are created, machine-api will automatically deploy worker nodes in two AZs.
