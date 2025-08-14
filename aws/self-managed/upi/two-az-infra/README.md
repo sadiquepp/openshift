@@ -1,5 +1,5 @@
 # Introduction
-This doc will cover deployment of disconnected OpenShift using UPI in just two availability zones for special use cases using an external manually managed load balancer for API and Ingress.
+This doc will cover deployment of disconnected OpenShift using UPI in just two AWS availability zones for special use cases using an external manually managed load balancer for API and Ingress.
 
 # Pre-Requisites Knowledge
 * Understanding of AWS
@@ -11,11 +11,11 @@ This doc will cover deployment of disconnected OpenShift using UPI in just two a
 
 # Requirements
 * A disconnected vpc with all the required vpc endpoints like s3, ec2, sts, elasticloadbalancing
-* A mirror registry with the required release images and operator images alread mirrored and accessible from the vpc.
-* Pre-determine and reserve the ip for bootstrap node (From any AZ1 or AZ2 ) master0 (From AZ1), master1 (from AZ1), and master2 (From AZ2). It's recommended to do an explicit reservation for these ip addresses in AWS VCP -> Subnets -> Actions -> Edit IPv4 CIDR Reservation section.
-* Configure external LoadBalncer to listen on 6443 and 22623 for api, api-int using the above nodes (1 bootstrap and 3 master) as the backend nodes.
+* A mirror registry with the required release images and operator images already mirrored and accessible from the vpc.
+* Pre-determine and reserve the ip for bootstrap node (From any AZ1 or AZ2 ) master0 (From AZ1), master1 (from AZ1), and master2 (From AZ2). It's recommended to do an explicit reservation for these ip addresses in AWS VPC -> Subnets -> Actions -> Edit IPv4 CIDR Reservation section.
+* Configure external LoadBalncer to listen on 6443 and 22623 for api and api-int using the above nodes (1 bootstrap and 3 master) as the backend nodes.
 * Pre-determine and reserve the ip for infra nodes infra1 (From AZ1), infra2 (from AZ1), and infra3 (From AZ2). It's recommended to do an explicit reservation for these ip addresses in AWS VCP -> Subnets -> Actions -> Edit IPv4 CIDR Reservation section.
-* Configure external LoadBalncer to listen on 443 and 80 for *.apps and configure the infra nodes as its backend nodes using port 1936 for healthcheck using HTTP and url /healthz.
+* Configure external LoadBalancer to listen on 443 and 80 for *.apps and configure the infra nodes as its backend nodes using port 1936 for healthcheck using HTTP and url /healthz.
 * DNS should be managed outside of Openshift. There will be no route53 integration.
 * Set up DNS to resolve api.clustername.domainname, api-int.clustername.domainname and *.apps.clustername.domainname to the respective LoadBalancer ips.
 
@@ -51,7 +51,7 @@ cd ..
 ```
 
 # Create Openshift Manifests and Ignition.
-* Develop install-config.yaml using the example given. Update baseDomain, machineNetwork, pullSecret, imageContentSource, sshKey and additionalTrustBundle as needed.
+* Develop install-config.yaml using the example given. Update baseDomain, machineNetwork, pullSecret, imageContentSource, sshKey, subnetID and additionalTrustBundle as needed.
 
 * Crate a directory and copy install-config.yaml to that directory
 ```
@@ -76,7 +76,7 @@ rm -f install-dir/openshift/99_openshift-cluster-api_master-machines-*.yaml
 rm -f install-dir/openshift/99_openshift-machine-api_master-control-plane-machine-set.yaml
 rm -f install-dir/openshift/99_openshift-cluster-api_worker-machineset-2.yaml
 ```
-* Remvoe HostedZone details from DNS manifests
+* Remove HostedZone details from DNS manifests
 ```
 vi install-dir/manifests/cluster-dns-02-config.yml
 ```
@@ -126,7 +126,7 @@ sed -i "s#loadbalancer_cidr#$LOADBALANCER_CIDR#g" security-group-and-role-parame
 ```
 aws cloudformation create-stack --stack-name security-group-role --template-body file://create-security-group-and-role.yaml --parameters file://security-group-and-role-parameter.json --capabilities CAPABILITY_NAMED_IAM
 ```
-* Once CloudFormation stack creation is successful, set below variables after getting values from AWS Console -> CloudFormation Stack -> Select the Stack -> Outputs
+* Once CloudFormation stack creation is successful, set below variables after getting values from AWS Console -> CloudFormation Stack -> Select the Stack Named "security-group-role" -> Outputs
 
 ~~~
 export MasterSecurityGroupId=<master_sg_id>
@@ -134,7 +134,7 @@ export WorkerSecurityGroupId=<worker_sg_id>
 ~~~
 
 # Create Bootstrap Node
-* Get the rhcos AMI ID for your region and for the version of openshift going to be installed from official DOC. An example for 4.18 the list is here - https://docs.redhat.com/en/documentation/openshift_container_platform/4.18/html/installing_on_aws/user-provisioned-infrastructure#installation-aws-user-infra-rhcos-ami_installing-restricted-networks-aws
+* Get the rhcos AMI ID for the region and for the version of openshift going to be installed from official DOC. An example for 4.18 the list is here - https://docs.redhat.com/en/documentation/openshift_container_platform/4.18/html/installing_on_aws/user-provisioned-infrastructure#installation-aws-user-infra-rhcos-ami_installing-restricted-networks-aws
 ```
 export RHCOS_AMI_ID=<rhcos_ami_id>
 ```
@@ -236,7 +236,7 @@ export SUBNET_ID_AZ2=<subnet_id_of_az2>
 ```
 * Set the private ip of inra1 into a variable
 ```
-export INFRA1_PRIVATE_IP==<private_ip_of_infra1>
+export INFRA1_PRIVATE_IP=<private_ip_of_infra1>
 ```
 * Set the private ip of infra2 into a variable
 ```
@@ -244,7 +244,7 @@ export INFRA2_PRIVATE_IP=<private_ip_of_infra2>
 ```
 * Set the private ip of infra3 into a variable
 ```
-export INFRA3_PRIVATE_IP==<private_ip_of_infra3>
+export INFRA3_PRIVATE_IP=<private_ip_of_infra3>
 ```
 * Extract certfiicate from worker.ign and set into a variable.
 ```
@@ -269,11 +269,11 @@ sed -i "s/infra_private_ip/$INFRA3_PRIVATE_IP/g" infra3-parameters.json
 ```
 aws cloudformation create-stack --stack-name infra1 --template-body file://create-infra.yaml --parameters file://infra1-parameters.json
 ```
-* Create the stack to deploy Infra1 node
+* Create the stack to deploy Infra2 node
 ```
 aws cloudformation create-stack --stack-name infra2 --template-body file://create-infra.yaml --parameters file://infra2-parameters.json
 ```
-* Create the stack to deploy Infra1 node
+* Create the stack to deploy Infra3 node
 ```
 aws cloudformation create-stack --stack-name infra3 --template-body file://create-infra.yaml --parameters file://infra3-parameters.json
 ```
