@@ -32,6 +32,10 @@
     "ParameterValue": "infra_id-worker-profile" 
   },
   {
+    "ParameterKey": "NodeNumber", 
+    "ParameterValue": "2" 
+  },
+  {
     "ParameterKey": "WorkerInstanceType", 
     "ParameterValue": "m6i.xlarge" 
   }

@@ -15,6 +15,10 @@ Parameters:
     Default: 10.0.0.0/16
     Description: CIDR block for VPC.
     Type: String
+  LoadBalancerCidr:
+    Default: 10.0.0.0/16
+    Description: CIDR block for LoadBalancer.
+    Type: String
   VpcId:
     Description: The VPC-scoped resources will belong to this VPC.
     Type: AWS::EC2::VPC::Id
@@ -485,6 +489,36 @@ Resources:
       FromPort: 30000
       ToPort: 32767
       IpProtocol: udp
+
+  WorkerIngressHttpsFromLB:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      CidrIp: !Ref LoadBalancerCidr
+      GroupId: !GetAtt WorkerSecurityGroup.GroupId
+      Description: Allow
+      FromPort: 443
+      ToPort: 443
+      IpProtocol: tcp
+
+  WorkerIngressHttpFromLB:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      CidrIp: !Ref LoadBalancerCidr
+      GroupId: !GetAtt WorkerSecurityGroup.GroupId
+      Description: Allow
+      FromPort: 80
+      ToPort: 80
+      IpProtocol: tcp
+
+  WorkerIngressHealthcheckFromLB:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      CidrIp: !Ref LoadBalancerCidr
+      GroupId: !GetAtt WorkerSecurityGroup.GroupId
+      Description: Allow
+      FromPort: 1936
+      ToPort: 1936
+      IpProtocol: tcp
 
   MasterIamRole:
     Type: AWS::IAM::Role

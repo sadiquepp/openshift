@@ -15,9 +15,9 @@ This doc will cover deployment of disconnected OpenShift using UPI in just two a
 * Pre-determine and reserve the ip for bootstrap node (From any AZ1 or AZ2 ) master0 (From AZ1), master1 (from AZ1), and master2 (From AZ2). It's recommended to do an explicit reservation for these ip addresses in AWS VCP -> Subnets -> Actions -> Edit IPv4 CIDR Reservation section.
 * Configure external LoadBalncer to listen on 6443 and 22623 for api, api-int using the above nodes (1 bootstrap and 3 master) as the backend nodes.
 * Pre-determine and reserve the ip for infra nodes infra1 (From AZ1), infra2 (from AZ1), and infra3 (From AZ2). It's recommended to do an explicit reservation for these ip addresses in AWS VCP -> Subnets -> Actions -> Edit IPv4 CIDR Reservation section.
-* Configure external LoadBalncer to listen on 443 and 80 for *.apps and configure the infra nodes as its backend nodes.
+* Configure external LoadBalncer to listen on 443 and 80 for *.apps and configure the infra nodes as its backend nodes using port 1936 for healthcheck using HTTP and url /healthz.
 * DNS should be managed outside of Openshift. There will be no route53 integration.
-* Set up DNS to resolve api., api-int. and *.apps. to the respective LoadBalancer ips.
+* Set up DNS to resolve api.clustername.domainname, api-int.clustername.domainname and *.apps.clustername.domainname to the respective LoadBalancer ips.
 
 # Generate STS resources on AWS and openshift artifacts.
 * Extract openshift-install from mirror registry.
@@ -80,6 +80,9 @@ rm -f install-dir/openshift/99_openshift-cluster-api_worker-machineset-2.yaml
 ```
 vi install-dir/manifests/cluster-dns-02-config.yml
 ```
+* Edit install-dir/manifests/cluster-ingress-02-config.yml and spec.loadBalancer.platform.type to "" [as seen here example file](https://github.com/sadiquepp/openshift/blob/main/aws/self-managed/upi/two-az-infra/manifests/cluster-ingress-02-config.yml)
+
+* Edit install-dir/manifests/cluster-ingress-default-ingresscontroller.yaml and set spec.endpointPublishingStrategy.type to HostNetwork [as seen here in the example file](https://github.com/sadiquepp/openshift/blob/main/aws/self-managed/upi/two-az-infra/manifests/cluster-ingress-default-ingresscontroller.yaml)
 
 * Create Ignition
 ```
@@ -107,11 +110,16 @@ export VPC_ID=<vpc_id>
 ```
 export VPC_CIDR=<vpc_cidr>
 ```
+* Set the LoadBalancer CIDR. This is required for external LB to connect to 443, 80 and 1936 with HostNetwork Ingress type.
+```
+export LOADBALANCER_CIDR=<loadbalancer_cidr>
+```
 * Replace Variables in CloudFormation Parameter file to create security group and IAM roles.
 ```
 sed -i "s/infra_id/$INFRA_ID/g" security-group-and-role-parameter.json
 sed -i "s/vpc_id/$VPC_ID/g" security-group-and-role-parameter.json
 sed -i "s#vpc_cidr#$VPC_CIDR#g" security-group-and-role-parameter.json
+sed -i "s#loadbalancer_cidr#$LOADBALANCER_CIDR#g" security-group-and-role-parameter.json
 ```
 * Create the resources via CloudFormation Template 
 
@@ -277,19 +285,27 @@ for i in `oc get csr| grep Pending | awk '{print $1}'`; do oc adm certificate ap
 ```
 * Add infra label to the newly created infra ndoes. Repeat it for each node after gettign it from "oc get nodes". Right node can be identified by looking its ip address.
 ```
-oc label node <node> node-role.kubernetes.io/infra=
+for i in $INFRA1_PRIVATE_IP $INFRA2_PRIVATE_IP $INFRA3_PRIVATE_IP; do J=$(oc get nodes -o wide | grep $i| awk '{print $1}'); echo "Labelling Node $J"; oc label node $J node-role.kubernetes.io/infra= ;done
 ```
 * Add proper taints to the infra nodes to avoid user workloads from going there.
 ```
-oc adm taint nodes <node>  node-role.kubernetes.io/infra=reserved:NoSchedule
+for i in $INFRA1_PRIVATE_IP $INFRA2_PRIVATE_IP $INFRA3_PRIVATE_IP; do J=$(oc get nodes -o wide | grep $i| awk '{print $1}'); echo "Tainting Node $J"; oc adm taint nodes $J  node-role.kubernetes.io/infra=reserved:NoSchedule ;done
 ```
-* Add additinal Ingress controllers using a different domain name.
+* Edit Default Ingerss Controller and add toleration to move to infra nodes. 
 ```
-oc create -f additional-ingress-controller.yaml
+oc edit ingressController -n openshift-ingress-operator default
 ```
-* Change the default ingress controller to use HostNetwork instead of LoadBalancerService. Need to figure out how to do this. WIP
-
-* Research cloudformation template customization to open up 443, 80 and 1936 on infra node security group from external load balancer. WIP
+* Add below to spec.
+```
+  nodePlacement:
+    nodeSelector:
+      matchLabels:
+        node-role.kubernetes.io/infra: ""
+    tolerations:
+    - effect: NoSchedule
+      key: node-role.kubernetes.io/infra
+      value: reserved
+```
 
 # Monitoring Cluster Status
 
@@ -304,4 +320,4 @@ oc get co
 oc get nodes
 ```
 
-* Once the cluster is up and running with 3 masters and workers, you can terminate the bootstrap node by deleting bootstrap cloudformation stack.
+* Once the cluster is up and running with 3 masters, 3 Infra and workers, you can terminate the bootstrap node by deleting bootstrap cloudformation stack.

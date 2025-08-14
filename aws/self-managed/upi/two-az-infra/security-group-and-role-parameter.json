@@ -8,6 +8,10 @@
     "ParameterValue": "vpc_cidr" 
   },
   {
+    "ParameterKey": "LoadBalancerCidr", 
+    "ParameterValue": "loadbalancer_cidr" 
+  },
+  {
     "ParameterKey": "VpcId", 
     "ParameterValue": "vpc_id" 
   }
