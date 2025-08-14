@@ -62,10 +62,19 @@ Resources:
         FromPort: 6443
         CidrIp: !Ref VpcCidr
       - IpProtocol: tcp
+        ToPort: 6443
+        FromPort: 6443
+        CidrIp: !Ref LoadBalancerCidr     
+      - IpProtocol: tcp
         FromPort: 22623
         ToPort: 22623
         CidrIp: !Ref VpcCidr
+      - IpProtocol: tcp
+        FromPort: 22623
+        ToPort: 22623
+        CidrIp: !Ref LoadBalancerCidr
       VpcId: !Ref VpcId
+
 
   WorkerSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -495,7 +504,7 @@ Resources:
     Properties:
       CidrIp: !Ref LoadBalancerCidr
       GroupId: !GetAtt WorkerSecurityGroup.GroupId
-      Description: Allow
+      Description: Allow HostNetwork Ingress From LB
       FromPort: 443
       ToPort: 443
       IpProtocol: tcp
@@ -505,7 +514,7 @@ Resources:
     Properties:
       CidrIp: !Ref LoadBalancerCidr
       GroupId: !GetAtt WorkerSecurityGroup.GroupId
-      Description: Allow
+      Description: Allow HostNetwork Ingress From LB
       FromPort: 80
       ToPort: 80
       IpProtocol: tcp
@@ -515,7 +524,7 @@ Resources:
     Properties:
       CidrIp: !Ref LoadBalancerCidr
       GroupId: !GetAtt WorkerSecurityGroup.GroupId
-      Description: Allow
+      Description: Allow HostNetwork Ingress From LB for Healthcheck
       FromPort: 1936
       ToPort: 1936
       IpProtocol: tcp
