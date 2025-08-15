@@ -31,25 +31,6 @@ Parameters:
     Default: s3://my-s3-bucket/bootstrap.ign
     Description: Ignition config file location.
     Type: String
-  AutoRegisterELB:
-    Default: "yes"
-    AllowedValues:
-    - "yes"
-    - "no"
-    Description: Do you want to invoke NLB registration, which requires a Lambda ARN parameter?
-    Type: String
-  RegisterNlbIpTargetsLambdaArn:
-    Description: ARN for NLB IP target registration lambda.
-    Type: String
-  ExternalApiTargetGroupArn:
-    Description: ARN for external API load balancer target group.
-    Type: String
-  InternalApiTargetGroupArn:
-    Description: ARN for internal API load balancer target group.
-    Type: String
-  InternalServiceTargetGroupArn:
-    Description: ARN for internal service load balancer target group.
-    Type: String
   BootstrapInstanceType:
     Description: Instance type for the bootstrap EC2 instance
     Default: "i3.large"
@@ -77,14 +58,6 @@ Metadata:
       - VpcId
       - AllowedBootstrapSshCidr
       - PrivateSubnet
-    - Label:
-        default: "Load Balancer Automation"
-      Parameters:
-      - AutoRegisterELB
-      - RegisterNlbIpTargetsLambdaArn
-      - ExternalApiTargetGroupArn
-      - InternalApiTargetGroupArn
-      - InternalServiceTargetGroupArn
     ParameterLabels:
       InfrastructureName:
         default: "Infrastructure Name"
@@ -100,11 +73,6 @@ Metadata:
         default: "Bootstrap Ignition Source"
       MasterSecurityGroupId:
         default: "Master Security Group ID"
-      AutoRegisterELB:
-        default: "Use Provided ELB Automation"
-
-Conditions:
-  DoRegistration: !Equals ["yes", !Ref AutoRegisterELB]
 
 Resources:
   BootstrapIamRole:
@@ -184,39 +152,11 @@ Resources:
           S3Loc: !Ref BootstrapIgnitionLocation
           }
 
-  RegisterBootstrapApiTarget:
-    Condition: DoRegistration
-    Type: Custom::NLBRegister
-    Properties:
-      ServiceToken: !Ref RegisterNlbIpTargetsLambdaArn
-      TargetArn: !Ref ExternalApiTargetGroupArn
-      TargetIp: !GetAtt BootstrapInstance.PrivateIp
-
-  RegisterBootstrapInternalApiTarget:
-    Condition: DoRegistration
-    Type: Custom::NLBRegister
-    Properties:
-      ServiceToken: !Ref RegisterNlbIpTargetsLambdaArn
-      TargetArn: !Ref InternalApiTargetGroupArn
-      TargetIp: !GetAtt BootstrapInstance.PrivateIp
-
-  RegisterBootstrapInternalServiceTarget:
-    Condition: DoRegistration
-    Type: Custom::NLBRegister
-    Properties:
-      ServiceToken: !Ref RegisterNlbIpTargetsLambdaArn
-      TargetArn: !Ref InternalServiceTargetGroupArn
-      TargetIp: !GetAtt BootstrapInstance.PrivateIp
-
 Outputs:
   BootstrapInstanceId:
     Description: Bootstrap Instance ID.
     Value: !Ref BootstrapInstance
-#
-#  BootstrapPublicIp:
-#    Description: The bootstrap node public IP address.
-#    Value: !GetAtt BootstrapInstance.PublicIp
-
+    
   BootstrapPrivateIp:
     Description: The bootstrap node private IP address.
     Value: !GetAtt BootstrapInstance.PrivateIp

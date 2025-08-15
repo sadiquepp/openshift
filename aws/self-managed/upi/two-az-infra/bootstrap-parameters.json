@@ -30,25 +30,5 @@
   {
     "ParameterKey": "BootStrapPrivateIP",
     "ParameterValue": "bootstrap_private_ip"
-  },
-  {
-    "ParameterKey": "AutoRegisterELB", 
-    "ParameterValue": "no" 
-  },
-  {
-    "ParameterKey": "RegisterNlbIpTargetsLambdaArn", 
-    "ParameterValue": "arn:aws:lambda:<aws_region>:<account_number>:function:<dns_stack_name>-RegisterNlbIpTargets-<random_string>" 
-  },
-  {
-    "ParameterKey": "ExternalApiTargetGroupArn", 
-    "ParameterValue": "arn:aws:elasticloadbalancing:<aws_region>:<account_number>:targetgroup/<dns_stack_name>-Exter-<random_string>" 
-  },
-  {
-    "ParameterKey": "InternalApiTargetGroupArn", 
-    "ParameterValue": "arn:aws:elasticloadbalancing:<aws_region>:<account_number>:targetgroup/<dns_stack_name>-Inter-<random_string>" 
-  },
-  {
-    "ParameterKey": "InternalServiceTargetGroupArn", 
-    "ParameterValue": "arn:aws:elasticloadbalancing:<aws_region>:<account_number>:targetgroup/<dns_stack_name>-Inter-<random_string>" 
   }
 ]
