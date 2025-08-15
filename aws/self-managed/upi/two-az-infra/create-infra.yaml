@@ -86,7 +86,7 @@ Resources:
       - DeviceName: /dev/xvda
         Ebs:
           VolumeSize: "120"
-          VolumeType: "gp2"
+          VolumeType: "gp3"
       IamInstanceProfile: !Ref WorkerInstanceProfileName
       InstanceType: !Ref WorkerInstanceType
       NetworkInterfaces:
