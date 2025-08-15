@@ -8,18 +8,6 @@
     "ParameterValue": "rhcos_ami_id" 
   },
   {
-    "ParameterKey": "AutoRegisterDNS", 
-    "ParameterValue": "no" 
-  },
-  {
-    "ParameterKey": "PrivateHostedZoneId", 
-    "ParameterValue": "<random_string>" 
-  },
-  {
-    "ParameterKey": "PrivateHostedZoneName", 
-    "ParameterValue": "mycluster.example.com" 
-  },
-  {
     "ParameterKey": "Master0Subnet", 
     "ParameterValue": "subnet_id_az1" 
   },
@@ -62,25 +50,5 @@
   {
     "ParameterKey": "Master2PrivateIP",
     "ParameterValue": "master2_private_ip"
-  },
-  {
-    "ParameterKey": "AutoRegisterELB", 
-    "ParameterValue": "no" 
-  },
-  {
-    "ParameterKey": "RegisterNlbIpTargetsLambdaArn", 
-    "ParameterValue": "arn:aws:lambda:<aws_region>:<account_number>:function:<dns_stack_name>-RegisterNlbIpTargets-<random_string>" 
-  },
-  {
-    "ParameterKey": "ExternalApiTargetGroupArn", 
-    "ParameterValue": "arn:aws:elasticloadbalancing:<aws_region>:<account_number>:targetgroup/<dns_stack_name>-Exter-<random_string>" 
-  },
-  {
-    "ParameterKey": "InternalApiTargetGroupArn", 
-    "ParameterValue": "arn:aws:elasticloadbalancing:<aws_region>:<account_number>:targetgroup/<dns_stack_name>-Inter-<random_string>" 
-  },
-  {
-    "ParameterKey": "InternalServiceTargetGroupArn", 
-    "ParameterValue": "arn:aws:elasticloadbalancing:<aws_region>:<account_number>:targetgroup/<dns_stack_name>-Inter-<random_string>" 
   }
 ]

@@ -12,18 +12,6 @@ Parameters:
   RhcosAmi:
     Description: Current Red Hat Enterprise Linux CoreOS AMI to use for bootstrap.
     Type: AWS::EC2::Image::Id
-  AutoRegisterDNS:
-    Default: ""
-    Description: unused
-    Type: String
-  PrivateHostedZoneId:
-    Default: ""
-    Description: unused
-    Type: String
-  PrivateHostedZoneName:
-    Default: ""
-    Description: unused
-    Type: String
   Master0Subnet:
     Description: The subnets, recommend private, to launch the master nodes into.
     Type: AWS::EC2::Subnet::Id
@@ -60,26 +48,6 @@ Parameters:
     Default: m5.xlarge
     Type: String
 
-  AutoRegisterELB:
-    Default: "yes"
-    AllowedValues:
-    - "yes"
-    - "no"
-    Description: Do you want to invoke NLB registration, which requires a Lambda ARN parameter?
-    Type: String
-  RegisterNlbIpTargetsLambdaArn:
-    Description: ARN for NLB IP target registration lambda. Supply the value from the cluster infrastructure or select "no" for AutoRegisterELB.
-    Type: String
-  ExternalApiTargetGroupArn:
-    Description: ARN for external API load balancer target group. Supply the value from the cluster infrastructure or select "no" for AutoRegisterELB.
-    Type: String
-  InternalApiTargetGroupArn:
-    Description: ARN for internal API load balancer target group. Supply the value from the cluster infrastructure or select "no" for AutoRegisterELB.
-    Type: String
-  InternalServiceTargetGroupArn:
-    Description: ARN for internal service load balancer target group. Supply the value from the cluster infrastructure or select "no" for AutoRegisterELB.
-    Type: String
-
 Metadata:
   AWS::CloudFormation::Interface:
     ParameterGroups:
@@ -104,14 +72,6 @@ Metadata:
       - Master0Subnet
       - Master1Subnet
       - Master2Subnet
-    - Label:
-        default: "Load Balancer Automation"
-      Parameters:
-      - AutoRegisterELB
-      - RegisterNlbIpTargetsLambdaArn
-      - ExternalApiTargetGroupArn
-      - InternalApiTargetGroupArn
-      - InternalServiceTargetGroupArn
     ParameterLabels:
       InfrastructureName:
         default: "Infrastructure Name"
@@ -135,11 +95,6 @@ Metadata:
         default: "Ignition CA String"
       MasterSecurityGroupId:
         default: "Master Security Group ID"
-      AutoRegisterELB:
-        default: "Use Provided ELB Automation"
-
-Conditions:
-  DoRegistration: !Equals ["yes", !Ref AutoRegisterELB]
 
 Resources:
   Master0:
@@ -150,7 +105,7 @@ Resources:
       - DeviceName: /dev/xvda
         Ebs:
           VolumeSize: "120"
-          VolumeType: "gp2"
+          VolumeType: "gp3"
       IamInstanceProfile: !Ref MasterInstanceProfileName
       InstanceType: !Ref MasterInstanceType
       NetworkInterfaces:
@@ -172,30 +127,6 @@ Resources:
         Value: "shared"
       - Key: Name
         Value: !Join ["-", [!Ref InfrastructureName, "master", "0"]]
-
-  RegisterMaster0:
-    Condition: DoRegistration
-    Type: Custom::NLBRegister
-    Properties:
-      ServiceToken: !Ref RegisterNlbIpTargetsLambdaArn
-      TargetArn: !Ref ExternalApiTargetGroupArn
-      TargetIp: !GetAtt Master0.PrivateIp
-
-  RegisterMaster0InternalApiTarget:
-    Condition: DoRegistration
-    Type: Custom::NLBRegister
-    Properties:
-      ServiceToken: !Ref RegisterNlbIpTargetsLambdaArn
-      TargetArn: !Ref InternalApiTargetGroupArn
-      TargetIp: !GetAtt Master0.PrivateIp
-
-  RegisterMaster0InternalServiceTarget:
-    Condition: DoRegistration
-    Type: Custom::NLBRegister
-    Properties:
-      ServiceToken: !Ref RegisterNlbIpTargetsLambdaArn
-      TargetArn: !Ref InternalServiceTargetGroupArn
-      TargetIp: !GetAtt Master0.PrivateIp
 
   Master1:
     Type: AWS::EC2::Instance
@@ -228,30 +159,6 @@ Resources:
       - Key: Name
         Value: !Join ["-", [!Ref InfrastructureName, "master", "1"]]
 
-  RegisterMaster1:
-    Condition: DoRegistration
-    Type: Custom::NLBRegister
-    Properties:
-      ServiceToken: !Ref RegisterNlbIpTargetsLambdaArn
-      TargetArn: !Ref ExternalApiTargetGroupArn
-      TargetIp: !GetAtt Master1.PrivateIp
-
-  RegisterMaster1InternalApiTarget:
-    Condition: DoRegistration
-    Type: Custom::NLBRegister
-    Properties:
-      ServiceToken: !Ref RegisterNlbIpTargetsLambdaArn
-      TargetArn: !Ref InternalApiTargetGroupArn
-      TargetIp: !GetAtt Master1.PrivateIp
-
-  RegisterMaster1InternalServiceTarget:
-    Condition: DoRegistration
-    Type: Custom::NLBRegister
-    Properties:
-      ServiceToken: !Ref RegisterNlbIpTargetsLambdaArn
-      TargetArn: !Ref InternalServiceTargetGroupArn
-      TargetIp: !GetAtt Master1.PrivateIp
-
   Master2:
     Type: AWS::EC2::Instance
     Properties:
@@ -282,30 +189,6 @@ Resources:
         Value: "shared"
       - Key: Name
         Value: !Join ["-", [!Ref InfrastructureName, "master", "2"]]
-
-  RegisterMaster2:
-    Condition: DoRegistration
-    Type: Custom::NLBRegister
-    Properties:
-      ServiceToken: !Ref RegisterNlbIpTargetsLambdaArn
-      TargetArn: !Ref ExternalApiTargetGroupArn
-      TargetIp: !GetAtt Master2.PrivateIp
-
-  RegisterMaster2InternalApiTarget:
-    Condition: DoRegistration
-    Type: Custom::NLBRegister
-    Properties:
-      ServiceToken: !Ref RegisterNlbIpTargetsLambdaArn
-      TargetArn: !Ref InternalApiTargetGroupArn
-      TargetIp: !GetAtt Master2.PrivateIp
-
-  RegisterMaster2InternalServiceTarget:
-    Condition: DoRegistration
-    Type: Custom::NLBRegister
-    Properties:
-      ServiceToken: !Ref RegisterNlbIpTargetsLambdaArn
-      TargetArn: !Ref InternalServiceTargetGroupArn
-      TargetIp: !GetAtt Master2.PrivateIp
 
 Outputs:
   PrivateIPs:
