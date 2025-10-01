@@ -530,3 +530,94 @@ oc patch csv -n trustee-operator-system trustee-operator.v0.3.0 --type='json' -p
 ```
 
 * Test the attestation following the details at https://github.com/sadiquepp/openshift/tree/main/coco#testing-attestation-from-trustee
+
+# Log Collection to Troubleshoot and Debug
+Various logs and informations needs to be collected to investigate an ongoing issue and isolate it. Given below are some generic logs and information valuable to collect. More details may needs to be collection to debug specific issues.
+
+Details in this section assumes that the Confidential Computing on SEV/SNP is deployed by following the steps in this doc.
+
+## Must Gather.
+Collect must-gather to get information about the cluster. This will be useful to check generic cluster issues and cross check cluster version, update history, etc.
+
+## Collect details of openshift-sandboxed-containers operator
+* Get namespace inspect
+```
+oc adm inspect namespace/openshift-sandboxed-containers-operator
+```
+* Get pod logs and pod describe from the openshift-sandboxed-containers-operator namespace.
+
+* Validate the configmaps.
+```
+oc get cm -n openshift-sandboxed-containers-operator osc-feature-gates -o yaml > osc-feature-gates.yaml
+oc get cm -n openshift-sandboxed-containers-operator layered-image-deploy-cm > layered-image-deploy-cm.yaml
+```
+* Get details of Kataconfig
+```
+oc get KataConfig -o yaml
+```
+* Get details of mcp to validate if anything is in progress with still applying or modifying kataconfig
+```
+oc get mcp -o yaml > mcp.yaml
+```
+* Get details of runtimeclass to validate both kata and kata-cc runtime classes are good.
+```
+oc get RuntimeClass -o yaml > runtime-class.yaml
+```
+* Get the machineconfig associated with kata/osc and validate it has trustee url and registry authentication details properly configured.
+```
+oc get mc 96-kata-kernel-config -o yaml > 96-kata-kernel-config.yaml
+```
+## Validate NFD is working as expected.
+* Check NodeFeatureDiscovery details.
+```
+oc get NodeFeatureDiscovery -n openshift-nfd -o yaml > openshift-nfd.yaml
+```
+* Inspect the AMD NSP rules.
+```
+oc get NodeFeatureRule amd-sev-snp -n openshift-nfd > amd-sev-snp.yaml
+```
+* Validate the NFD has properly labelled all the SEV-SNP nodes.
+```
+oc get nodes -l "amd.feature.node.kubernetes.io/snp=true"
+```
+## Collect details of trustee-operator
+* Get namespace inspect
+```
+oc adm inspect namespace/trustee-operator-system
+```
+* Get the configmaps to validate it has not been changed inappropriately.
+```
+oc get cm -n trustee-operator-system kbs-config-cm -o yaml > kbs-config-cm.yaml
+oc get cm -n trustee-operator-system rvps-reference-values -o yaml > rvps-reference-values.yaml
+oc get cm -n trustee-operator-system resource-policy -o yaml > resource-policy.yaml
+oc get cm -n trustee-operator-system attestation-policy -o yaml > attestation-policy.yaml
+```
+* Get KbsConfig details
+```
+oc get KbsConfig -n trustee-operator-system cluster-kbsconfig -o yaml > kbsconfig.yaml
+```
+* Get the pods details and logs. An example expected output is given.
+```
+oc get po -n trustee-operator-system
+NAME                                                   READY   STATUS    RESTARTS   AGE
+trustee-deployment-7749c8bd46-2kj2q                    1/1     Running   0          20m
+trustee-operator-controller-manager-7585489979-p6hn5   1/1     Running   0          22m
+```
+* Get pod logs. Replace the xxxx with vlaue from previous output.
+```
+oc logs trustee-deployment-xxxx -n trustee-operator-system
+```
+* Get operator csv details
+```
+oc get csv -n trustee-operator-system -o yaml > trustee-operator-csv.yaml
+```
+## Application pod logs and repeat basic hello-penshift test.
+* Collect the logs from the failed application pod that uses TEE.
+```
+oc get po -n <ns> -o yaml
+oc describe po <app-pod-name> -n <ns>
+oc logs <app-pod-name> -n <ns>
+```
+* Repeat the basic hello-openshift pod test using both kata and kata-cc runtime class to easily isolate this. An example can be found here https://github.com/sadiquepp/openshift/blob/main/coco/testing/hello-openshift-block-pvc.yaml
+
+* To isolate if the issue is spcific to TEE/Confidential computing, recreate the application pods or create a new application pod using runtimeclass kata instead of kata-cc.
