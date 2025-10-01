@@ -532,11 +532,11 @@ oc patch csv -n trustee-operator-system trustee-operator.v0.3.0 --type='json' -p
 * Test the attestation following the details at https://github.com/sadiquepp/openshift/tree/main/coco#testing-attestation-from-trustee
 
 # Log Collection to Troubleshoot and Debug
-Various logs and informations needs to be collected to investigate an ongoing issue and isolate it. Given below are some generic logs and information valuable to collect. More details may needs to be collection to debug specific issues.
+Various logs and informations needs to be collected to investigate an ongoing issue and isolate it. Given below are some generic logs and information valuable to be collected. More details may needs to be collected to debug specific issues.
 
 Details in this section assumes that the Confidential Computing on SEV/SNP is deployed by following the steps in this doc.
 
-## Must Gather.
+## Must Gather
 Collect must-gather to get information about the cluster. This will be useful to check generic cluster issues and cross check cluster version, update history, etc.
 
 ## Collect details of openshift-sandboxed-containers operator
@@ -546,7 +546,7 @@ oc adm inspect namespace/openshift-sandboxed-containers-operator
 ```
 * Get pod logs and pod describe from the openshift-sandboxed-containers-operator namespace.
 
-* Validate the configmaps.
+* Validate the configmaps associated with confidential computing.
 ```
 oc get cm -n openshift-sandboxed-containers-operator osc-feature-gates -o yaml > osc-feature-gates.yaml
 oc get cm -n openshift-sandboxed-containers-operator layered-image-deploy-cm > layered-image-deploy-cm.yaml
@@ -555,7 +555,7 @@ oc get cm -n openshift-sandboxed-containers-operator layered-image-deploy-cm > l
 ```
 oc get KataConfig -o yaml
 ```
-* Get details of mcp to validate if anything is in progress with still applying or modifying kataconfig
+* Get details of mcp to validate if anything is in progress still applying or modifying kataconfig
 ```
 oc get mcp -o yaml > mcp.yaml
 ```
