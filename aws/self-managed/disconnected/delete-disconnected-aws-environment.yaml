@@ -1,0 +1,215 @@
+---
+- name: Delete Disconnected VPC Environment
+  hosts: localhost
+  gather_facts: false
+  vars:
+    prefix_for_name: project_name
+    aws_region: ap-southeast-1
+    aws_disconnected_vpc_name: "{{ prefix_for_name }}-disconnected"
+    aws_disconnected_vpc_cidr: 172.16.0.0/16
+    aws_egress_vpc_name: "{{ prefix_for_name }}-egress"
+    aws_egress_vpc_cidr: 172.17.0.0/16
+    aws_disconnected_subnet_cidr: 172.16.0.0/24
+    aws_egress_subnet_public: 172.17.0.0/24
+    aws_egress_subnet_public_name: "{{ prefix_for_name }}-egress-public"
+    aws_egress_subnet_private: 172.17.1.0/24
+    aws_security_group_for_endpoint: vpc-endpoint-allow
+    aws_security_group_for_windows: allow_rdesktop
+    aws_security_group_for_ec2: ping_ssh_8443 
+    aws_key_name: "{{ prefix_for_name }}_ansible"
+    aws_instance_name: "{{ prefix_for_name }}-mirror-registry-2"
+    aws_windows_instance_name: "{{ prefix_for_name }}-windows"
+    aws_iam_role_name: "{{ prefix_for_name }}-ocp-install-ec2"
+  tasks:
+
+  - name: Gather Information about Egress VPC
+    amazon.aws.ec2_vpc_net_info:
+      filters:
+        "tag:Name": "{{ aws_egress_vpc_name }}"
+      region: "{{ aws_region }}"
+    register: egress_vpc_info
+
+  - name: Gather Information about Disconnected VPC
+    amazon.aws.ec2_vpc_net_info:
+      filters:
+        "tag:Name": "{{ aws_disconnected_vpc_name }}"
+      region: "{{ aws_region }}"
+    register: disconnected_vpc_info
+
+  - name: Get VPC Endpoints
+    amazon.aws.ec2_vpc_endpoint_info:
+      region: "{{ aws_region }}"
+      filters:
+        vpc-id: "{{ disconnected_vpc_info.vpcs[0].vpc_id }}"
+    register: vpc_endpoint_list
+
+  - name: Delete Endpoints
+    amazon.aws.ec2_vpc_endpoint:
+      region: "{{ aws_region }}"
+      vpc_id:  "{{ disconnected_vpc_info.vpcs[0].vpc_id }}"
+      vpc_endpoint_id: "{{ item.vpc_endpoint_id }}"
+      state: "absent"
+    loop: "{{ vpc_endpoint_list.vpc_endpoints }}"
+
+  - name: Delete Windows VMs and Installer
+    amazon.aws.ec2_instance:
+      region: "{{ aws_region }}"
+      state: absent
+      filters:
+        vpc-id: "{{ egress_vpc_info.vpcs[0].vpc_id }}"
+        availability-zone: "{{ aws_region }}a"
+
+  - name: Get Transit Gateway attachment ID Egress VPC
+    shell: |
+      aws ec2 describe-transit-gateway-vpc-attachments \
+       --region {{ aws_region }} \
+       --filters Name=vpc-id,Values={{ egress_vpc_info.vpcs[0].vpc_id }} Name=state,Values=available \
+       --query 'TransitGatewayVpcAttachments[0].TransitGatewayAttachmentId' \
+       --output text
+    register: transit_gateway_attachment_id_egress
+
+  - name: Detach Egress VPC attachment to transit Gateway
+    community.aws.ec2_transit_gateway_vpc_attachment:
+      state: absent
+      region: "{{ aws_region }}"
+      id: "{{ transit_gateway_attachment_id_egress.stdout }}"
+
+  - name: Get Transit Gateway attachment ID Disconnected VPC
+    shell: |
+      aws ec2 describe-transit-gateway-vpc-attachments \
+       --region {{ aws_region }} \
+       --filters Name=vpc-id,Values={{ disconnected_vpc_info.vpcs[0].vpc_id }} Name=state,Values=available \
+       --query 'TransitGatewayVpcAttachments[0].TransitGatewayAttachmentId' \
+       --output text
+    register: transit_gateway_attachment_id_disconnected
+
+  - name: Detach Disconnected VPC attachment from transit Gateway
+    community.aws.ec2_transit_gateway_vpc_attachment:
+      state: absent
+      region: "{{ aws_region }}"
+      id: "{{ transit_gateway_attachment_id_disconnected.stdout }}"
+
+  - name: Delete Transit Gateway
+    community.aws.ec2_transit_gateway:
+      state: absent
+      region: "{{ aws_region }}"
+      description: Transit Gateway for Disconnected
+      tags:
+        Name: "{{ prefix_for_name }}-transitgw"
+
+  - name: "Query for any existing subnet(s) in Disconnected VPC"
+    amazon.aws.ec2_vpc_subnet_info:
+      region: "{{ aws_region }}"
+      filters:
+        vpc-id:  "{{ disconnected_vpc_info.vpcs[0].vpc_id }}"
+    register: disconnected_subnet_info
+
+  - name: "Delete subnets from Disconnected VPC"
+    amazon.aws.ec2_vpc_subnet:
+      region: "{{ aws_region }}"
+      vpc_id:  "{{ disconnected_vpc_info.vpcs[0].vpc_id }}"
+      cidr: "{{ item.cidr_block }}"
+      state: "absent"
+    loop: "{{ disconnected_subnet_info.subnets }}"
+
+  - name: "Query for any existing subnet(s) in Egress VPC"
+    amazon.aws.ec2_vpc_subnet_info:
+      region: "{{ aws_region }}"
+      filters:
+        vpc-id:  "{{ egress_vpc_info.vpcs[0].vpc_id }}"
+    register: egress_subnet_info
+
+  - name: "Delete subnets from Egress VPC"
+    amazon.aws.ec2_vpc_subnet:
+      region: "{{ aws_region }}"
+      vpc_id:  "{{ egress_vpc_info.vpcs[0].vpc_id }}"
+      cidr: "{{ item.cidr_block }}"
+      state: "absent"
+    loop: "{{ egress_subnet_info.subnets }}"
+
+  - name: "Query for existing route table(s) in Egress VPC"
+    community.aws.ec2_vpc_route_table_info:
+      region: "{{ aws_region }}"
+      filters:
+        vpc-id: "{{ egress_vpc_info.vpcs[0].vpc_id }}"
+    register: egress_route_tables_info
+
+  - name: delete public subnet route table
+    amazon.aws.ec2_vpc_route_table:
+      state: absent
+      vpc_id: "{{ egress_vpc_info.vpcs[0].vpc_id }}"
+      route_table_id: "{{ item.id }}"
+      lookup: id
+      region: "{{ aws_region }}"
+    loop: "{{ egress_route_tables_info.route_tables }}"
+    when: item.associations | length == 0
+
+  - name: "Query for existing route table(s) in Disconnected VPC"
+    community.aws.ec2_vpc_route_table_info:
+      region: "{{ aws_region }}"
+      filters:
+        vpc-id: "{{ disconnected_vpc_info.vpcs[0].vpc_id }}"
+    register: disconnected_route_tables_info
+
+  - name: delete disconnected subnet route table
+    amazon.aws.ec2_vpc_route_table:
+      state: absent
+      vpc_id: "{{ disconnected_vpc_info.vpcs[0].vpc_id }}"
+      route_table_id: "{{ item.id }}"
+      lookup: id
+      region: "{{ aws_region }}"
+    loop: "{{ disconnected_route_tables_info.route_tables }}"
+    when: item.associations | length == 0
+
+  - name: Delete internet gateway
+    amazon.aws.ec2_vpc_igw:
+      vpc_id: "{{ egress_vpc_info.vpcs[0].vpc_id }}"
+      region: "{{ aws_region }}"
+      state: absent
+
+  - name: Delete instance security group for windows
+    amazon.aws.ec2_security_group:
+      name: "{{ aws_security_group_for_windows }}"
+      vpc_id: "{{ egress_vpc_info.vpcs[0].vpc_id }}"
+      region: "{{ aws_region }}"
+      state: absent
+
+  - name: Delete instance security group for e2
+    amazon.aws.ec2_security_group:
+      name: "{{ aws_security_group_for_ec2 }}"
+      vpc_id: "{{ egress_vpc_info.vpcs[0].vpc_id }}"
+      region: "{{ aws_region }}"
+      state: absent
+
+  - name: Delete endpiont security groups
+    amazon.aws.ec2_security_group:
+      name: "{{ aws_security_group_for_endpoint }}"
+      vpc_id: "{{ disconnected_vpc_info.vpcs[0].vpc_id }}"
+      region: "{{ aws_region }}"
+      state: absent
+
+  - name: Delete Disconnected VPC
+    amazon.aws.ec2_vpc_net:
+      name: "{{ aws_disconnected_vpc_name }}"
+      state: absent
+      cidr_block: "{{ aws_disconnected_vpc_cidr }}"
+      region: "{{ aws_region }}"
+
+  - name: Delete Egress VPC
+    amazon.aws.ec2_vpc_net:
+      name: "{{ aws_egress_vpc_name }}"
+      state: absent
+      cidr_block: "{{ aws_egress_vpc_cidr }}"
+      region: "{{ aws_region }}"
+
+  - name: Delete ec2 SSH Key
+    amazon.aws.ec2_key:
+      name: "{{ aws_key_name }}" 
+      state: absent
+      region: "{{ aws_region }}"
+
+  #- name: Delete the role for ec2 instance to assume to install openshift
+  #  community.aws.iam_role:
+  #    name: "{{ aws_iam_role_name }}"
+  #    assume_role_policy_document: "{{ lookup('file','policy.json') }}"
+  #    state: absent
