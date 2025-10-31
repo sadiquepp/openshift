@@ -1,0 +1,268 @@
+- name: Setup Bastion Node
+  hosts: aws_ec2
+  gather_facts: false
+  remote_user: ec2-user
+  vars:
+    prefix_for_name: project_name
+    openshift_major_version: 4.20
+    openshift_minor_version: 0
+    openshift_version: "{{ openshift_major_version }}.{{ openshift_minor_version }}"
+    aws_region: ap-southeast-1
+    openshift_base_domain: example.com
+    openshift_cluster_name_suffix: xx1
+    openshift_cluster_name: "{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}"
+    sts_suffix: "{{ openshift_cluster_name }}-sts"
+    pull_secret_location: /home/ec2-user/pull-secret.txt
+    mirror_registry_password: RedHat123xyz
+    quay_root_mount: /registry
+    openshift_local_repository: openshift/release-images
+  tasks:
+
+  - name: Wait for SSH banners
+    wait_for_connection:
+      delay: 5
+      timeout: 300
+
+  - name: Store Hostname Into a Variable
+    shell: |
+      echo $HOSTNAME
+    register: installer_quay_hostname
+
+  - name: Install Required RPM Packages
+    dnf:
+      name:
+        - tmux
+        - tigervnc
+        - tigervnc-server
+        - wget
+        - podman
+        - jq
+        - golang
+        - unzip
+        - bind-utils
+        - squid
+        - openssl-devel
+        - git
+        - yum-utils
+        - ansible-core
+        - '@Server with GUI'
+      state: present
+    become: true
+
+  - name: Create VNC User
+    ansible.builtin.user:
+      name: vncuser
+    become: true
+
+  - name: Linsten for vnc server on port 5999
+    ansible.builtin.lineinfile:
+      path: /etc/tigervnc/vncserver.users
+      insertafter: EOF
+      line: ":99=vncuser"
+    become: true
+
+  - name: Creates .aws directory to store files
+    file:
+      path: /home/ec2-user/.aws
+      state: directory
+
+  - name: Update .aws/config with region
+    copy:
+      dest: /home/ec2-user/.aws/config
+      content: |
+        [default]
+        region = {{ aws_region }}
+
+  - name: Get the Mirror Registry, OC and OPM Tarball
+    get_url:
+      url: "{{ item }}"
+      dest: /home/ec2-user/
+    loop:
+      - https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/{{ openshift_major_version }}.{{ openshift_minor_version }}/openshift-client-linux.tar.gz
+      - https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip
+      - https://mirror.openshift.com/pub/openshift-v4/clients/rosa/latest/rosa-linux.tar.gz
+      - https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/latest/oc-mirror.tar.gz
+      - https://mirror.openshift.com/pub/cgw/mirror-registry/latest/mirror-registry-amd64.tar.gz
+
+  - name: Unarchive Downloaded Tarballs
+    unarchive:
+      src: "/home/ec2-user/{{ item }}"
+      dest: /home/ec2-user/
+      remote_src: yes
+    loop:
+      - openshift-client-linux.tar.gz
+      - awscli-exe-linux-x86_64.zip
+      - rosa-linux.tar.gz
+      - oc-mirror.tar.gz
+      - mirror-registry-amd64.tar.gz
+
+  - name: Copy OC CLI to /usr/bin
+    copy:
+      src: "/home/ec2-user/{{ item }}"
+      dest: "/usr/bin/{{ item }}"
+      remote_src: yes
+      mode: 0755
+    loop:
+      - oc
+      - rosa
+      - kubectl
+      - oc-mirror
+    become: yes
+
+  - name: Creates directory quay_root_mount
+    file:
+      path: "{{ quay_root_mount }}"
+      state: directory
+    become: true
+
+  - name: Install Mirror Registry
+    shell: |
+      /home/ec2-user/mirror-registry install \
+      --quayHostname $HOSTNAME \
+      --quayRoot {{ quay_root_mount }} \
+      --quayStorage {{ quay_root_mount }} \
+      --initPassword {{ mirror_registry_password }}
+    register: mirror_registry_install_output
+    become: true
+
+  - name: Copy Quay Root CA
+    copy:
+      src: "{{ quay_root_mount }}/quay-rootCA/rootCA.pem"
+      dest: /etc/pki/ca-trust/source/anchors/
+      remote_src: yes
+      mode: 0644
+    become: yes
+
+  - name: Update CA trust Bundle
+    shell: |
+      update-ca-trust extract
+    become: yes
+
+  - name: Copy pull secret
+    copy:
+      dest: /home/ec2-user/pull-secret.txt
+      content: "{{ pull_secret }}"
+
+  - name: Login to the registry and generate password
+    shell: |
+      podman login --authfile /home/ec2-user/pull-secret.txt \
+      -u init \
+      -p {{ mirror_registry_password }} \
+      $HOSTNAME:8443
+
+  - name: Create .docker Directory
+    file:
+      path: "/home/ec2-user/.docker"
+      state: directory
+
+  - name: Copy pull secret to .docker directory
+    copy:
+      src: /home/ec2-user/pull-secret.txt
+      dest: "/home/ec2-user/.docker/config.json"
+      remote_src: yes
+
+  - name: Store the mirror registry credentials to a variable
+    shell: |
+      CREDENTIAL=$(grep -A1 {{ installer_quay_hostname.stdout }} /home/ec2-user/pull-secret.txt | grep -v {{ installer_quay_hostname.stdout }} | awk {'print $2'})
+      echo $CREDENTIAL
+    register: quay_credential
+
+  - name: Copy ImageSet Configuration file
+    template:
+      src: "imageset-config.yaml.j2"
+      dest: "/home/ec2-user/imageset-config.yaml"
+
+  - name: Create oc-mirror-output Directory
+    file:
+      path: "/home/ec2-user/oc-mirror-output"
+      state: directory
+
+  - name: Mirror Images to the local registry
+    shell: |
+      oc mirror -c imageset-config.yaml --workspace file://oc-mirror-output/ docker://$HOSTNAME:8443 --v2
+
+  - name: Extract Openshift Install Binary from mirror registry
+    shell: |
+      oc adm release extract -a {{ pull_secret_location }} \
+       --command=openshift-install "$HOSTNAME:8443/{{ openshift_local_repository }}:{{ openshift_version }}-x86_64"
+
+  - name: Create credentials/Install directory
+    file:
+      path: "/home/ec2-user/{{ item }}"
+      state: directory
+    loop:
+      - install-dir
+      - sts
+
+  - name: Extract ccoutils
+    shell: |
+      cd /home/ec2-user/sts
+      RELEASE_IMAGE=$(/home/ec2-user/openshift-install version | awk '/release image/ {print $3}')
+      CCO_IMAGE=$(oc adm release info -a /home/ec2-user/pull-secret.txt --image-for='cloud-credential-operator' $RELEASE_IMAGE)
+      oc image extract $CCO_IMAGE --file="/usr/bin/ccoctl" -a /home/ec2-user/pull-secret.txt
+
+  - name: Changing permission of ccoutil to 755
+    file:
+      path: /home/ec2-user/sts/ccoctl
+      mode: 0755
+
+  - name: Delete existing sts resources
+    shell: |
+      cd /home/ec2-user/sts
+      /home/ec2-user/sts/ccoctl aws delete --name {{ sts_suffix }} --region {{ aws_region }}
+
+  - name: Extract the list of CredentialsRequest objects from the OpenShift Container Platform release image
+    shell: |
+      cd /home/ec2-user/sts
+      RELEASE_IMAGE=$(/home/ec2-user/openshift-install version | awk '/release image/ {print $3}')
+      oc adm release extract --credentials-requests \
+      --cloud=aws \
+      --to=/home/ec2-user/sts/credrequests \
+      ${RELEASE_IMAGE}
+
+  - name: Create All STS Files
+    shell: |
+      cd /home/ec2-user/sts
+      ccoctl aws create-all \
+      --credentials-requests-dir /home/ec2-user/sts/credrequests/ \
+      --name {{ sts_suffix }} \
+      --region {{ aws_region }} \
+      --create-private-s3-bucket
+
+  - name: Copy install-config.yaml
+    template:
+      src: "{{ item }}.j2"
+      dest: "{{ item }}"
+    loop:
+      - install-config.yaml
+
+  - name: Copy Install-config.yaml to install-dir
+    copy:
+      src: "/home/ec2-user/install-config.yaml"
+      dest: "/home/ec2-user/install-dir/install-config.yaml"
+      remote_src: yes
+      mode: 0644
+
+  - name: Generate Manifests
+    shell: |
+      openshift-install create manifests --dir /home/ec2-user/install-dir
+
+  - name: Copy STS credentials to install-dir/manifests
+    copy:
+      src: "/home/ec2-user/sts/manifests/"
+      dest: "/home/ec2-user/install-dir/manifests/"
+      remote_src: yes
+
+  - name: Copy STS tls files to install-dir/
+    copy:
+      src: /home/ec2-user/sts/tls
+      dest: /home/ec2-user/install-dir/
+      remote_src: yes
+
+#  - name: Install the cluster
+#    shell: |
+#      openshift-install create cluster --dir /home/ec2-user/install-dir --log-level=debug
+#
+#  - name: Destroy the cluster
+#    shell: |
+#      openshift-install destroy cluster --dir /home/ec2-user/install-dir --log-level=debug
