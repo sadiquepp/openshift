@@ -1,20 +1,20 @@
 - name: Create EC2 Instance for Mirror Registry OCP Installer and Proxy
   hosts: localhost
   vars:
-    kerberos_name: sputhenp
-    aws_key_name: "{{ kerberos_name }}_ansible"
+    prefix_for_name: project_name
+    aws_key_name: "{{ prefix_for_name }}_ansible"
     aws_instance_type: t2.large
     aws_ami: ami-04698733964af06d5
     instance_count: 1
     aws_region: ap-southeast-1
     aws_security_group_for_ec2: ping_ssh_8443
-    aws_egress_vpc_name: "{{ kerberos_name }}-egress"
-    aws_disconnected_vpc_name: "{{ kerberos_name }}-disconnected"
+    aws_egress_vpc_name: "{{ prefix_for_name }}-egress"
+    aws_disconnected_vpc_name: "{{ prefix_for_name }}-disconnected"
     openshift_base_domain: example.com
     openshift_cluster_name_suffix: xt1
-    openshift_cluster_name: "{{ kerberos_name }}-{{ openshift_cluster_name_suffix }}"
+    openshift_cluster_name: "{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}"
     aws_instance_name: "{{ openshift_cluster_name }}-installer"
-    aws_iam_role_name: "{{ kerberos_name }}-ocp-install-ec2"
+    aws_iam_role_name: "{{ prefix_for_name }}-ocp-install-ec2"
     ssh_public_key_for_ec2_and_openshit_node: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDu9xbA2hicBBlrb9dadC0p+z93CfhOJQ+o1MGb3yYe3WvV9KrQ8mYBsYlFXm5oc20lZHQBKADhtOHXgDn4Qj429MjUUMGuNOoFU1ZBDblDsKzK+VSQ+IUBdUDBJbUQmsvs9XZ5E3w7Eiq0w8W9z6LuJHvC2VUnKhZAizLVjccX43NPskD0+d7ZuZ8yr/yo0gwN7XiiUMGoeOja8orkInNE2alZIfeNI8N2wQS3jdJoL0q/NFowAi032eYBm/or6/5u6EQg3UVcY1SX7YG5DkgogTklcHqkBZ60j/BYP5k6DohfJ6XPEl+6oPwl6wH/y4GXRxdTuBJ3u9PidKitAp7WndbJgdjhMfcJLlLhhXwrV4Zig5VlyaB80MvzW5Rx/NHlEBtiq+v+GWyz5rPkdfvINNVyHo4Cs7OkpCJTPOrfSLOQkxO4WoxXe4F5hmLiyeRNAKZB1VPQYbGUHuiuqEgxfg5Ao4ASNNZy/ZJH3gScVDFZfLMwZtuBRLAY6X1f4n8= root@dell-r640-gcsosp-01.lab.eng.rdu2.redhat.com"
   tasks:
 
