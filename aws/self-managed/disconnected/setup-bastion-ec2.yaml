@@ -236,6 +236,11 @@
     loop:
       - install-config.yaml
 
+  - name: Copy Quay Root CA to install-config.yaml
+    shell: |
+      sed 's/^/    /' /registry/quay-rootCA/rootCA.pem >> /home/ec2-user/install-config.yaml
+    become: true
+
   - name: Copy Install-config.yaml to install-dir
     copy:
       src: "/home/ec2-user/install-config.yaml"
