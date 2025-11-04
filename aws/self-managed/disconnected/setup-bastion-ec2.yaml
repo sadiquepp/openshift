@@ -223,7 +223,7 @@
   - name: Create All STS Files
     shell: |
       cd /home/ec2-user/sts
-      ccoctl aws create-all \
+      /home/ec2-user/sts/ccoctl aws create-all \
       --credentials-requests-dir /home/ec2-user/sts/credrequests/ \
       --name {{ sts_suffix }} \
       --region {{ aws_region }} \
@@ -245,7 +245,7 @@
 
   - name: Generate Manifests
     shell: |
-      openshift-install create manifests --dir /home/ec2-user/install-dir
+      /home/ec2-user/openshift-install create manifests --dir /home/ec2-user/install-dir
 
   - name: Copy STS credentials to install-dir/manifests
     copy:
