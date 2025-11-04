@@ -8,7 +8,7 @@ mirror:
       maxVersion: {{ openshift_version }}
     graph: true 
   operators:
-    - catalog: registry.redhat.io/redhat/redhat-operator-index:{{ openshift_major_version }} 
+    - catalog: registry.redhat.io/redhat/redhat-operator-index:v{{ openshift_major_version }} 
       packages: 
        - name: aws-load-balancer-operator
        - name: 3scale-operator
