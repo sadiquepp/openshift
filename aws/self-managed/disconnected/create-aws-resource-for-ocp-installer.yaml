@@ -15,6 +15,7 @@
     openshift_cluster_name: "{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}"
     aws_instance_name: "{{ openshift_cluster_name }}-installer"
     aws_iam_role_name: "{{ prefix_for_name }}-ocp-install-ec2"
+    ec2_disk_size: 100
     ssh_public_key_for_ec2_and_openshit_node: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDu9xbA2hicBBlrb9dadC0p+z93CfhOJQ+o1MGb3yYe3WvV9KrQ8mYBsYlFXm5oc20lZHQBKADhtOHXgDn4Qj429MjUUMGuNOoFU1ZBDblDsKzK+VSQ+IUBdUDBJbUQmsvs9XZ5E3w7Eiq0w8W9z6LuJHvC2VUnKhZAizLVjccX43NPskD0+d7ZuZ8yr/yo0gwN7XiiUMGoeOja8orkInNE2alZIfeNI8N2wQS3jdJoL0q/NFowAi032eYBm/or6/5u6EQg3UVcY1SX7YG5DkgogTklcHqkBZ60j/BYP5k6DohfJ6XPEl+6oPwl6wH/y4GXRxdTuBJ3u9PidKitAp7WndbJgdjhMfcJLlLhhXwrV4Zig5VlyaB80MvzW5Rx/NHlEBtiq+v+GWyz5rPkdfvINNVyHo4Cs7OkpCJTPOrfSLOQkxO4WoxXe4F5hmLiyeRNAKZB1VPQYbGUHuiuqEgxfg5Ao4ASNNZy/ZJH3gScVDFZfLMwZtuBRLAY6X1f4n8= root@dell-r640-gcsosp-01.lab.eng.rdu2.redhat.com"
   tasks:
 
@@ -132,7 +133,7 @@
         - device_name: /dev/sda1
           ebs:
             volume_type: gp3
-            volume_size: 100
+            volume_size: "{{ ec2_disk_size }}"
             delete_on_termination: true
     register: ec2_info
 
