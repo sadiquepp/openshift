@@ -9,7 +9,7 @@
     openshift_version: "{{ openshift_major_version }}.{{ openshift_minor_version }}"
     aws_region: ap-southeast-1
     openshift_base_domain: example.com
-    openshift_cluster_name_suffix: xx1
+    openshift_cluster_name_suffix: xt1
     openshift_cluster_name: "{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}"
     sts_suffix: "{{ openshift_cluster_name }}-sts"
     pull_secret_location: /home/ec2-user/pull-secret.txt
@@ -251,6 +251,18 @@
   - name: Generate Manifests
     shell: |
       /home/ec2-user/openshift-install create manifests --dir /home/ec2-user/install-dir
+
+  - name: Remove DNS related records
+    lineinfile:
+      path: /home/ec2-user/install-dir/manifests/cluster-dns-02-config.yml
+      state: absent
+      regexp: '^  privateZone:'
+
+  - name: Remove DNS related records
+    lineinfile:
+      path: /home/ec2-user/install-dir/manifests/cluster-dns-02-config.yml
+      state: absent
+      regexp: '^    id:'
 
   - name: Copy STS credentials to install-dir/manifests
     copy:
