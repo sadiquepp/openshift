@@ -16,6 +16,7 @@
     aws_instance_name: "{{ openshift_cluster_name }}-installer"
     aws_iam_role_name: "{{ prefix_for_name }}-ocp-install-ec2"
     ec2_disk_size: 100
+    aws_iam_role_name: "{{ prefix_for_name }}-ocp-install-ec2"
     ssh_public_key_for_ec2_and_openshit_node: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDu9xbA2hicBBlrb9dadC0p+z93CfhOJQ+o1MGb3yYe3WvV9KrQ8mYBsYlFXm5oc20lZHQBKADhtOHXgDn4Qj429MjUUMGuNOoFU1ZBDblDsKzK+VSQ+IUBdUDBJbUQmsvs9XZ5E3w7Eiq0w8W9z6LuJHvC2VUnKhZAizLVjccX43NPskD0+d7ZuZ8yr/yo0gwN7XiiUMGoeOja8orkInNE2alZIfeNI8N2wQS3jdJoL0q/NFowAi032eYBm/or6/5u6EQg3UVcY1SX7YG5DkgogTklcHqkBZ60j/BYP5k6DohfJ6XPEl+6oPwl6wH/y4GXRxdTuBJ3u9PidKitAp7WndbJgdjhMfcJLlLhhXwrV4Zig5VlyaB80MvzW5Rx/NHlEBtiq+v+GWyz5rPkdfvINNVyHo4Cs7OkpCJTPOrfSLOQkxO4WoxXe4F5hmLiyeRNAKZB1VPQYbGUHuiuqEgxfg5Ao4ASNNZy/ZJH3gScVDFZfLMwZtuBRLAY6X1f4n8= root@dell-r640-gcsosp-01.lab.eng.rdu2.redhat.com"
   tasks:
 
@@ -25,6 +26,21 @@
       region: "{{ aws_region }}"
       key_material: "{{ ssh_public_key_for_ec2_and_openshit_node }}"
       state: present
+
+  - name: Create a role for ec2 instance to assume to install openshift
+    community.aws.iam_role:
+      name: "{{ aws_iam_role_name }}"
+      assume_role_policy_document: "{{ lookup('file','policy.json') }}"
+      managed_policies:
+        - arn:aws:iam::aws:policy/AmazonEC2FullAccess
+        - arn:aws:iam::aws:policy/IAMFullAccess
+        - arn:aws:iam::aws:policy/AutoScalingFullAccess
+        - arn:aws:iam::aws:policy/ElasticLoadBalancingFullAccess
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - arn:aws:iam::aws:policy/ResourceGroupsandTagEditorFullAccess
+        - arn:aws:iam::aws:policy/AmazonRoute53FullAccess
+        - arn:aws:iam::aws:policy/ServiceQuotasFullAccess
+        - arn:aws:iam::aws:policy/CloudFrontFullAccess
 
   - name: Create a security group for Mirror Registry to use 22,8443 and icmp
     amazon.aws.ec2_security_group:
