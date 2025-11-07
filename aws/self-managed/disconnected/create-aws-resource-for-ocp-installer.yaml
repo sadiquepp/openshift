@@ -33,6 +33,9 @@
       region: "{{ aws_region }}"
     register: egress_vpc_info
 
+  - debug:
+      var: egress_vpc_info
+
   - name: Query for any existing subnet(s) in Egress VPC
     amazon.aws.ec2_vpc_subnet_info:
       region: "{{ aws_region }}"
