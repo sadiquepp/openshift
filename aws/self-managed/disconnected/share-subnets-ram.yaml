@@ -1,0 +1,75 @@
+- name: Share Subnets with Another account to test ROSA in Shared VPC
+  hosts: localhost
+  vars:
+    prefix_for_name: project_name
+    aws_region: ap-southeast-1
+    aws_egress_vpc_name: "{{ prefix_for_name }}-egress"
+    aws_disconnected_vpc_name: "{{ prefix_for_name }}-disconnected"
+    resource_share_name: rosa-share-subnet
+  tasks:
+
+  - name: Gather Information about Egress VPC
+    amazon.aws.ec2_vpc_net_info:
+      filters:
+        "tag:Name": "{{ aws_egress_vpc_name }}"
+      region: "{{ aws_region }}"
+    register: egress_vpc_info
+
+  - name: Query for any existing subnet(s) in Egress VPC
+    amazon.aws.ec2_vpc_subnet_info:
+      region: "{{ aws_region }}"
+      filters:
+        vpc-id:  "{{ egress_vpc_info.vpcs[0].vpc_id }}"
+    register: egress_subnet_info
+
+  - name: Gather Information about Disconnected VPC
+    amazon.aws.ec2_vpc_net_info:
+      filters:
+        "tag:Name": "{{ aws_disconnected_vpc_name }}"
+      region: "{{ aws_region }}"
+    register: disconnected_vpc_info
+
+  - name: Query for any existing subnet(s) in Disconnected VPC
+    amazon.aws.ec2_vpc_subnet_info:
+      region: "{{ aws_region }}"
+      filters:
+        vpc-id:  "{{ disconnected_vpc_info.vpcs[0].vpc_id }}"
+    register: disconnected_subnet_info
+
+  - name: Query for subnetID for AZ1 in Disconnected VPC
+    amazon.aws.ec2_vpc_subnet_info:
+      region: "{{ aws_region }}"
+      filters:
+        vpc-id:  "{{ disconnected_vpc_info.vpcs[0].vpc_id }}"
+        "tag:Name": "{{ aws_disconnected_vpc_name }}-subnet-az1"
+    register: disconnected_subnet_info_az1
+
+  - name: Query for subnetID for AZ2 in Disconnected VPC
+    amazon.aws.ec2_vpc_subnet_info:
+      region: "{{ aws_region }}"
+      filters:
+        vpc-id:  "{{ disconnected_vpc_info.vpcs[0].vpc_id }}"
+        "tag:Name": "{{ aws_disconnected_vpc_name }}-subnet-az2"
+    register: disconnected_subnet_info_az2
+
+  - name: Query for subnetID for AZ3 in Disconnected VPC
+    amazon.aws.ec2_vpc_subnet_info:
+      region: "{{ aws_region }}"
+      filters:
+        vpc-id:  "{{ disconnected_vpc_info.vpcs[0].vpc_id }}"
+        "tag:Name": "{{ aws_disconnected_vpc_name }}-subnet-az3"
+    register: disconnected_subnet_info_az3
+
+  - name: Create or update AWS RAM resource share for subnets
+    amazon.aws.ram_resource_share:
+      name: "{{ resource_share_name }}"
+      resources:
+        - "{{ disconnected_subnet_info_az1.subnets[0].subnet_arn }}"
+        - "{{ disconnected_subnet_info_az2.subnets[0].subnet_arn }}"
+        - "{{ disconnected_subnet_info_az3.subnets[0].subnet_arn }}"
+        - "{{ egress_subnet_info.subnets[0].subnet_arn }}"       
+      principals: "{{ aws_account_number_to_share_with }}"
+      allow_external_principals: false 
+      state: present
+      region: "{{ aws_region }}"
+    register: ram_share_status
