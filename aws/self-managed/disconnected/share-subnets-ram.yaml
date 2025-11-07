@@ -69,3 +69,15 @@
       --allow-external-principals \
       --region "{{ aws_region }}"
     register: ram_share_status
+
+  - name: Set Variable to use for instances
+    set_stats:
+      data:
+        disconnected_subnet_id_a: "{{ disconnected_subnet_info_az1.subnets[0].subnet_id }}"
+        disconnected_subnet_id_b: "{{ disconnected_subnet_info_az2.subnets[0].subnet_id }}"
+        disconnected_subnet_id_c: "{{ disconnected_subnet_info_az3.subnets[0].subnet_id }}"
+        disconnected_vpc_cidr: "{{ disconnected_vpc_info.vpcs[0].cidr_block }}"
+        disconnected_vpc_id: "{{ disconnected_vpc_info.vpcs[0].vpc_id }}"
+        egress_subnet_id_a: "{{ egress_subnet_info.subnets[0].subnet_id }}"
+        egress_vpc_id: "{{ egress_vpc_info.vpcs[0].vpc_id }}"
+        egress_vpc_cidr: "{{ egress_vpc_info.vpcs[0].cidr_block }}"
