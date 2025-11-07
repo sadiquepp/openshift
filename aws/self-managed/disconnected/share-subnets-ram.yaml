@@ -60,16 +60,11 @@
         "tag:Name": "{{ aws_disconnected_vpc_name }}-subnet-az3"
     register: disconnected_subnet_info_az3
 
-  - name: Create or update AWS RAM resource share for subnets
-    amazon.aws.ram_resource_share:
-      name: "{{ resource_share_name }}"
-      resources:
-        - "{{ disconnected_subnet_info_az1.subnets[0].subnet_arn }}"
-        - "{{ disconnected_subnet_info_az2.subnets[0].subnet_arn }}"
-        - "{{ disconnected_subnet_info_az3.subnets[0].subnet_arn }}"
-        - "{{ egress_subnet_info.subnets[0].subnet_arn }}"       
-      principals: "{{ aws_account_number_to_share_with }}"
-      allow_external_principals: false 
-      state: present
-      region: "{{ aws_region }}"
+  - name: Share Subnet with specified AWS Account
+    shell: |
+      aws ram create-resource-share \
+      --name "{{ resource_share_name }}" \
+      --resource-arns "{{ disconnected_subnet_info_az1.subnets[0].subnet_arn }}" "{{ disconnected_subnet_info_az2.subnets[0].subnet_arn }}" "{{ disconnected_subnet_info_az3.subnets[0].subnet_arn }}" "{{ egress_subnet_info.subnets[0].subnet_arn }}" \
+      --principals "{{ aws_account_number_to_share_with }}" \
+      --allow-external-principals
     register: ram_share_status
