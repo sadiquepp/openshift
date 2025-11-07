@@ -65,7 +65,7 @@
 
   - name: Create DNS route53 private domain 
     amazon.aws.route53_zone:
-      vpc_id: "{{ disconnected_vpc_id }}"
+      vpc_id: "{{ disconnected_vpc_info.vpcs[0].vpc_id }}"
       vpc_region: "{{ aws_region }}"
       zone: "{{ openshift_cluster_name }}.{{ openshift_base_domain }}" 
       state: present
@@ -75,7 +75,7 @@
     shell: |
       aws route53 associate-vpc-with-hosted-zone \
        --hosted-zone-id {{ hosted_zone_info.zone_id }} \
-       --vpc VPCRegion={{ aws_region }},VPCId={{ egress_vpc_id }} --region {{ aws_region }}
+       --vpc VPCRegion={{ aws_region }},VPCId={{ egress_vpc_info.vpcs[0].vpc_id }} --region {{ aws_region }}
 
   - name: Share Subnet with specified AWS Account
     shell: |
