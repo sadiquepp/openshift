@@ -66,5 +66,6 @@
       --name "{{ resource_share_name }}" \
       --resource-arns "{{ disconnected_subnet_info_az1.subnets[0].subnet_arn }}" "{{ disconnected_subnet_info_az2.subnets[0].subnet_arn }}" "{{ disconnected_subnet_info_az3.subnets[0].subnet_arn }}" "{{ egress_subnet_info.subnets[0].subnet_arn }}" \
       --principals "{{ aws_account_number_to_share_with }}" \
-      --allow-external-principals
+      --allow-external-principals \
+      --region "{{ aws_region }}"
     register: ram_share_status
