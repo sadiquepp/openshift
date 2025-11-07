@@ -1,0 +1,52 @@
+#!/bin/bash
+echo "===== Logging in using ROSA Token ====="
+rosa login --token={{ rosa_token }}
+
+echo "===== Creating Account Roles ====="
+rosa create account-roles \
+  --hosted-cp \
+  --prefix {{ kerberos_name }}-{{ openshift_cluster_name_suffix }} \
+  --mode auto \
+  --yes
+
+sleep 30
+
+aws iam attach-role-policy \
+  --role-name {{ kerberos_name }}-{{ openshift_cluster_name_suffix }}-HCP-ROSA-Worker-Role \
+  --policy-arn "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+
+echo "===== Creating ODIC Config ID ====="
+OIDC_CONFIG_ID=`rosa create oidc-config --mode=auto  --yes | grep oidc-provider | cut -f3 -d/ | cut -f1 -d\'`
+echo "OIDC CONFIG ID: ${OIDC_CONFIG_ID}"
+
+echo "===== Fetching AWS Account Number ====="
+AWS_ACCOUNT_NUMBER=`aws sts get-caller-identity | grep Account | cut -f2 -d: |  cut -f1 -d,| cut -f2 -d\"`
+echo "AWS ACCOUNT NUMBER: ${AWS_ACCOUNT_NUMBER}"
+
+echo "===== Creating Operator Roles ====="
+rosa create operator-roles \
+  --hosted-cp \
+  --prefix {{ kerberos_name }}-{{ openshift_cluster_name_suffix }}-zeg \
+  --oidc-config-id $OIDC_CONFIG_ID \
+  --installer-role-arn arn:aws:iam::${AWS_ACCOUNT_NUMBER}:role/{{ kerberos_name }}-{{ openshift_cluster_name_suffix }}-HCP-ROSA-Installer-Role \
+  --mode auto \
+  --yes
+
+echo "===== Creating ROSA Cluster {{ kerberos_name }}-{{ openshift_cluster_name_suffix }} ====="
+rosa create cluster \
+  --role-arn arn:aws:iam::${AWS_ACCOUNT_NUMBER}:role/{{ kerberos_name }}-{{ openshift_cluster_name_suffix }}-HCP-ROSA-Installer-Role \
+  --support-role-arn arn:aws:iam::${AWS_ACCOUNT_NUMBER}:role/{{ kerberos_name }}-{{ openshift_cluster_name_suffix }}-HCP-ROSA-Support-Role \
+  --worker-iam-role arn:aws:iam::${AWS_ACCOUNT_NUMBER}:role/{{ kerberos_name }}-{{ openshift_cluster_name_suffix }}-HCP-ROSA-Worker-Role \
+  --operator-roles-prefix {{ kerberos_name }}-{{ openshift_cluster_name_suffix }}-zeg \
+  --oidc-config-id ${OIDC_CONFIG_ID} \
+  --hosted-cp \
+  --private \
+  --sts \
+  --mode auto \
+  --multi-az \
+  --cluster-name {{ kerberos_name }}-{{ openshift_cluster_name_suffix }}-zeg \
+  --machine-cidr {{ disconnected_vpc_cidr }} \
+  --subnet-ids {{ disconnected_subnet_id_a }},{{ disconnected_subnet_id_b }},{{ disconnected_subnet_id_c }} \
+  --yes \
+  --properties zero_egress:true \
+  --region {{ aws_region }}
