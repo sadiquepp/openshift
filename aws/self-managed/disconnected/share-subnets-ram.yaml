@@ -6,6 +6,9 @@
     aws_egress_vpc_name: "{{ prefix_for_name }}-egress"
     aws_disconnected_vpc_name: "{{ prefix_for_name }}-disconnected"
     resource_share_name: rosa-share-subnet
+    openshift_base_domain: example.com
+    openshift_cluster_name_suffix: xt1
+    openshift_cluster_name: "{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}"
   tasks:
 
   - name: Gather Information about Egress VPC
@@ -60,6 +63,20 @@
         "tag:Name": "{{ aws_disconnected_vpc_name }}-subnet-az3"
     register: disconnected_subnet_info_az3
 
+  - name: Create DNS route53 private domain 
+    amazon.aws.route53_zone:
+      vpc_id: "{{ disconnected_vpc_id }}"
+      vpc_region: "{{ aws_region }}"
+      zone: "{{ openshift_cluster_name }}.{{ openshift_base_domain }}" 
+      state: present
+    register: hosted_zone_info
+
+  - name: Attach route53 private domain with Egress VPC
+    shell: |
+      aws route53 associate-vpc-with-hosted-zone \
+       --hosted-zone-id {{ hosted_zone_info.zone_id }} \
+       --vpc VPCRegion={{ aws_region }},VPCId={{ egress_vpc_id }} --region {{ aws_region }}
+
   - name: Share Subnet with specified AWS Account
     shell: |
       aws ram create-resource-share \
@@ -81,3 +98,4 @@
         egress_subnet_id_a: "{{ egress_subnet_info.subnets[0].subnet_id }}"
         egress_vpc_id: "{{ egress_vpc_info.vpcs[0].vpc_id }}"
         egress_vpc_cidr: "{{ egress_vpc_info.vpcs[0].cidr_block }}"
+        hosted_zone_id_for_domain: "{{ hosted_zone_info.zone_id }}"

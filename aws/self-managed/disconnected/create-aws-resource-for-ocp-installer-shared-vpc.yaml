@@ -26,20 +26,6 @@
       key_material: "{{ ssh_public_key_for_ec2_and_openshit_node }}"
       state: present
 
-  - name: Create DNS route53 private domain 
-    amazon.aws.route53_zone:
-      vpc_id: "{{ disconnected_vpc_id }}"
-      vpc_region: "{{ aws_region }}"
-      zone: "{{ openshift_cluster_name }}.{{ openshift_base_domain }}" 
-      state: present
-    register: hosted_zone_info
-
-  - name: Attach route53 private domain with Egress VPC
-    shell: |
-      aws route53 associate-vpc-with-hosted-zone \
-       --hosted-zone-id {{ hosted_zone_info.zone_id }} \
-       --vpc VPCRegion={{ aws_region }},VPCId={{ egress_vpc_id }} --region {{ aws_region }}
-
   - name: Create a security group for Mirror Registry to use 22,8443 and icmp
     amazon.aws.ec2_security_group:
       name: "{{ aws_security_group_for_ec2 }}"
@@ -86,8 +72,3 @@
             volume_size: "{{ ec2_disk_size }}"
             delete_on_termination: true
     register: ec2_info
-
-  - name: Set Variable to use for instances
-    set_stats:
-      data:
-        hosted_zone_id_for_domain: "{{ hosted_zone_info.zone_id }}"
