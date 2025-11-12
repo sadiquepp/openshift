@@ -155,6 +155,14 @@
       - oc-mirror
     become: yes
 
+  - name: Copy ROSA Create/Delete Cluster Scripts
+    template:
+      src: "{{ item }}.j2"
+      dest: "{{ item }}"
+      mode: 0755
+    loop:
+      - rosa-create-cluster-hcp-shared-vpc.sh
+
   - name: Creates directory quay_root_mount
     file:
       path: "{{ quay_root_mount }}"

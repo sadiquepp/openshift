@@ -13,6 +13,10 @@
     endpoint_iam_role_name: "{{ openshift_cluster_name }}-shared-vpc-endpoint"
   tasks:
 
+  - name: Get the current caller identity information
+    amazon.aws.aws_caller_info:
+    register: caller_info
+
   - name: Create IAM role for route53
     amazon.aws.iam_role:
       name: "{{ route53_iam_role_name }}"
@@ -81,7 +85,7 @@
 
   - name: Create DNS route53 private domain 
     amazon.aws.route53_zone:
-      vpc_id: "{{ disconnected_vpc_info.vpcs[0].vpc_id }}"
+      vpc_id: "{{ disconnected_vpc_info.vpcshosted_zone_info_rosa[0].vpc_id }}"
       vpc_region: "{{ aws_region }}"
       zone: "{{ openshift_cluster_name }}.{{ openshift_base_domain }}" 
       state: present
@@ -92,6 +96,22 @@
       aws route53 associate-vpc-with-hosted-zone \
        --hosted-zone-id {{ hosted_zone_info.zone_id }} \
        --vpc VPCRegion={{ aws_region }},VPCId={{ egress_vpc_info.vpcs[0].vpc_id }} --region {{ aws_region }}
+
+  - name: Create DNS route53 private domain for ROSA shared VPC
+    amazon.aws.route53_zone:
+      vpc_id: "{{ disconnected_vpc_info.vpcs[0].vpc_id }}"
+      vpc_region: "{{ aws_region }}"
+      zone: "rosa.{{ openshift_cluster_name }}.{{ rosa_shared_vpc_cluster_domain }}" 
+      state: present
+    register: hosted_zone_info_rosa
+
+  - name: Create DNS route53 private domain for ROSA shared VPC hypershift.local
+    amazon.aws.route53_zone:
+      vpc_id: "{{ disconnected_vpc_info.vpcs[0].vpc_id }}"
+      vpc_region: "{{ aws_region }}"
+      zone: "{{ openshift_cluster_name }}.hypershift.local" 
+      state: present
+    register: hosted_zone_info_rosa_hypershift_local
 
   - name: Share Subnet with specified AWS Account
     shell: |
@@ -115,3 +135,6 @@
         egress_vpc_id: "{{ egress_vpc_info.vpcs[0].vpc_id }}"
         egress_vpc_cidr: "{{ egress_vpc_info.vpcs[0].cidr_block }}"
         hosted_zone_id_for_domain: "{{ hosted_zone_info.zone_id }}"
+        vpc_owner_aws_account_number: "{{ caller_info.account }}"
+        hypershift_local_hosted_zone_id: "{{ hosted_zone_info_rosa_hypershift_local.zone_id}}"
+        rosa_shared_vpc_hosted_zone_id: "{{ hosted_zone_info_rosa.zone_id }}"
