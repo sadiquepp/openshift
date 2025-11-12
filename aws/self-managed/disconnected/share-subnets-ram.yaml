@@ -9,7 +9,23 @@
     openshift_base_domain: example.com
     openshift_cluster_name_suffix: xt1
     openshift_cluster_name: "{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}"
+    route53_iam_role_name: "{{ openshift_cluster_name }}-shared-vpc-route53"
+    endpoint_iam_role_name: "{{ openshift_cluster_name }}-shared-vpc-endpoint"
   tasks:
+
+  - name: Create IAM role for route53
+    amazon.aws.iam_role:
+      name: "{{ route53_iam_role_name }}"
+      assume_role_policy_document: "{{ lookup('template','route53-policy.json.j2') }}"
+      managed_policies:
+        - arn:aws:iam::aws:policy/ROSASharedVPCRoute53Policy
+
+  - name: Create IAM role for VPC Endpoint
+    amazon.aws.iam_role:
+      name: "{{ endpoint_iam_role_name }}"
+      assume_role_policy_document: "{{ lookup('template','endpoint-policy.json.j2') }}"
+      managed_policies:
+        - arn:aws:iam::aws:policy/ROSASharedVPCEndpointPolicy
 
   - name: Gather Information about Egress VPC
     amazon.aws.ec2_vpc_net_info:

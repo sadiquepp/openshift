@@ -1,0 +1,13 @@
+- name: Share Subnets with Another account to test ROSA in Shared VPC
+  hosts: localhost
+  tasks:
+
+  - name: Get the current caller identity information
+    amazon.aws.aws_caller_info:
+    register: caller_info
+
+  - debug:
+      var: caller_info
+
+  - debug:
+      var: caller_info.account

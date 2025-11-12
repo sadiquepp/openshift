@@ -1,0 +1,16 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Principal": {
+                "AWS": [
+                    "arn:aws:iam::{{ aws_account_number_to_share_with }}:role/{{ openshift_cluster_name }}-HCP-ROSA-Installer-Role",
+                    "arn:aws:iam::{{ aws_account_number_to_share_with }}:role/{{ openshift_cluster_name }}-openshift-ingress-operator-cloud-credentials",
+                    "arn:aws:iam::{{ aws_account_number_to_share_with }}:role/{{ openshift_cluster_name }}-kube-system-control-plane-operator"
+                ]
+            },
+            "Action": "sts:AssumeRole"
+        }
+    ]
+}

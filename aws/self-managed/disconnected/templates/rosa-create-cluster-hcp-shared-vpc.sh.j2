@@ -4,16 +4,14 @@ rosa login --token={{ rosa_token }}
 
 echo "===== Creating Account Roles ====="
 rosa create account-roles \
-  --hosted-cp \
+  --route53-role-arn arn:aws:iam::799025176301:role/{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}-shared-vpc-route53 \
+  --vpc-endpoint-role-arn arn:aws:iam::799025176301:role/{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}-shared-vpc-endpoint \
   --prefix {{ prefix_for_name }}-{{ openshift_cluster_name_suffix }} \
+  --hosted-cp \
   --mode auto \
   --yes
 
 sleep 30
-
-aws iam attach-role-policy \
-  --role-name {{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}-HCP-ROSA-Worker-Role \
-  --policy-arn "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
 
 echo "===== Creating ODIC Config ID ====="
 OIDC_CONFIG_ID=`rosa create oidc-config --mode=auto  --yes | grep oidc-provider | cut -f3 -d/ | cut -f1 -d\'`
