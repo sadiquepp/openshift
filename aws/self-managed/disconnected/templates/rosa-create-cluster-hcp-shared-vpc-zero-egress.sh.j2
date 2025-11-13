@@ -1,0 +1,57 @@
+#!/bin/bash
+echo "===== Logging in using ROSA Token ====="
+rosa login --token={{ rosa_token }}
+
+echo "===== Creating Account Roles ====="
+rosa create account-roles \
+  --route53-role-arn arn:aws:iam::{{ vpc_owner_aws_account_number }}:role/{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}-shared-vpc-route53 \
+  --vpc-endpoint-role-arn arn:aws:iam::{{ vpc_owner_aws_account_number }}:role/{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}-shared-vpc-endpoint \
+  --prefix {{ prefix_for_name }}-{{ openshift_cluster_name_suffix }} \
+  --hosted-cp \
+  --mode auto \
+  --yes
+
+sleep 30
+
+echo "===== Creating ODIC Config ID ====="
+OIDC_CONFIG_ID=`rosa create oidc-config --mode=auto  --yes | grep oidc-provider | cut -f3 -d/ | cut -f1 -d\'`
+echo "OIDC CONFIG ID: ${OIDC_CONFIG_ID}"
+
+echo "===== Fetching AWS Account Number ====="
+AWS_ACCOUNT_NUMBER=`aws sts get-caller-identity | grep Account | cut -f2 -d: |  cut -f1 -d,| cut -f2 -d\"`
+echo "AWS ACCOUNT NUMBER: ${AWS_ACCOUNT_NUMBER}"
+
+echo "===== Creating Operator Roles ====="
+rosa create operator-roles \
+  --route53-role-arn arn:aws:iam::{{ vpc_owner_aws_account_number }}:role/{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}-shared-vpc-route53 \
+  --vpc-endpoint-role-arn arn:aws:iam::{{ vpc_owner_aws_account_number }}:role/{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}-shared-vpc-endpoint \
+  --installer-role-arn arn:aws:iam::${AWS_ACCOUNT_NUMBER}:role/{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}-HCP-ROSA-Installer-Role \
+  --prefix {{ prefix_for_name }}-{{ openshift_cluster_name_suffix }} \
+  --hosted-cp \
+  --oidc-config-id $OIDC_CONFIG_ID \
+  --mode auto \
+  --yes
+
+echo "===== Creating ROSA Cluster {{ prefix_for_name }}-{{ openshift_cluster_name_suffix }} ====="
+rosa create cluster \
+  --role-arn arn:aws:iam::${AWS_ACCOUNT_NUMBER}:role/{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}-HCP-ROSA-Installer-Role \
+  --support-role-arn arn:aws:iam::${AWS_ACCOUNT_NUMBER}:role/{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}-HCP-ROSA-Support-Role \
+  --worker-iam-role arn:aws:iam::${AWS_ACCOUNT_NUMBER}:role/{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}-HCP-ROSA-Worker-Role \
+  --operator-roles-prefix {{ prefix_for_name }}-{{ openshift_cluster_name_suffix }} \
+  --oidc-config-id ${OIDC_CONFIG_ID} \
+  --hosted-cp \
+  --private \
+  --sts \
+  --mode auto \
+  --cluster-name {{ prefix_for_name }}-{{ openshift_cluster_name_suffix }} \
+  --machine-cidr {{ disconnected_vpc_cidr }} \
+  --subnet-ids {{ disconnected_subnet_id_a }},{{ disconnected_subnet_id_b }},{{ disconnected_subnet_id_c }} \
+  --yes \
+  --region {{ aws_region }} \
+  --hcp-internal-communication-hosted-zone-id {{ hypershift_local_hosted_zone_id }} \
+  --ingress-private-hosted-zone-id {{ rosa_shared_vpc_hosted_zone_id }} \
+  --route53-role-arn arn:aws:iam::{{ vpc_owner_aws_account_number }}:role/{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}-shared-vpc-route53 \
+  --vpc-endpoint-role-arn arn:aws:iam::{{ vpc_owner_aws_account_number }}:role/{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}-shared-vpc-endpoint \
+  --base-domain {{ rosa_shared_vpc_cluster_domain }} \
+  --additional-allowed-principals arn:aws:iam::{{ vpc_owner_aws_account_number }}:role/{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}-shared-vpc-route53,arn:aws:iam::{{ vpc_owner_aws_account_number }}:role/{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}-shared-vpc-endpoint \
+  --properties zero_egress:true
