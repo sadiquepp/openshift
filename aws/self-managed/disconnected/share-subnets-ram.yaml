@@ -85,7 +85,7 @@
 
   - name: Create DNS route53 private domain 
     amazon.aws.route53_zone:
-      vpc_id: "{{ disconnected_vpc_info.vpcshosted_zone_info_rosa[0].vpc_id }}"
+      vpc_id: "{{ disconnected_vpc_info.vpcs[0].vpc_id }}"
       vpc_region: "{{ aws_region }}"
       zone: "{{ openshift_cluster_name }}.{{ openshift_base_domain }}" 
       state: present
