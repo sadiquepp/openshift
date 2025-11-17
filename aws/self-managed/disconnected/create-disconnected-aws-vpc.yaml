@@ -110,7 +110,7 @@
     register: igw
 
   - name: Create Transit Gateway
-    community.aws.ec2_transit_gateway:
+    amazon.aws.ec2_transit_gateway:
       state: present
       region: "{{ aws_region }}"
       description: Transit Gateway for Disconnected
@@ -119,8 +119,8 @@
     register: transit_gateway
 
   - name: Attach Disconnected Network to transit Gateway
-    community.aws.ec2_transit_gateway_vpc_attachment:
-      name: Disconnected-Attach
+    amazon.aws.ec2_transit_gateway_vpc_attachment:
+      name: "{{ prefix_for_name }}-Disconnected-Attach"
       state: present
       region: "{{ aws_region }}"
       transit_gateway: "{{ transit_gateway.transit_gateway.transit_gateway_id  }}"
@@ -134,8 +134,8 @@
       var: transit_gateway_attachment_disconnected
 
   - name: Attach Egress Network to transit Gateway
-    community.aws.ec2_transit_gateway_vpc_attachment:
-      name: Egress-Attach
+    amazon.aws.ec2_transit_gateway_vpc_attachment:
+      name: "{{ prefix_for_name }}-Egress-Attach"
       state: present
       region: "{{ aws_region }}"
       transit_gateway: "{{ transit_gateway.transit_gateway.transit_gateway_id  }}"
