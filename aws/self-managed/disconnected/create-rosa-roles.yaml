@@ -42,7 +42,7 @@
         rosa_role_type: "installer"
         rosa_managed_policies: "true"
         rosa_role_prefix: "{{ openshift_cluster_name }}"
-        rosa_openshift_version: "{{ openshift_version }}"
+        rosa_openshift_version: "{{ openshift_major_version }}"
       managed_policies:
         - arn:aws:iam::aws:policy/service-role/ROSAInstallerPolicy
         - "arn:aws:iam::{{ caller_info.account }}:policy/{{ openshift_cluster_name }}-shared-vpc-route53-assume-role"
@@ -58,7 +58,7 @@
         rosa_role_type: "support"
         rosa_managed_policies: "true"
         rosa_role_prefix: "{{ openshift_cluster_name }}"
-        rosa_openshift_version: "{{ openshift_version }}"
+        rosa_openshift_version: "{{ openshift_major_version }}"
       managed_policies:
         - arn:aws:iam::aws:policy/service-role/ROSASRESupportPolicy
 
@@ -72,7 +72,7 @@
         rosa_role_type: "instance_worker"
         rosa_managed_policies: "true"
         rosa_role_prefix: "{{ openshift_cluster_name }}"
-        operator_namespace: "{{ openshift_version }}"
+        operator_namespace: "{{ openshift_major_version }}"
       managed_policies:
         - arn:aws:iam::aws:policy/service-role/ROSAWorkerInstancePolicy
         - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
