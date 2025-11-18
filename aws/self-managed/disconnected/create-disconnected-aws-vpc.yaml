@@ -25,6 +25,10 @@
     aws_iam_role_name: "{{ prefix_for_name }}-ocp-install-ec2"
   tasks:
 
+  - name: Get the current caller identity information
+    amazon.aws.aws_caller_info:
+    register: caller_info
+
   - name: Create a role for ec2 instance to assume to install openshift
     community.aws.iam_role:
       name: "{{ aws_iam_role_name }}"
@@ -219,3 +223,8 @@
       - elasticloadbalancing
       - ecr.api
       - ecr.dkr
+
+  - name: Set Variable to use for instances
+    set_stats:
+      data:
+        vpc_owner_aws_account_number: "{{ caller_info.account }}"
