@@ -5,14 +5,14 @@ rosa login --token={{ rosa_token }}
 echo "===== Creating Account Roles ====="
 rosa create account-roles \
   --hosted-cp \
-  --prefix {{ kerberos_name }}-{{ openshift_cluster_name_suffix }} \
+  --prefix {{ prefix_for_name }}-{{ openshift_cluster_name_suffix }} \
   --mode auto \
   --yes
 
 sleep 30
 
 aws iam attach-role-policy \
-  --role-name {{ kerberos_name }}-{{ openshift_cluster_name_suffix }}-HCP-ROSA-Worker-Role \
+  --role-name {{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}-HCP-ROSA-Worker-Role \
   --policy-arn "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
 
 echo "===== Creating ODIC Config ID ====="
@@ -26,25 +26,25 @@ echo "AWS ACCOUNT NUMBER: ${AWS_ACCOUNT_NUMBER}"
 echo "===== Creating Operator Roles ====="
 rosa create operator-roles \
   --hosted-cp \
-  --prefix {{ kerberos_name }}-{{ openshift_cluster_name_suffix }}-zeg \
+  --prefix {{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}-zeg \
   --oidc-config-id $OIDC_CONFIG_ID \
-  --installer-role-arn arn:aws:iam::${AWS_ACCOUNT_NUMBER}:role/{{ kerberos_name }}-{{ openshift_cluster_name_suffix }}-HCP-ROSA-Installer-Role \
+  --installer-role-arn arn:aws:iam::${AWS_ACCOUNT_NUMBER}:role/{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}-HCP-ROSA-Installer-Role \
   --mode auto \
   --yes
 
-echo "===== Creating ROSA Cluster {{ kerberos_name }}-{{ openshift_cluster_name_suffix }} ====="
+echo "===== Creating ROSA Cluster {{ prefix_for_name }}-{{ openshift_cluster_name_suffix }} ====="
 rosa create cluster \
-  --role-arn arn:aws:iam::${AWS_ACCOUNT_NUMBER}:role/{{ kerberos_name }}-{{ openshift_cluster_name_suffix }}-HCP-ROSA-Installer-Role \
-  --support-role-arn arn:aws:iam::${AWS_ACCOUNT_NUMBER}:role/{{ kerberos_name }}-{{ openshift_cluster_name_suffix }}-HCP-ROSA-Support-Role \
-  --worker-iam-role arn:aws:iam::${AWS_ACCOUNT_NUMBER}:role/{{ kerberos_name }}-{{ openshift_cluster_name_suffix }}-HCP-ROSA-Worker-Role \
-  --operator-roles-prefix {{ kerberos_name }}-{{ openshift_cluster_name_suffix }}-zeg \
+  --role-arn arn:aws:iam::${AWS_ACCOUNT_NUMBER}:role/{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}-HCP-ROSA-Installer-Role \
+  --support-role-arn arn:aws:iam::${AWS_ACCOUNT_NUMBER}:role/{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}-HCP-ROSA-Support-Role \
+  --worker-iam-role arn:aws:iam::${AWS_ACCOUNT_NUMBER}:role/{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}-HCP-ROSA-Worker-Role \
+  --operator-roles-prefix {{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}-zeg \
   --oidc-config-id ${OIDC_CONFIG_ID} \
   --hosted-cp \
   --private \
   --sts \
   --mode auto \
   --multi-az \
-  --cluster-name {{ kerberos_name }}-{{ openshift_cluster_name_suffix }}-zeg \
+  --cluster-name {{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}-zeg \
   --machine-cidr {{ disconnected_vpc_cidr }} \
   --subnet-ids {{ disconnected_subnet_id_a }},{{ disconnected_subnet_id_b }},{{ disconnected_subnet_id_c }} \
   --yes \

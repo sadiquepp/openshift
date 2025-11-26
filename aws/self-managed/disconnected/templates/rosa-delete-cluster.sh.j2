@@ -1,22 +1,22 @@
 #!/bin/bash
-OID_CONFIG_ID=`rosa describe cluster -c {{ kerberos_name }}-{{ openshift_cluster_name_suffix }}-c | grep "OIDC Endpoint URL" | awk {'print $4'} | cut -f4 -d/`
+OID_CONFIG_ID=`rosa describe cluster -c {{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}-c | grep "OIDC Endpoint URL" | awk {'print $4'} | cut -f4 -d/`
 
 rosa delete cluster \
-  --cluster {{ kerberos_name }}-{{ openshift_cluster_name_suffix }}-c \
+  --cluster {{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}-c \
   --yes \
   --region {{ aws_region }} 
 
 rosa logs uninstall \
-  -c {{ kerberos_name }}-{{ openshift_cluster_name_suffix }}-c \
+  -c {{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}-c \
   --watch
 
 rosa delete operator-roles \
-  --prefix {{ kerberos_name }}-{{ openshift_cluster_name_suffix }}-c \
+  --prefix {{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}-c \
   --mode auto \
   --yes
 
 rosa delete account-roles \
-  --prefix {{ kerberos_name }}-{{ openshift_cluster_name_suffix }} \
+  --prefix {{ prefix_for_name }}-{{ openshift_cluster_name_suffix }} \
   --mode auto \
   --yes
 

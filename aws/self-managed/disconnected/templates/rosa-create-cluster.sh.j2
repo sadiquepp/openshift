@@ -3,7 +3,7 @@
 rosa login --token={{ rosa_token }}
 
 rosa create account-roles \
-  --prefix {{ kerberos_name }}-{{ openshift_cluster_name_suffix }} \
+  --prefix {{ prefix_for_name }}-{{ openshift_cluster_name_suffix }} \
   --mode auto \
   --yes
 
@@ -11,24 +11,24 @@ OIDC_CONFIG_ID=`rosa create oidc-config --mode=auto  --yes | grep oidc-provider 
 AWS_ACCOUNT_NUMBER=`aws sts get-caller-identity | grep Account | cut -f2 -d: |  cut -f1 -d,| cut -f2 -d\"`
 
 rosa create operator-roles \
-  --prefix {{ kerberos_name }}-{{ openshift_cluster_name_suffix }}-c\
+  --prefix {{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}-c\
   --oidc-config-id $OIDC_CONFIG_ID \
-  --installer-role-arn arn:aws:iam::${AWS_ACCOUNT_NUMBER}:role/{{ kerberos_name }}-{{ openshift_cluster_name_suffix }}-Installer-Role \
+  --installer-role-arn arn:aws:iam::${AWS_ACCOUNT_NUMBER}:role/{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}-Installer-Role \
   --mode auto \
   --yes
 
 rosa create cluster \
-  --role-arn arn:aws:iam::${AWS_ACCOUNT_NUMBER}:role/{{ kerberos_name }}-{{ openshift_cluster_name_suffix }}-Installer-Role \
-  --support-role-arn arn:aws:iam::${AWS_ACCOUNT_NUMBER}:role/{{ kerberos_name }}-{{ openshift_cluster_name_suffix }}-Support-Role \
-  --worker-iam-role arn:aws:iam::${AWS_ACCOUNT_NUMBER}:role/{{ kerberos_name }}-{{ openshift_cluster_name_suffix }}-Worker-Role \
-  --controlplane-iam-role arn:aws:iam::${AWS_ACCOUNT_NUMBER}:role/{{ kerberos_name }}-{{ openshift_cluster_name_suffix }}-ControlPlane-Role \
+  --role-arn arn:aws:iam::${AWS_ACCOUNT_NUMBER}:role/{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}-Installer-Role \
+  --support-role-arn arn:aws:iam::${AWS_ACCOUNT_NUMBER}:role/{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}-Support-Role \
+  --worker-iam-role arn:aws:iam::${AWS_ACCOUNT_NUMBER}:role/{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}-Worker-Role \
+  --controlplane-iam-role arn:aws:iam::${AWS_ACCOUNT_NUMBER}:role/{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}-ControlPlane-Role \
   --oidc-config-id ${OIDC_CONFIG_ID} \
-  --operator-roles-prefix {{ kerberos_name }}-{{ openshift_cluster_name_suffix }}-c \
+  --operator-roles-prefix {{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}-c \
   --private-link \
   --sts \
   --mode auto \
   --multi-az \
-  --cluster-name {{ kerberos_name }}-{{ openshift_cluster_name_suffix }}-c \
+  --cluster-name {{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}-c \
   --machine-cidr {{ disconnected_vpc_cidr }} \
   --subnet-ids {{ disconnected_subnet_id_a }},{{ disconnected_subnet_id_b }},{{ disconnected_subnet_id_c }} \
   --additional-trust-bundle-file /etc/squid/certs/squid-ca-crt.pem \
