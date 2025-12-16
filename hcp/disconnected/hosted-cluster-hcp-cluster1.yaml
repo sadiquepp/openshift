@@ -63,7 +63,7 @@ metadata:
   name: pullsecret-cluster-hcp-cluster1
   namespace: hcp-cluster1
 data:
-  '.dockerconfigjson': eyJhdXRocyI6eyJtaXJyb3ItcmVnaXN0cnkuaHViLm15bGFiLmNvbTo4NDQzIjogeyJhdXRoIjogImFXNXBkRHBTWldSSVlYUXhNak40ZVhvPSJ9IH19
+  '.dockerconfigjson': password
 type: kubernetes.io/dockerconfigjson
 ---
 apiVersion: v1
