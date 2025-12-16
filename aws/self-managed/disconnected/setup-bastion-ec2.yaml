@@ -13,7 +13,7 @@
     openshift_cluster_name: "{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}"
     sts_suffix: "{{ openshift_cluster_name }}-sts"
     pull_secret_location: /home/ec2-user/pull-secret.txt
-    mirror_registry_password: RedHat123xyz
+    mirror_registry_password: SedUam1879yz
     quay_root_mount: /registry
     openshift_local_repository: openshift/release-images
   tasks:
