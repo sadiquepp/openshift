@@ -1,0 +1,30 @@
+apiVersion: agent-install.openshift.io/v1beta1
+kind: AgentServiceConfig
+metadata:
+ name: agent
+spec:
+  databaseStorage:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 10Gi
+  filesystemStorage:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 100Gi
+  mirrorRegistryRef:
+    name: mirror-config 
+  imageStorage:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 50Gi
+  osImages:
+    - openshiftVersion: "4.19" 
+      version: "4.19.10"
+      url: "http://mirror-registry.hub.mylab.com/iso/rhcos-4.19.10-x86_64-live-iso.x86_64.iso" 
+      cpuArchitecture: "x86_64"

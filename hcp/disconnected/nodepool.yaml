@@ -1,0 +1,19 @@
+apiVersion: hypershift.openshift.io/v1beta1
+kind: NodePool
+metadata:
+  name: 'nodepool-hcp-cluster1-1'
+  namespace: 'hcp-cluster1'
+spec:
+  clusterName: 'hcp-cluster1'
+  replicas: 2
+  management:
+    autoRepair: false
+    upgradeType: InPlace
+  platform:
+    type: Agent
+    agent:
+      agentLabelSelector:
+        matchLabels:
+          infraenvs.agent-install.openshift.io: sadique-infra
+  release:
+    image: mirror-registry.hub.mylab.com:8443/openshift/release-images:4.19.10-x86_64

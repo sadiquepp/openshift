@@ -1,0 +1,6 @@
+apiVersion: hive.openshift.io/v1
+kind: ClusterImageSet
+metadata:
+  name: openshift-4-19-10 # A descriptive name for the image set
+spec:
+  releaseImage: mirror-registry.hub.mylab.com:8443/openshift/release-images:4.19.10-x86_64

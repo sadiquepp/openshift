@@ -1,0 +1,131 @@
+---
+apiVersion: hypershift.openshift.io/v1beta1
+kind: HostedCluster
+metadata:
+  name: 'hcp-cluster1'
+  namespace: 'hcp-cluster1'
+  labels:
+    "cluster.open-cluster-management.io/clusterset": 'default'
+spec:
+  additionalTrustBundle:
+    name: "user-ca-bundle"
+  imageContentSources:
+  - mirrors:
+    - mirror-registry.hub.mylab.com:8443/openshift/release
+    source: quay.io/openshift-release-dev/ocp-v4.0-art-dev
+  - mirrors:
+    - mirror-registry.hub.mylab.com:8443/openshift/release-images
+    source: quay.io/openshift-release-dev/ocp-release
+  release:
+    image: mirror-registry.hub.mylab.com:8443/openshift/release-images:4.19.10-x86_64
+  pullSecret:
+    name: pullsecret-cluster-hcp-cluster1
+  sshKey:
+    name: sshkey-cluster-hcp-cluster1
+  networking:
+    clusterNetwork:
+      - cidr: 10.132.0.0/14
+    serviceNetwork:
+      - cidr: 172.31.0.0/16
+    networkType: OVNKubernetes
+  controllerAvailabilityPolicy: HighlyAvailable
+  infrastructureAvailabilityPolicy: HighlyAvailable
+  olmCatalogPlacement: management
+  platform:
+    type: Agent
+    agent:
+      agentNamespace: 'sadique-infra'
+  infraID: 'hcp-cluster1'
+  dns:
+    baseDomain: 'mylab.com'
+  services:
+  - service: APIServer
+    servicePublishingStrategy:
+      loadBalancer:
+        hostname: api.hcp-cluster1.mylab.com
+      type: LoadBalancer
+  - service: OAuthServer
+    servicePublishingStrategy:
+      type: Route
+  - service: OIDC
+    servicePublishingStrategy:
+      type: Route
+  - service: Konnectivity
+    servicePublishingStrategy:
+      type: Route
+  - service: Ignition
+    servicePublishingStrategy:
+      type: Route
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pullsecret-cluster-hcp-cluster1
+  namespace: hcp-cluster1
+data:
+  '.dockerconfigjson': eyJhdXRocyI6eyJtaXJyb3ItcmVnaXN0cnkuaHViLm15bGFiLmNvbTo4NDQzIjogeyJhdXRoIjogImFXNXBkRHBTWldSSVlYUXhNak40ZVhvPSJ9IH19
+type: kubernetes.io/dockerconfigjson
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sshkey-cluster-hcp-cluster1
+  namespace: 'hcp-cluster1'
+stringData:
+  id_rsa.pub: ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDu9xbA2hicBBlrb9dadC0p+z93CfhOJQ+o1MGb3yYe3WvV9KrQ8mYBsYlFXm5oc20lZHQBKADhtOHXgDn4Qj429MjUUMGuNOoFU1ZBDblDsKzK+VSQ+IUBdUDBJbUQmsvs9XZ5E3w7Eiq0w8W9z6LuJHvC2VUnKhZAizLVjccX43NPskD0+d7ZuZ8yr/yo0gwN7XiiUMGoeOja8orkInNE2alZIfeNI8N2wQS3jdJoL0q/NFowAi032eYBm/or6/5u6EQg3UVcY1SX7YG5DkgogTklcHqkBZ60j/BYP5k6DohfJ6XPEl+6oPwl6wH/y4GXRxdTuBJ3u9PidKitAp7WndbJgdjhMfcJLlLhhXwrV4Zig5VlyaB80MvzW5Rx/NHlEBtiq+v+GWyz5rPkdfvINNVyHo4Cs7OkpCJTPOrfSLOQkxO4WoxXe4F5hmLiyeRNAKZB1VPQYbGUHuiuqEgxfg5Ao4ASNNZy/ZJH3gScVDFZfLMwZtuBRLAY6X1f4n8= root@dell-r640-gcsosp-01.lab.eng.rdu2.redhat.com
+---
+apiVersion: hypershift.openshift.io/v1beta1
+kind: NodePool
+metadata:
+  name: 'nodepool-hcp-cluster1-1'
+  namespace: 'hcp-cluster1'
+spec:
+  clusterName: 'hcp-cluster1'
+  replicas: 2
+  management:
+    autoRepair: false
+    upgradeType: InPlace
+  platform:
+    type: Agent
+    agent:
+      agentLabelSelector:
+        matchLabels: {}
+  release:
+    image: mirror-registry.hub.mylab.com:8443/openshift/release-images:4.19.10-x86_64
+---
+apiVersion: cluster.open-cluster-management.io/v1
+kind: ManagedCluster
+metadata:
+  annotations:
+    import.open-cluster-management.io/hosting-cluster-name: local-cluster 
+    import.open-cluster-management.io/klusterlet-deploy-mode: Hosted
+    open-cluster-management/created-via: hypershift
+  labels:
+    cloud: BareMetal
+    vendor: OpenShift
+    name: 'hcp-cluster1'
+    cluster.open-cluster-management.io/clusterset: 'default'
+  name: 'hcp-cluster1'
+spec:
+  hubAcceptsClient: true
+---
+apiVersion: agent.open-cluster-management.io/v1
+kind: KlusterletAddonConfig
+metadata:
+  name: 'hcp-cluster1'
+  namespace: 'hcp-cluster1'
+spec:
+  clusterName: 'hcp-cluster1'
+  clusterNamespace: 'hcp-cluster1'
+  clusterLabels:
+    cloud: BareMetal
+    vendor: OpenShift
+  applicationManager:
+    enabled: true
+  policyController:
+    enabled: true
+  searchCollector:
+    enabled: true
+  certPolicyController:
+    enabled: true
+---
