@@ -17,6 +17,9 @@
     quay_root_mount: /registry
     openshift_local_repository: openshift/release-images
     oidc_config_id: place-holder-if-not-passed-via-parameter
+    vpc_owner_aws_account_number: 12345
+    hypershift_local_hosted_zone_id: abcde
+    rosa_shared_vpc_hosted_zone_id: abcde
   tasks:
 
   - name: Wait for SSH banners
@@ -162,7 +165,7 @@
       dest: "{{ item }}"
       mode: 0755
     loop:
-#      - rosa-create-cluster-hcp-shared-vpc.sh
+      - rosa-create-cluster-hcp-shared-vpc.sh
       - rosa-create-cluster-hcp-zero-egress.sh
       - rosa-delete-cluster-hcp-zero-egress.sh
       - rosa-create-cluster-hcp.sh
