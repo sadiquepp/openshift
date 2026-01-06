@@ -162,7 +162,7 @@
       dest: "{{ item }}"
       mode: 0755
     loop:
-      - rosa-create-cluster-hcp-shared-vpc.sh
+#      - rosa-create-cluster-hcp-shared-vpc.sh
       - rosa-create-cluster-hcp-zero-egress.sh
       - rosa-delete-cluster-hcp-zero-egress.sh
       - rosa-create-cluster-hcp.sh
