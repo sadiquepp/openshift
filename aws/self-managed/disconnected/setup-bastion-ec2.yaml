@@ -16,6 +16,7 @@
     mirror_registry_password: SedUam1879yz
     quay_root_mount: /registry
     openshift_local_repository: openshift/release-images
+    oidc_config_id: place-holder-if-not-passed-via-parameter
   tasks:
 
   - name: Wait for SSH banners
