@@ -21,6 +21,7 @@
     aws_account_number_to_share_with: 12345
     hypershift_local_hosted_zone_id: abcde
     rosa_shared_vpc_hosted_zone_id: abcde
+    rosa_shared_vpc_cluster_domain: example.com
   tasks:
 
   - name: Wait for SSH banners
