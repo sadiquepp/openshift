@@ -41,7 +41,7 @@ rosa create cluster \
   --oidc-config-id ${OIDC_CONFIG_ID} \
   --hosted-cp \
   --private \
-  --sts \
+  --default-ingress-private \
   --mode auto \
   --cluster-name {{ prefix_for_name }}-{{ openshift_cluster_name_suffix }} \
   --machine-cidr {{ disconnected_vpc_cidr }} \

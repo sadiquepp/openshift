@@ -48,4 +48,7 @@ rosa create cluster \
   --subnet-ids {{ disconnected_subnet_id_a }},{{ disconnected_subnet_id_b }},{{ disconnected_subnet_id_c }} \
   --yes \
   --properties zero_egress:true \
-  --region {{ aws_region }}
+  --region {{ aws_region }} \
+  --http-proxy http://{{ installer_quay_hostname.stdout }}:3128 \
+  --https-proxy http://{{ installer_quay_hostname.stdout }}:3128 \
+  --no-proxy .s3.{{ aws_region }}.amazonaws.com,.dkr.ecr.{{ aws_region }}.amazonaws.com,api.ecr.{{ aws_region }}.amazonaws.com

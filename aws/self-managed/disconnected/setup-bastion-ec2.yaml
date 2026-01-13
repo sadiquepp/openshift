@@ -125,14 +125,26 @@
       - squid
     become: yes
 
+  - name: Copy ROSA Create/Delete Cluster Scripts
+    template:
+      src: "{{ item }}.j2"
+      dest: "{{ item }}"
+      mode: 0755
+    loop:
+      - rosa-create-cluster-hcp-shared-vpc.sh
+      - rosa-create-cluster-hcp-zero-egress.sh
+      - rosa-delete-cluster-hcp-zero-egress.sh
+      - rosa-create-cluster-hcp.sh
+      - rosa-delete-cluster-hcp.sh
+      - rosa-create-cluster-hcp-zero-egress-proxy.sh
+
   - name: Get the Mirror Registry, OC and OPM Tarball
     get_url:
       url: "{{ item }}"
       dest: /home/ec2-user/
     loop:
       - https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/{{ openshift_major_version }}.{{ openshift_minor_version }}/openshift-client-linux.tar.gz
-      #- https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip
-      - https://mirror.openshift.com/pub/openshift-v4/clients/rosa/latest/rosa-linux.tar.gz
+      - https://mirror.openshift.com/pub/cgw/rosa/latest/rosa-linux.tar.gz
       - https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/latest/oc-mirror.tar.gz
       - https://mirror.openshift.com/pub/cgw/mirror-registry/latest/mirror-registry-amd64.tar.gz
 
@@ -160,18 +172,6 @@
       - kubectl
       - oc-mirror
     become: yes
-
-  - name: Copy ROSA Create/Delete Cluster Scripts
-    template:
-      src: "{{ item }}.j2"
-      dest: "{{ item }}"
-      mode: 0755
-    loop:
-      - rosa-create-cluster-hcp-shared-vpc.sh
-      - rosa-create-cluster-hcp-zero-egress.sh
-      - rosa-delete-cluster-hcp-zero-egress.sh
-      - rosa-create-cluster-hcp.sh
-      - rosa-delete-cluster-hcp.sh
 
   - name: Creates directory quay_root_mount
     file:

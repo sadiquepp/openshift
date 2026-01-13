@@ -34,10 +34,9 @@ rosa create cluster \
   --operator-roles-prefix {{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}-h \
   --oidc-config-id ${OIDC_CONFIG_ID} \
   --hosted-cp \
-  --private-link \
-  --sts \
+  --private \
+  --default-ingress-private \
   --mode auto \
-  --multi-az \
   --cluster-name {{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}-h \
   --machine-cidr {{ disconnected_vpc_cidr }} \
   --subnet-ids {{ disconnected_subnet_id_a }},{{ disconnected_subnet_id_b }},{{ disconnected_subnet_id_c }} \
