@@ -155,7 +155,6 @@
       remote_src: yes
     loop:
       - openshift-client-linux.tar.gz
-      #- awscli-exe-linux-x86_64.zip
       - rosa-linux.tar.gz
       - oc-mirror.tar.gz
       - mirror-registry-amd64.tar.gz
