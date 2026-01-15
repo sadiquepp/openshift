@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -x
 
 OID_CONFIG_ID=`rosa describe cluster -c {{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}-zeg | grep "OIDC Endpoint URL" | awk {'print $4'} | cut -f4 -d/`
 
