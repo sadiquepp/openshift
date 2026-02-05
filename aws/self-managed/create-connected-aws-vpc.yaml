@@ -70,6 +70,7 @@
       az: "{{ aws_availability_zone_1 }}"
       tags:
         Name: "{{ aws_connected_vpc_name }}-public-subnet-az1"
+        kubernetes.io/cluster/unmanaged: 1
     register: connected_public_subnet_info_az1
 
   - name: Create Connected Public Subnet on Az2
@@ -81,6 +82,7 @@
       az: "{{ aws_availability_zone_2 }}"
       tags:
         Name: "{{ aws_connected_vpc_name }}-public-subnet-az2"
+        kubernetes.io/cluster/unmanaged: 1
     register: connected_public_subnet_info_az2
 
   - name: Create Connected Public Subnet on Az3
@@ -92,6 +94,7 @@
       az: "{{ aws_availability_zone_3 }}"
       tags:
         Name: "{{ aws_connected_vpc_name }}-public-subnet-az3"
+        kubernetes.io/cluster/unmanaged: 1
     register: connected_public_subnet_info_az3
 
   - name: Create Internet Gateway on Egress VPC
