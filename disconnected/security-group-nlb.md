@@ -14,7 +14,7 @@ Generate the manifests:
 openshift-install create manifests --dir install-dir
 ```
 
-Modify `install-dir/cluster-api/02_infra-cluster.yaml` and include the security group identifiers under `spec.controlPlaneLoadBalancer` utilizing additional Security Groups:
+Modify `install-dir/cluster-api/02_infra-cluster.yaml` and include the security group identifiers under `spec.controlPlaneLoadBalancer` utilizing `additionalSecurityGroups`:
 
 ```yaml
 apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
@@ -33,9 +33,9 @@ spec:
     port: 0
   controlPlaneLoadBalancer:
     additionalSecurityGroups:
-      - sg-0c536a73fde8d0cd6
+    - sg-0c536a73fde8d0cd6
     additionalListeners:
-      - healthCheck:
+    - healthCheck:
 ```
 
 Copy any other STS manifests to the relevant directories, and then create the cluster:
