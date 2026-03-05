@@ -14,8 +14,8 @@ Execute the following commands to download, extract, and configure the binaries 
 
 ```bash
 # Download tools
-wget [https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/4.20.13/openshift-client-linux.tar.gz](https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/4.20.13/openshift-client-linux.tar.gz)
-wget [https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/latest/oc-mirror.tar.gz](https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/latest/oc-mirror.tar.gz)
+wget https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/4.20.13/openshift-client-linux.tar.gz
+wget https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/latest/oc-mirror.tar.gz
 
 # Extract tools
 tar -xvf openshift-client-linux.tar.gz
@@ -128,17 +128,17 @@ Your updated block should look similar to this:
 spec:
   imageDigestSources:
     - mirrors:
-        - <registry-url>:<registry-port>/openshift/release
+        - ${REGISTRY_URL}:${REGISTRY_PORT}/openshift/release
       source: quay.io/openshift-release-dev/ocp-v4.0-art-dev
     - mirrors:
-        - <registry-url>:<registry-port>/openshift/release-images
+        - ${REGISTRY_URL}:${REGISTRY_PORT}/openshift/release-images
       source: quay.io/openshift-release-dev/ocp-release
 ```
 
 Incorporate the pull secret into `install-config.yaml` to facilitate authentication with Enterprise Registry:
 
 ```yaml
-pullSecret: '{"auths": {"<registry-url>:<registry-port>": {"auth": "base64 of username password"} }}'
+pullSecret: '{"auths": {"${REGISTRY_URL}:${REGISTRY_PORT}": {"auth": "base64 of username password"} }}'
 ```
 
 If Enterprise Registry necessitates an additional Certificate Authority (CA) trust bundle, it should be appended to the `install-config.yaml` file:
