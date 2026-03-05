@@ -125,14 +125,13 @@ From `oc-mirror-output/working-dir/cluster-resources/idms-oc-mirror.yaml`, add t
 Your updated block should look similar to this:
 
 ```yaml
-spec:
-  imageDigestSources:
-    - mirrors:
-        - ${REGISTRY_URL}:${REGISTRY_PORT}/openshift/release
-      source: quay.io/openshift-release-dev/ocp-v4.0-art-dev
-    - mirrors:
-        - ${REGISTRY_URL}:${REGISTRY_PORT}/openshift/release-images
-      source: quay.io/openshift-release-dev/ocp-release
+imageDigestSources:
+- mirrors:
+  - ${REGISTRY_URL}:${REGISTRY_PORT}/openshift/release
+source: quay.io/openshift-release-dev/ocp-v4.0-art-dev
+- mirrors:
+  - ${REGISTRY_URL}:${REGISTRY_PORT}/openshift/release-images
+source: quay.io/openshift-release-dev/ocp-release
 ```
 
 Incorporate the pull secret into `install-config.yaml` to facilitate authentication with Enterprise Registry:
