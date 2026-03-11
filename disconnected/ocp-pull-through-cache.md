@@ -35,9 +35,13 @@ On your enterprise (Quay in our case) registry, configure two different pull thr
 This needs two separate Organizations within Red Hat Quay, one for each.
 
 * Create an Organization named `quay`.
+![Create Quay Organization](images/create-quay-organization.jpeg)
 * Configure this organization to pull content from the upstream registry, `quay.io`, utilizing the username and password credentials obtained from the preceding section. This needs to be done by clicking on the Organization -> Click on the Org -> Settings -> ProxyCache.
+![Configure Quay Organization for Pull through cache](images/configure-quay-organization.jpeg)
 * Create another organization named `redhatio`.
+![Create Red Hat Organization](images/create-redhat-organization.jpeg)
 * Configure this organization to pull content from the upstream registry, `registry.redhat.io`, utilizing the username and password credentials obtained from the preceding section. This needs to be done by clicking on the Organization -> Click on Org -> Settings -> ProxyCache.
+![Configure Red Hat Organization for Pull through cache](images/configure-redhat-organization.jpeg)
 * Once the setup is complete, using a bastion node, verify pulling images through the cache works. The first part of the image URL must be replaced with the registry-url/suffix. For example, to pull `quay.io/openshift-release-dev/ocp-release:4.20.13-x86_64` from the internal registry using pull through cache, replace `quay.io` with `registry-url/quay` (e.g., `https://<your-registry-url.apps.cluster.domain.com>/quay/openshift-release-dev/ocp-release:4.20.13-x86_64`).
 
 ```bash
