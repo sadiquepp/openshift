@@ -8,6 +8,8 @@ This document outlines the required outbound Internet-facing URLs and internal A
 
 The cluster must be deployed in STS mode with `credentialsMode: manual`
 
+This document assumes that the required images are mirrored to an internal registry and the cluster is deployed in a disconnected manner by pulling images from that registry.
+
 ## 1. Bastion Node (Deploying & Destroying the Cluster)
 
 The Bastion node is the jump host used to initiate the OpenShift installer for the cluster. This bastion node is typically an EC2 instance, which allows for convenient utilization of VPC endpoints for API access.
