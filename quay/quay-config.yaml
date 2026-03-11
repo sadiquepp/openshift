@@ -1,0 +1,39 @@
+export AWS_ACCESS_KEY_ID=
+export AWS_SECRET_ACCESS_KEY=
+export AWS_REGION=ap-southeast-1
+export AWS_BUCKET_NAME=quay-bucket-spp
+export AWS_STORAGE_PATH=/datastorage/registry
+export S3_ENDPOINT=s3.ap-southeast-1.amazonaws.com
+export QUAY_ADMIN_NAME=quayadmin
+
+cat <<EOF > quay-config.yaml 
+apiVersion: v1
+kind: Secret
+metadata:
+  name: config-bundle-secret
+  namespace: quay-enterprise
+stringData:
+  config.yaml: |
+    FEATURE_RATE_LIMITS: false
+    FEATURE_PROXY_CACHE: true
+    ALLOW_PULLS_WITHOUT_STRICT_LOGGING: false
+    AUTHENTICATION_TYPE: Database
+    DEFAULT_TAG_EXPIRATION: 2w
+    FEATURE_USER_INITIALIZE: true
+    SUPER_USERS:
+    - ${QUAY_ADMIN_NAME}
+    BROWSER_API_CALLS_XHR_ONLY: false
+    FEATURE_USER_CREATION: false
+    DISTRIBUTED_STORAGE_CONFIG:
+      s3Storage:
+        - S3Storage
+        - host: ${S3_ENDPOINT}
+          s3_access_key: ${AWS_ACCESS_KEY_ID}
+          s3_secret_key: ${AWS_SECRET_ACCESS_KEY}
+          s3_bucket: ${AWS_BUCKET_NAME}
+          s3_region: ${AWS_REGION}
+          storage_path: ${AWS_STORAGE_PATH}
+    DISTRIBUTED_STORAGE_DEFAULT_LOCATIONS: []
+    DISTRIBUTED_STORAGE_PREFERENCE:
+        - s3Storage
+EOF

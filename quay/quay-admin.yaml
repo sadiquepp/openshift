@@ -1,0 +1,5 @@
+export REGISTRY_URL=
+export REGISTRY_PASSWORD=
+export REGISTRY_EMAIL=
+
+curl -X POST -k  https://$REGISTRY_URL/api/v1/user/initialize --header 'Content-Type: application/json' --data '{ "username": "quayadmin", "password":"$REGISTRY_PASSWORD", "email": "$REGISTRY_EMAIL", "access_token": true}'
