@@ -2,7 +2,7 @@
 
 Reference: [OpenShift Container Platform 4.20: Configuring your firewall](https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/installation_configuration/configuring-firewall)
 
-AWS introduced support for cross-region VPC endpoints last November. Should one create cross-region VPC endpoints for IAM and Route53, it becomes nearly feasible to deploy an OpenShift cluster without necessitating internet access for the bastion node and the cluster to access AWS API, while still acknowledging the caveats detailed in the last section of this doc.
+AWS introduced support for cross-region VPC endpoints in November 2025. Should one create cross-region VPC endpoints for IAM and Route53, it becomes nearly feasible to deploy an OpenShift cluster without necessitating internet access for the bastion node and the cluster to access AWS API, while still acknowledging the caveats detailed in the last section of this doc.
 
 This document outlines the required outbound Internet-facing URLs and internal AWS VPC Endpoints necessary to deploy, manage, and destroy a Red Hat OpenShift cluster on Amazon Web Services (AWS). It reflects a hardened configuration utilizing cross-region VPC endpoints for global services like IAM and Route 53.
 
