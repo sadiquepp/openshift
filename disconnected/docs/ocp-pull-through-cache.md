@@ -45,7 +45,7 @@ This needs two separate Organizations within Red Hat Quay, one for each.
 * Once the setup is complete, using a bastion node, verify pulling images through the cache works. The first part of the image URL must be replaced with the registry-url/suffix. For example, to pull `quay.io/openshift-release-dev/ocp-release:4.20.13-x86_64` from the internal registry using pull through cache, replace `quay.io` with `registry-url/quay` (e.g., `https://<your-registry-url.apps.cluster.domain.com>/quay/openshift-release-dev/ocp-release:4.20.13-x86_64`).
 
 ```bash
-$export REGISTRY_URL=<your-registry-url.apps.cluster.domain.com>
+$ export REGISTRY_URL=<your-registry-url.apps.cluster.domain.com>
 
 $ podman login $REGISTRY_URL
 
