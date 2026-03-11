@@ -1,0 +1,60 @@
+export BASE_DOMAIN=
+export REGISTRY_HOST=
+export REGISTRY_AUTH=$(cat pull-secret.txt | jq -r '.auths."${REGISTRY_HOST}".auth')
+export SSH_KEY=$(cat ~/.ssh/id_rsa.pub)
+export MACHINE_NETWORK=10.0.0.0/16
+export CLUSTER_NAME=
+export HOSTED_ZONE=
+export AWS_SUBNET_ID_1=
+export AWS_SUBNET_ID_2=
+export AWS_SUBNET_ID_3=
+export AWS_REGION= 
+
+cat <<EOF > install-config.yaml
+apiVersion: v1
+baseDomain: ${BASE_DOMAIN}
+credentialsMode: Manual
+compute:
+- architecture: amd64
+  hyperthreading: Enabled
+  name: worker
+  platform: {}
+  replicas: 3
+controlPlane:
+  architecture: amd64
+  hyperthreading: Enabled
+  name: master
+  platform: {}
+  replicas: 3
+metadata:
+  creationTimestamp: null
+  name: ${CLUSTER_NAME}
+networking:
+  clusterNetwork:
+  - cidr: 10.128.0.0/14
+    hostPrefix: 23
+  machineNetwork:
+  - cidr: ${MACHINE_NETWORK}
+  networkType: OVNKubernetes
+  serviceNetwork:
+  - 172.30.0.0/16
+platform:
+  aws:
+    region: ${AWS_REGION}
+    subnets: 
+    - ${AWS_SUBNET_ID_1}
+    - ${AWS_SUBNET_ID_2}
+    - ${AWS_SUBNET_ID_3}
+    hostedZone: ${HOSTED_ZONE} 
+publish: Internal
+pullSecret: '{"auths":{"${REGISTRY_HOST}": {"auth": "${REGISTRY_AUTH}"} }}'
+imageDigestSources:
+- mirrors:
+  - ${REGISTRY_HOST}/quay
+  source: quay.io
+- mirrors:
+  - ${REGISTRY_HOST}/redhatio
+  source: registry.redhat.io
+sshKey: |
+  ${SSH_KEY}
+EOF
