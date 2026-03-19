@@ -134,7 +134,7 @@ export MasterSecurityGroupId=<master_sg_id>
 ~~~
 
 # Create Bootstrap Node
-* Get the rhcos AMI ID for your region and for the version of openshift going to be installed from official DOC. An example for 4.18 the list is here - https://docs.redhat.com/en/documentation/openshift_container_platform/4.18/html/installing_on_aws/user-provisioned-infrastructure#installation-aws-user-infra-rhcos-ami_installing-restricted-networks-aws
+* Get the rhcos AMI ID for your region and for the version of openshift going to be installed from official DOC. An example for 4.18 the list is here - [RHCOS AMI IDs for OpenShift Container Platform 4.18](https://docs.redhat.com/en/documentation/openshift_container_platform/4.18/html/installing_on_aws/user-provisioned-infrastructure#installation-aws-user-infra-rhcos-ami_installing-restricted-networks-aws)
 ```
 export RHCOS_AMI_ID=<rhcos_ami_id>
 ```
