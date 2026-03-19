@@ -47,6 +47,7 @@ oc adm release extract --credentials-requests \
 ./ccoctl aws create-all --name <cluster-name-xxx> --credentials-requests-dir credrequests/ --region ap-southeast-1 --create-private-s3-bucket
 cd ..
 ```
+* Note this would require permissions listed [here for ccoctl](https://github.com/sadiquepp/openshift/blob/main/aws/4.18/ccoctl-policy.json) Please cross check it with Red Hat Docs if you are using a different version of openshift.
 
 # Create Openshift Manifests and Ignition.
 * Develop install-config.yaml using the example given. Update baseDomain, machineNetwork, pullSecret, imageContentSource, sshKey and additionalTrustBundle as needed.
