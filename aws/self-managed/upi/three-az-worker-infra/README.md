@@ -126,7 +126,7 @@ sed -i "s/subnet_id/$SUBNET_ID/g" security-group-and-role-parameter.json
 ```
 aws cloudformation create-stack --stack-name security-group-role --template-body file://create-security-group-and-role.yaml --parameters file://security-group-and-role-parameter.json --capabilities CAPABILITY_NAMED_IAM
 ```
-* Once CloudFormation stack creation is successful, set below variables after getting values from AWS Console -> CloudFormation Stack -> Select the Stack -> Outputs
+* Once the CloudFormation stack is successfully created, retrieve the following values from the AWS Console (**CloudFormation** -> **Stacks** -> Select the stack -> **Outputs** tab) and export them as environment variables:
 
 ~~~
 export MasterInstanceProfile=<master_instance_profile>
