@@ -61,7 +61,7 @@ cp install-config.yaml install-dir
 ```
 ./openshift-install create manifests --dir install-dir/
 ```
-Note this would require permissions listed [here for openshift-install](https://github.com/sadiquepp/openshift/blob/main/aws/4.18/create-manifest-only.json)
+Note this would require permissions listed [here for openshift-install](https://github.com/sadiquepp/openshift/blob/main/aws/self-managed/install-policies/create-manifest-only.json)
 
 * Copy STS manifests to the manifests directory
 
