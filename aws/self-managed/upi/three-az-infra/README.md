@@ -1,5 +1,5 @@
 # Introduction
-This doc will cover deployment of disconnected OpenShift using UPI in just three availability zones using an external manually managed load balancer for API.
+This doc will cover deployment of disconnected OpenShift using UPI in three availability zones using an external manually managed load balancer for API and Ingress.
 
 # Pre-Requisites Knowledge
 * Understanding of AWS
@@ -72,6 +72,7 @@ cp sts/manifests/* install-dir/manifests/
 ```
 rm -f install-dir/openshift/99_openshift-cluster-api_master-machines-*.yaml
 rm -f install-dir/openshift/99_openshift-machine-api_master-control-plane-machine-set.yaml
+rm -f install-dir/openshift/99_openshift-cluster-api_worker-machineset-*.yaml
 ```
 * Remvoe HostedZone details from DNS manifests
 ```
@@ -228,3 +229,197 @@ oc get nodes
 ```
 
 * Once the cluster is up and running with 3 masters and workers, you can terminate the bootstrap node by deleting bootstrap cloudformation stack.
+
+# Create Worker Nodes
+* Set Cluster Name into a variable.
+```
+export CLUSTER_NAME=<cluster-name>
+```
+* Set Cluster Domain Name into a variable.
+```
+export CLUSTER_DOMAIN_NAME=<cluster-domain-name>
+```
+* Set Subnet ID of AZ1 to a variable.
+```
+export SUBNET_ID_AZ1=<subnet_id_of_az1>
+```
+* Set Subnet ID of AZ2 to a variable.
+```
+export SUBNET_ID_AZ2=<subnet_id_of_az2>
+```
+* Set Subnet ID of AZ3 to a variable.
+```
+export SUBNET_ID_AZ3=<subnet_id_of_az3>
+```
+* Set the private ip of worker1 into a variable
+```
+export WORKER1_PRIVATE_IP=<private_ip_of_worker1>
+```
+* Set the private ip of worker2 into a variable
+```
+export WORKER2_PRIVATE_IP=<private_ip_of_worker2>
+```
+* Set the private ip of worker3 into a variable
+```
+export WORKER3_PRIVATE_IP=<private_ip_of_worker3>
+```
+* Extract certfiicate from worker.ign and set into a variable.
+```
+export CERTIFICATE_AUTHORITY_WORKER=$(cat install-dir/worker.ign | cut -f8 -d{ | cut -f2,3 -d: | cut -f1 -d})
+````
+* Replace the variables in worker node parameters.json file.
+```
+sed -i "s/infra_id/$INFRA_ID/g" worker1-parameters.json worker2-parameters.json worker3-parameters.json
+sed -i "s/rhcos_ami_id/$RHCOS_AMI_ID/g"  worker1-parameters.json  worker2-parameters.json  worker3-parameters.json
+sed -i "s/worker_sg_id/$WorkerSecurityGroupId/g" worker1-parameters.json worker2-parameters.json worker3-parameters.json
+sed -i "s/subnet_id/$SUBNET_ID_AZ1/g" worker1-parameters.json
+sed -i "s/subnet_id/$SUBNET_ID_AZ2/g" worker2-parameters.json
+sed -i "s/subnet_id/$SUBNET_ID_AZ3/g" worker3-parameters.json
+sed -i "s/clustername/$CLUSTER_NAME/g"  worker1-parameters.json worker2-parameters.json worker3-parameters.json
+sed -i "s/domainname/$CLUSTER_DOMAIN_NAME/g"  worker1-parameters.json worker2-parameters.json worker3-parameters.json
+sed -i "s#certificate_authority#$CERTIFICATE_AUTHORITY_WORKER#g" worker1-parameters.json worker2-parameters.json worker3-parameters.json
+sed -i "s/worker_private_ip/$WORKER1_PRIVATE_IP/g" worker1-parameters.json
+sed -i "s/worker_private_ip/$WORKER2_PRIVATE_IP/g" worker2-parameters.json
+sed -i "s/worker_private_ip/$WORKER3_PRIVATE_IP/g" worker3-parameters.json
+```
+
+* Create the stack to deploy worker1 node
+```
+aws cloudformation create-stack --stack-name worker1 --template-body file://create-worker.yaml --parameters file://worker1-parameters.json
+```
+* Create the stack to deploy worker2 node
+```
+aws cloudformation create-stack --stack-name worker2 --template-body file://create-worker.yaml --parameters file://worker2-parameters.json
+```
+* Create the stack to deploy worker3 node
+```
+aws cloudformation create-stack --stack-name worker3 --template-body file://create-worker.yaml --parameters file://worker3-parameters.json
+```
+* Approve Pending CSR
+```
+for i in `oc get csr| grep Pending | awk '{print $1}'`; do oc adm certificate approve $i; done
+sleep 30
+for i in `oc get csr| grep Pending | awk '{print $1}'`; do oc adm certificate approve $i; done
+```
+# Monitoring Cluster Status
+
+* Once master nodes are created, machine-api will automatically deploy worker nodes in two AZs.
+
+* Once ingress controller deploys Classic LB, update DNS for *.apps to route to that loadBalancer. More work needs to be done to set Ingress Controller use Externl Load Balancer which is still pending.
+
+* Monitor cluster status by sourcing kubeconfig
+```
+export KUBECONFIG=install-dir/auth/kubeconfig
+oc get co
+oc get nodes
+```
+
+* Once the cluster is up and running with 3 masters, 3 Infra and workers, you can terminate the bootstrap node by deleting bootstrap cloudformation stack.
+
+# Create Infra Nodes
+* Set Cluster Name into a variable.
+```
+export CLUSTER_NAME=<cluster-name>
+```
+* Set Cluster Domain Name into a variable.
+```
+export CLUSTER_DOMAIN_NAME=<cluster-domain-name>
+```
+* Set Subnet ID of AZ1 to a variable.
+```
+export SUBNET_ID_AZ1=<subnet_id_of_az1>
+```
+* Set Subnet ID of AZ2 to a variable.
+```
+export SUBNET_ID_AZ2=<subnet_id_of_az2>
+```
+* Set the private ip of inra1 into a variable
+```
+export INFRA1_PRIVATE_IP=<private_ip_of_infra1>
+```
+* Set the private ip of infra2 into a variable
+```
+export INFRA2_PRIVATE_IP=<private_ip_of_infra2>
+```
+* Set the private ip of infra3 into a variable
+```
+export INFRA3_PRIVATE_IP=<private_ip_of_infra3>
+```
+* Extract certfiicate from worker.ign and set into a variable.
+```
+export CERTIFICATE_AUTHORITY_WORKER=$(cat install-dir/worker.ign | cut -f8 -d{ | cut -f2,3 -d: | cut -f1 -d})
+````
+* Replace the variables in control plane parameters.json file.
+```
+sed -i "s/infra_id/$INFRA_ID/g" infra1-parameters.json infra2-parameters.json infra3-parameters.json
+sed -i "s/rhcos_ami_id/$RHCOS_AMI_ID/g"  infra1-parameters.json  infra2-parameters.json  infra3-parameters.json
+sed -i "s/worker_sg_id/$WorkerSecurityGroupId/g" infra1-parameters.json infra2-parameters.json infra3-parameters.json
+sed -i "s/subnet_id/$SUBNET_ID_AZ1/g" infra1-parameters.json infra2-parameters.json
+sed -i "s/subnet_id/$SUBNET_ID_AZ2/g" infra3-parameters.json
+sed -i "s/clustername/$CLUSTER_NAME/g"  infra1-parameters.json infra2-parameters.json infra3-parameters.json
+sed -i "s/domainname/$CLUSTER_DOMAIN_NAME/g"  infra1-parameters.json infra2-parameters.json infra3-parameters.json
+sed -i "s#certificate_authority#$CERTIFICATE_AUTHORITY_WORKER#g" infra1-parameters.json infra2-parameters.json infra3-parameters.json
+sed -i "s/infra_private_ip/$INFRA1_PRIVATE_IP/g" infra1-parameters.json
+sed -i "s/infra_private_ip/$INFRA2_PRIVATE_IP/g" infra2-parameters.json
+sed -i "s/infra_private_ip/$INFRA3_PRIVATE_IP/g" infra3-parameters.json
+```
+
+* Create the stack to deploy Infra1 node
+```
+aws cloudformation create-stack --stack-name infra1 --template-body file://create-infra.yaml --parameters file://infra1-parameters.json
+```
+* Create the stack to deploy Infra2 node
+```
+aws cloudformation create-stack --stack-name infra2 --template-body file://create-infra.yaml --parameters file://infra2-parameters.json
+```
+* Create the stack to deploy Infra3 node
+```
+aws cloudformation create-stack --stack-name infra3 --template-body file://create-infra.yaml --parameters file://infra3-parameters.json
+```
+* Approve Pending CSR
+```
+for i in `oc get csr| grep Pending | awk '{print $1}'`; do oc adm certificate approve $i; done
+sleep 30
+for i in `oc get csr| grep Pending | awk '{print $1}'`; do oc adm certificate approve $i; done
+```
+* Add infra label to the newly created infra ndoes.
+```
+for i in $INFRA1_PRIVATE_IP $INFRA2_PRIVATE_IP $INFRA3_PRIVATE_IP; do J=$(oc get nodes -o wide | grep $i| awk '{print $1}'); echo "Labelling Node $J"; oc label node $J node-role.kubernetes.io/infra= ;done
+```
+* Add proper taints to the infra nodes to avoid user workloads from going there.
+```
+for i in $INFRA1_PRIVATE_IP $INFRA2_PRIVATE_IP $INFRA3_PRIVATE_IP; do J=$(oc get nodes -o wide | grep $i| awk '{print $1}'); echo "Tainting Node $J"; oc adm taint nodes $J  node-role.kubernetes.io/infra=reserved:NoSchedule ;done
+```
+* Edit Default Ingerss Controller and add toleration to move to infra nodes. 
+```
+oc edit ingressController -n openshift-ingress-operator default
+```
+* Add below to spec.
+```
+  nodePlacement:
+    nodeSelector:
+      matchLabels:
+        node-role.kubernetes.io/infra: ""
+    tolerations:
+    - effect: NoSchedule
+      key: node-role.kubernetes.io/infra
+      value: reserved
+```
+* Confirm that the ingress pods are moved to Infra ndoes.
+```
+oc get po -n openshift-ingress -o wide
+```
+# Monitoring Cluster Status
+
+* Once master nodes are created, machine-api will automatically deploy worker nodes in two AZs.
+
+* Once ingress controller deploys Classic LB, update DNS for *.apps to route to that loadBalancer. More work needs to be done to set Ingress Controller use Externl Load Balancer which is still pending.
+
+* Monitor cluster status by sourcing kubeconfig
+```
+export KUBECONFIG=install-dir/auth/kubeconfig
+oc get co
+oc get nodes
+```
+
+* Once the cluster is up and running with 3 masters, 3 Infra and workers, you can terminate the bootstrap node by deleting bootstrap cloudformation stack.
