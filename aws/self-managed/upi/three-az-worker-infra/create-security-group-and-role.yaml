@@ -15,12 +15,13 @@ Parameters:
     Default: 10.0.0.0/16
     Description: CIDR block for VPC.
     Type: String
+  LoadBalancerCidr:
+    Default: 10.0.0.0/16
+    Description: CIDR block for LoadBalancer.
+    Type: String
   VpcId:
     Description: The VPC-scoped resources will belong to this VPC.
     Type: AWS::EC2::VPC::Id
-  PrivateSubnets:
-    Description: The internal subnets.
-    Type: List<AWS::EC2::Subnet::Id>
 
 Metadata:
   AWS::CloudFormation::Interface:
@@ -34,7 +35,6 @@ Metadata:
       Parameters:
       - VpcId
       - VpcCidr
-      - PrivateSubnets
     ParameterLabels:
       InfrastructureName:
         default: "Infrastructure Name"
@@ -42,8 +42,6 @@ Metadata:
         default: "VPC ID"
       VpcCidr:
         default: "VPC CIDR"
-      PrivateSubnets:
-        default: "Private Subnets"
 
 Resources:
   MasterSecurityGroup:
@@ -64,10 +62,19 @@ Resources:
         FromPort: 6443
         CidrIp: !Ref VpcCidr
       - IpProtocol: tcp
+        ToPort: 6443
+        FromPort: 6443
+        CidrIp: !Ref LoadBalancerCidr     
+      - IpProtocol: tcp
         FromPort: 22623
         ToPort: 22623
         CidrIp: !Ref VpcCidr
+      - IpProtocol: tcp
+        FromPort: 22623
+        ToPort: 22623
+        CidrIp: !Ref LoadBalancerCidr
       VpcId: !Ref VpcId
+
 
   WorkerSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -491,6 +498,36 @@ Resources:
       FromPort: 30000
       ToPort: 32767
       IpProtocol: udp
+
+  WorkerIngressHttpsFromLB:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      CidrIp: !Ref LoadBalancerCidr
+      GroupId: !GetAtt WorkerSecurityGroup.GroupId
+      Description: Allow HostNetwork Ingress From LB
+      FromPort: 443
+      ToPort: 443
+      IpProtocol: tcp
+
+  WorkerIngressHttpFromLB:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      CidrIp: !Ref LoadBalancerCidr
+      GroupId: !GetAtt WorkerSecurityGroup.GroupId
+      Description: Allow HostNetwork Ingress From LB
+      FromPort: 80
+      ToPort: 80
+      IpProtocol: tcp
+
+  WorkerIngressHealthcheckFromLB:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      CidrIp: !Ref LoadBalancerCidr
+      GroupId: !GetAtt WorkerSecurityGroup.GroupId
+      Description: Allow HostNetwork Ingress From LB for Healthcheck
+      FromPort: 1936
+      ToPort: 1936
+      IpProtocol: tcp
 
   MasterIamRole:
     Type: AWS::IAM::Role

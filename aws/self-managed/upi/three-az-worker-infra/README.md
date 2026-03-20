@@ -114,17 +114,17 @@ export VPC_ID=<vpc_id>
 ```
 export VPC_CIDR=<vpc_cidr>
 ```
-* Set Subnet ID into a variable.
+* Set the LoadBalancer CIDR. This is required for external LB to connect to 443, 80 and 1936 with HostNetwork Ingress type.
 ```
-export SUBNET_ID=<subnet_id_from_any_az>
+export LOADBALANCER_CIDR=<loadbalancer_cidr>
 ```
-
 * Replace Variables in CloudFormation Parameter file to create security group and IAM roles.
 ```
 sed -i "s/infra_id/$INFRA_ID/g" security-group-and-role-parameter.json
 sed -i "s/vpc_id/$VPC_ID/g" security-group-and-role-parameter.json
 sed -i "s#vpc_cidr#$VPC_CIDR#g" security-group-and-role-parameter.json
-sed -i "s/subnet_id/$SUBNET_ID/g" security-group-and-role-parameter.json
+sed -i "s#loadbalancer_cidr#$LOADBALANCER_CIDR#g" security-group-and-role-parameter.json
+
 ```
 * Create the resources via CloudFormation Template 
 

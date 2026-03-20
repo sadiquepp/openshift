@@ -8,8 +8,8 @@
     "ParameterValue": "vpc_cidr"
   },
   {
-    "ParameterKey": "PrivateSubnets",
-    "ParameterValue": "subnet_id"
+    "ParameterKey": "LoadBalancerCidr",
+    "ParameterValue": "loadbalancer_cidr"
   },
   {
     "ParameterKey": "VpcId",
