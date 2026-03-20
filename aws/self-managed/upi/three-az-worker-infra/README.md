@@ -42,12 +42,16 @@ oc adm release extract --credentials-requests \
       mirror.mylab.com:8443/openshift/release-images:4.18.5-x86_64
 ```
 
+* Remove unwanted manifests from credrequests directory.
+```
+rm -f credrequests/0000_50_cloud-credential-operator_05-iam-ro-credentialsrequest.yaml
+```
 * Set up STS. Below will create keypair, cloudfront, s3 bucket, identity provider, IAM roles and required manifests that needs to be injected to the cluster.
 ```
 ./ccoctl aws create-all --name <cluster-name-xxx> --credentials-requests-dir credrequests/ --region ap-southeast-1 --create-private-s3-bucket
 cd ..
 ```
-* Note this would require permissions listed [here for ccoctl](https://github.com/sadiquepp/openshift/blob/main/aws/4.18/ccoctl-policy.json) Please cross check it with Red Hat Docs if you are using a different version of openshift.
+* Note this command require permissions listed [here for ccoctl](https://github.com/sadiquepp/openshift/blob/main/aws/4.18/ccoctl-policy.json) Please cross check it with Red Hat Docs if you are using a different version of openshift.
 
 # Create Openshift Manifests and Ignition.
 * Develop install-config.yaml using the example given. Update baseDomain, machineNetwork, pullSecret, imageContentSource, sshKey and additionalTrustBundle as needed.
@@ -81,6 +85,7 @@ rm -f install-dir/openshift/99_openshift-cluster-api_worker-machineset-*.yaml
 ```
 vi install-dir/manifests/cluster-dns-02-config.yml
 ```
+* Edit `install-dir/manifests/cluster-ingress-default-ingresscontroller.yaml` and set `spec.endpointPublishingStrategy.type` to `HostNetwork` [as seen here in the example file](https://github.com/sadiquepp/openshift/blob/main/aws/self-managed/upi/two-az-infra/manifests/cluster-ingress-default-ingresscontroller.yaml)
 
 * Create Ignition
 ```
