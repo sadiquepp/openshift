@@ -8,12 +8,16 @@
     "ParameterValue": "rhcos_ami_id"
   },
   {
-    "ParameterKey": "Subnet",
-    "ParameterValue": "subnet_id"
+    "ParameterKey": "Worker1Subnet",
+    "ParameterValue": "subnet_id_az1"
   },
   {
-    "ParameterKey": "InfraPrivateIP",
-    "ParameterValue": "worker_private_ip"
+    "ParameterKey": "Worker2Subnet",
+    "ParameterValue": "subnet_id_az2"
+  },
+  {
+    "ParameterKey": "Worker3Subnet",
+    "ParameterValue": "subnet_id_az3"
   },
   {
     "ParameterKey": "WorkerSecurityGroupId",
@@ -32,11 +36,19 @@
     "ParameterValue": "infra_id-worker-profile"
   },
   {
-    "ParameterKey": "NodeNumber",
-    "ParameterValue": "3"
+    "ParameterKey": "WorkerInstanceType",
+    "ParameterValue": "m5.xlarge"
   },
   {
-    "ParameterKey": "WorkerInstanceType",
-    "ParameterValue": "m6i.xlarge"
+    "ParameterKey": "Worker1PrivateIP",
+    "ParameterValue": "worker1_private_ip"
+  },
+  {
+    "ParameterKey": "Worker2PrivateIP",
+    "ParameterValue": "worker2_private_ip"
+  },
+  {
+    "ParameterKey": "Worker3PrivateIP",
+    "ParameterValue": "worker3_private_ip"
   }
 ]

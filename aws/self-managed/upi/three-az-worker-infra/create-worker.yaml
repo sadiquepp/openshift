@@ -12,11 +12,23 @@ Parameters:
   RhcosAmi:
     Description: Current Red Hat Enterprise Linux CoreOS AMI to use for bootstrap.
     Type: AWS::EC2::Image::Id
-  Subnet:
-    Description: The subnets, recommend private, to launch the worker nodes into.
+  Worker1Subnet:
+    Description: The subnets, recommend private, to launch the master nodes into.
     Type: AWS::EC2::Subnet::Id
-  InfraPrivateIP:
-    Description: Private IP for Master in AZ1
+  Worker2Subnet:
+    Description: The subnets, recommend private, to launch the master nodes into.
+    Type: AWS::EC2::Subnet::Id
+  Worker3Subnet:
+    Description: The subnets, recommend private, to launch the master nodes into.
+    Type: AWS::EC2::Subnet::Id
+  Worker1PrivateIP:
+    Description: Private IP for Worker in AZ1
+    Type: String
+  Worker2PrivateIP:
+    Description: Private IP for Worker in AZ2
+    Type: String
+  Worker3PrivateIP:
+    Description: Private IP for Worker in AZ3
     Type: String
   WorkerSecurityGroupId:
     Description: The worker security group ID to associate with worker nodes.
@@ -34,9 +46,6 @@ Parameters:
     Type: String
   WorkerInstanceType:
     Default: m5.large
-    Type: String
-  NodeNumber:
-    Default: 0
     Type: String
 
 Metadata:
@@ -58,10 +67,13 @@ Metadata:
     - Label:
         default: "Network Configuration"
       Parameters:
-      - Subnet
+      - Worker1Subnet
+      - Worker2Subnet
+      - Worker3Subnet
+      - Worker1PrivateIP
+      - Worker2PrivateIP
+      - Worker3PrivateIP
     ParameterLabels:
-      Subnet:
-        default: "Subnet"
       InfrastructureName:
         default: "Infrastructure Name"
       WorkerInstanceType:
@@ -94,8 +106,8 @@ Resources:
         DeviceIndex: "0"
         GroupSet:
         - !Ref "WorkerSecurityGroupId"
-        SubnetId: !Ref "Subnet"
-        PrivateIpAddress: !Ref "InfraPrivateIP"
+        SubnetId: !Ref "Worker1Subnet"
+        PrivateIpAddress: !Ref "Worker1PrivateIP"
       UserData:
         Fn::Base64: !Sub
         - '{"ignition":{"config":{"merge":[{"source":"${SOURCE}"}]},"security":{"tls":{"certificateAuthorities":[{"source":"${CA_BUNDLE}"}]}},"version":"3.1.0"}}'
@@ -107,9 +119,76 @@ Resources:
       - Key: !Join ["", ["kubernetes.io/cluster/", !Ref InfrastructureName]]
         Value: "shared"
       - Key: Name
-        Value: !Join ["-", [!Ref InfrastructureName, "infra", !Ref NodeNumber]]
+        Value: !Join ["-", [!Ref InfrastructureName, "worker", "0"]]
 
+  Worker1:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref RhcosAmi
+      BlockDeviceMappings:
+      - DeviceName: /dev/xvda
+        Ebs:
+          VolumeSize: "120"
+          VolumeType: "gp3"
+      IamInstanceProfile: !Ref WorkerInstanceProfileName
+      InstanceType: !Ref WorkerInstanceType
+      NetworkInterfaces:
+      - AssociatePublicIpAddress: "false"
+        DeviceIndex: "0"
+        GroupSet:
+        - !Ref "WorkerSecurityGroupId"
+        SubnetId: !Ref "Worker2Subnet"
+        PrivateIpAddress: !Ref "Worker2PrivateIP"
+      UserData:
+        Fn::Base64: !Sub
+        - '{"ignition":{"config":{"merge":[{"source":"${SOURCE}"}]},"security":{"tls":{"certificateAuthorities":[{"source":"${CA_BUNDLE}"}]}},"version":"3.1.0"}}'
+        - {
+          SOURCE: !Ref IgnitionLocation,
+          CA_BUNDLE: !Ref CertificateAuthorities,
+        }
+      Tags:
+      - Key: !Join ["", ["kubernetes.io/cluster/", !Ref InfrastructureName]]
+        Value: "shared"
+      - Key: Name
+        Value: !Join ["-", [!Ref InfrastructureName, "worker", "1"]]
+
+  Worker2:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref RhcosAmi
+      BlockDeviceMappings:
+      - DeviceName: /dev/xvda
+        Ebs:
+          VolumeSize: "120"
+          VolumeType: "gp3"
+      IamInstanceProfile: !Ref WorkerInstanceProfileName
+      InstanceType: !Ref WorkerInstanceType
+      NetworkInterfaces:
+      - AssociatePublicIpAddress: "false"
+        DeviceIndex: "0"
+        GroupSet:
+        - !Ref "WorkerSecurityGroupId"
+        SubnetId: !Ref "Worker3Subnet"
+        PrivateIpAddress: !Ref "Worker3PrivateIP"
+      UserData:
+        Fn::Base64: !Sub
+        - '{"ignition":{"config":{"merge":[{"source":"${SOURCE}"}]},"security":{"tls":{"certificateAuthorities":[{"source":"${CA_BUNDLE}"}]},"version":"3.1.0"}}}'
+        - {
+          SOURCE: !Ref IgnitionLocation,
+          CA_BUNDLE: !Ref CertificateAuthorities,
+        }
+      Tags:
+      - Key: !Join ["", ["kubernetes.io/cluster/", !Ref InfrastructureName]]
+        Value: "shared"
+      - Key: Name
+        Value: !Join ["-", [!Ref InfrastructureName, "worker", "2"]]
 Outputs:
-  PrivateIP:
+  Worker0PrivateIP:
     Description: The compute node private IP address.
     Value: !GetAtt Worker0.PrivateIp
+  Worker1PrivateIP:
+    Description: The compute node private IP address.
+    Value: !GetAtt Worker1.PrivateIp
+  Worker2PrivateIP:
+    Description: The compute node private IP address.
+    Value: !GetAtt Worker2.PrivateIp

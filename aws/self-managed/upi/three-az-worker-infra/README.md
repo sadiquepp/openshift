@@ -134,8 +134,8 @@ aws cloudformation create-stack --stack-name security-group-role --template-body
 * Once the CloudFormation stack is successfully created, retrieve the following values from the AWS Console (**CloudFormation** -> **Stacks** -> Select the stack -> **Outputs** tab) and export them as environment variables:
 
 ~~~
-export MasterInstanceProfile=<master_instance_profile>
 export MasterSecurityGroupId=<master_sg_id>
+export WorkerSecurityGroupId=<worker_sg_id>
 ~~~
 
 # Create Bootstrap Node
@@ -277,32 +277,25 @@ export CERTIFICATE_AUTHORITY_WORKER=$(cat install-dir/worker.ign | cut -f8 -d{ |
 ````
 * Replace the variables in worker node parameters.json file.
 ```
-sed -i "s/infra_id/$INFRA_ID/g" worker1-parameters.json worker2-parameters.json worker3-parameters.json
-sed -i "s/rhcos_ami_id/$RHCOS_AMI_ID/g"  worker1-parameters.json  worker2-parameters.json  worker3-parameters.json
-sed -i "s/worker_sg_id/$WorkerSecurityGroupId/g" worker1-parameters.json worker2-parameters.json worker3-parameters.json
-sed -i "s/subnet_id/$SUBNET_ID_AZ1/g" worker1-parameters.json
-sed -i "s/subnet_id/$SUBNET_ID_AZ2/g" worker2-parameters.json
-sed -i "s/subnet_id/$SUBNET_ID_AZ3/g" worker3-parameters.json
-sed -i "s/clustername/$CLUSTER_NAME/g"  worker1-parameters.json worker2-parameters.json worker3-parameters.json
-sed -i "s/domainname/$CLUSTER_DOMAIN_NAME/g"  worker1-parameters.json worker2-parameters.json worker3-parameters.json
-sed -i "s#certificate_authority#$CERTIFICATE_AUTHORITY_WORKER#g" worker1-parameters.json worker2-parameters.json worker3-parameters.json
-sed -i "s/worker_private_ip/$WORKER1_PRIVATE_IP/g" worker1-parameters.json
-sed -i "s/worker_private_ip/$WORKER2_PRIVATE_IP/g" worker2-parameters.json
-sed -i "s/worker_private_ip/$WORKER3_PRIVATE_IP/g" worker3-parameters.json
+sed -i "s/infra_id/$INFRA_ID/g" worker-parameters.json
+sed -i "s/rhcos_ami_id/$RHCOS_AMI_ID/g"  worker-parameters.json
+sed -i "s/worker_sg_id/$WorkerSecurityGroupId/g" worker-parameters.json
+sed -i "s/subnet_id_az1/$SUBNET_ID_AZ1/g" worker-parameters.json
+sed -i "s/subnet_id_az2/$SUBNET_ID_AZ2/g" worker-parameters.json
+sed -i "s/subnet_id_az3/$SUBNET_ID_AZ3/g" worker-parameters.json
+sed -i "s/clustername/$CLUSTER_NAME/g"  worker-parameters.json
+sed -i "s/domainname/$CLUSTER_DOMAIN_NAME/g"  worker-parameters.json
+sed -i "s#certificate_authority#$CERTIFICATE_AUTHORITY_WORKER#g" worker-parameters.json
+sed -i "s/worker1_private_ip/$WORKER1_PRIVATE_IP/g" worker-parameters.json
+sed -i "s/worker2_private_ip/$WORKER2_PRIVATE_IP/g" worker-parameters.json
+sed -i "s/worker3_private_ip/$WORKER3_PRIVATE_IP/g" worker-parameters.json
 ```
 
-* Create the stack to deploy worker1 node
+* Create the stack to deploy worker nodes
 ```
-aws cloudformation create-stack --stack-name worker1 --template-body file://create-worker.yaml --parameters file://worker1-parameters.json
+aws cloudformation create-stack --stack-name worker --template-body file://create-worker.yaml --parameters file://worker-parameters.json
 ```
-* Create the stack to deploy worker2 node
-```
-aws cloudformation create-stack --stack-name worker2 --template-body file://create-worker.yaml --parameters file://worker2-parameters.json
-```
-* Create the stack to deploy worker3 node
-```
-aws cloudformation create-stack --stack-name worker3 --template-body file://create-worker.yaml --parameters file://worker3-parameters.json
-```
+
 * Approve Pending CSR
 ```
 for i in `oc get csr| grep Pending | awk '{print $1}'`; do oc adm certificate approve $i; done
