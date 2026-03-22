@@ -14,6 +14,8 @@ This doc will cover deployment of disconnected OpenShift using UPI in three avai
 * A mirror registry with the required release images and operator images alread mirrored and accessible from the vpc.
 * Pre-determine and reserve the ip for bootstrap node (From any AZ) master0 (From AZ1), master1 (from AZ2), and master2 (From AZ3). It's recommended to do an explicit reservation for these ip addresses in AWS VCP -> Subnets -> Actions -> Edit IPv4 CIDR Reservation section.
 * Configure external LoadBalncer to listen on 6443 and 22623 for api, api-int using the above nodes (1 bootstrap and 3 master) as the backend nodes.
+* Pre-determine and reserve the ip for infra/worker nodes infra1/worker1 (From AZ1), infra2/worker2 (from AZ2), and infra3/worker3 (From AZ3). It's recommended to do an explicit reservation for these ip addresses in AWS VCP -> Subnets -> Actions -> Edit IPv4 CIDR Reservation section.
+* Configure external LoadBalancer to listen on 443 and 80 for *.apps and configure the worker/infra nodes as its backend nodes using port 1936 for healthcheck using HTTP and url /healthz. (Note: This is required for Ingress Controller to use external load balancer. Configure only Infra Nodes if Infra Nodes are used, otherwise only use worker nodes if no dedicated Infra nodes are used)
 * DNS should be managed outside of Openshift. There will be no route53 integration. 
 * Set up DNS to resolve api.<clustername>.<cluster-domain>, api-int.<clustername>.<cluster-domain>  and *.apps.<clustername>.<cluster-domain> to the LoadBalancer.
 
@@ -42,9 +44,10 @@ oc adm release extract --credentials-requests \
       mirror.mylab.com:8443/openshift/release-images:4.18.5-x86_64
 ```
 
-* Remove unwanted manifests from credrequests directory.
+* Remove unwanted manifests from `credrequests directory`. If manifests are removed, some operators may need a dummy manifests to be created manually to show the operator as healthy. Just replace the `role_arn` with value like `dummy`. Eg: `role_arn: arn:aws:iam::dummy:role/dummy`
 ```
 rm -f credrequests/0000_50_cloud-credential-operator_05-iam-ro-credentialsrequest.yaml
+rm -f ....
 ```
 * Set up STS. Below will create keypair, cloudfront, s3 bucket, identity provider, IAM roles and required manifests that needs to be injected to the cluster.
 ```
