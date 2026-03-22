@@ -200,8 +200,7 @@ export MASTER2_PRIVATE_IP=<private_ip_of_master2>
 * Extract certfiicate from master.ign and set into a variable.
 ```
 export CERTIFICATE_AUTHORITY=$(cat install-dir/master.ign | cut -f8 -d{ | cut -f2,3 -d: | cut -f1 -d})
-````
-
+```
 * Replace the variables in control plane parameters.json file.
 ```
 sed -i "s/infra_id/$INFRA_ID/g" control-plane-parameters.json
@@ -222,22 +221,6 @@ sed -i "s/master2_private_ip/$MASTER2_PRIVATE_IP/g" control-plane-parameters.jso
 ```
 aws cloudformation create-stack --stack-name control-plane --template-body file://create-control-plane.yaml --parameters file://control-plane-parameters.json
 ```
-
-# Monitoring Cluster Status
-
-* Once master nodes are created, machine-api will automatically deploy worker nodes in two AZs.
-
-* Once ingress controller deploys Classic LB, update DNS for *.apps to route to that loadBalancer. More work needs to be done to set Ingress Controller use Externl Load Balancer which is still pending.
-
-* Monitor cluster status by sourcing kubeconfig
-```
-export KUBECONFIG=install-dir/auth/kubeconfig
-oc get co
-oc get nodes
-```
-
-* Once the cluster is up and running with 3 masters and workers, you can terminate the bootstrap node by deleting bootstrap cloudformation stack.
-
 # Create Worker Nodes
 * Set Cluster Name into a variable.
 ```
@@ -274,7 +257,7 @@ export WORKER3_PRIVATE_IP=<private_ip_of_worker3>
 * Extract certfiicate from worker.ign and set into a variable.
 ```
 export CERTIFICATE_AUTHORITY_WORKER=$(cat install-dir/worker.ign | cut -f8 -d{ | cut -f2,3 -d: | cut -f1 -d})
-````
+```
 * Replace the variables in worker node parameters.json file.
 ```
 sed -i "s/infra_id/$INFRA_ID/g" worker-parameters.json
@@ -349,7 +332,7 @@ export INFRA3_PRIVATE_IP=<private_ip_of_infra3>
 * Extract certfiicate from worker.ign and set into a variable.
 ```
 export CERTIFICATE_AUTHORITY_WORKER=$(cat install-dir/worker.ign | cut -f8 -d{ | cut -f2,3 -d: | cut -f1 -d})
-````
+```
 * Replace the variables in control plane parameters.json file.
 ```
 sed -i "s/infra_id/$INFRA_ID/g" infra1-parameters.json infra2-parameters.json infra3-parameters.json
