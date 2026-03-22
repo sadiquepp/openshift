@@ -393,17 +393,3 @@ oc edit ingressController -n openshift-ingress-operator default
 ```
 oc get po -n openshift-ingress -o wide
 ```
-# Monitoring Cluster Status
-
-* Once master nodes are created, machine-api will automatically deploy worker nodes in two AZs.
-
-* Once ingress controller deploys Classic LB, update DNS for *.apps to route to that loadBalancer. More work needs to be done to set Ingress Controller use Externl Load Balancer which is still pending.
-
-* Monitor cluster status by sourcing kubeconfig
-```
-export KUBECONFIG=install-dir/auth/kubeconfig
-oc get co
-oc get nodes
-```
-
-* Once the cluster is up and running with 3 masters, 3 Infra and workers, you can terminate the bootstrap node by deleting bootstrap cloudformation stack.
