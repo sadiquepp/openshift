@@ -10,7 +10,7 @@ This doc will cover deployment of disconnected OpenShift using UPI in three avai
 * Understanding of requirements for disconnected ocp on AWS
 
 # Requirements
-* A disconnected vpc with all the required vpc endpoints like s3, ec2, sts, elasticloadbalancing
+* A disconnected vpc with all the required vpc endpoints like s3, ec2, sts, elasticloadbalancing. Refer [Network Requirements for Disconnected OpenShift on AWS](https://github.com/sadiquepp/openshift/blob/main/aws/docs/network-requirement-aws-api.md#2-cluster-to-complete-its-installation) for more details.
 * A mirror registry with the required release images and operator images alread mirrored and accessible from the vpc.
 * Pre-determine and reserve the ip for bootstrap node (From any AZ) master0 (From AZ1), master1 (from AZ2), and master2 (From AZ3). It's recommended to do an explicit reservation for these ip addresses in AWS VCP -> Subnets -> Actions -> Edit IPv4 CIDR Reservation section.
 * Configure external LoadBalncer to listen on 6443 and 22623 for api, api-int using the above nodes (1 bootstrap and 3 master) as the backend nodes.
