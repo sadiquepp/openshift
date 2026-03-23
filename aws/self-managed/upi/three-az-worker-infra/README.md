@@ -44,7 +44,7 @@ oc adm release extract --credentials-requests \
       mirror.mylab.com:8443/openshift/release-images:4.18.5-x86_64
 ```
 
-* Remove unwanted manifests from `credrequests directory`. If manifests are removed, some operators may need a dummy manifests to be created manually to show the operator as healthy. Just replace the `role_arn` with value like `dummy`. Eg: `role_arn: arn:aws:iam::dummy:role/dummy`
+* Remove unwanted manifests from `credrequests` directory. If manifests are removed, some operators may need a dummy manifests to be created manually to show the operator as healthy. Just replace the `role_arn` with value like `dummy`. Eg: `role_arn: arn:aws:iam::dummy:role/dummy`
 ```
 rm -f credrequests/0000_50_cloud-credential-operator_05-iam-ro-credentialsrequest.yaml
 rm -f ....
