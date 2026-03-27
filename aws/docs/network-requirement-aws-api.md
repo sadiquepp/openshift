@@ -39,3 +39,45 @@ Once the Bastion node provisions the control plane and initial worker nodes, the
 ```yaml
 privateZone:
   id: ID
+```
+## Workaround for Public Endpoint Requirement for tagging.us-east-1.amazonaws.com
+
+To resolve the internet access requirement for the `tagging.us-east-1.amazonaws.com` endpoint without providing public internet access, you can route the traffic through a private endpoint in `us-east-1` via VPC peering. Follow these steps:
+
+**Step 1: Create a VPC and Subnet in `us-east-1`**
+* Navigate to the AWS VPC Dashboard in the `us-east-1` (N. Virginia) region.
+* Create a new VPC with a CIDR block that does not overlap with your primary cluster VPC (e.g., `10.200.0.0/16`).
+* Create at least one subnet within this new VPC (e.g., `10.200.1.0/24`).
+* Ensure **DNS Resolution** and **DNS Hostnames** are enabled for this VPC.
+
+**Step 2: Create a Private Endpoint for `tagging.us-east-1.amazonaws.com`**
+* Still in the `us-east-1` VPC Dashboard, navigate to **Endpoints** and click **Create endpoint**.
+* Select **AWS services** as the service category.
+* Under Services, search for and select `com.amazonaws.us-east-1.tagging`.
+* Select the VPC and subnet created in Step 1.
+* Attach a security group that allows inbound HTTPS (port 443) traffic from your primary cluster VPC CIDR.
+
+**Step 3: Retrieve the Private Endpoint IP Address**
+* Once the endpoint state is *Available*, select it and navigate to the **Subnets** (or Network Interfaces) tab.
+* Note down the **Private IP address** associated with the network interface created for this endpoint (e.g., `10.200.1.15`). 
+
+**Step 4: Set up VPC Peering or Transit Gateway**
+* Navigate to **VPC Peering Connections** (or Transit Gateway attachments).
+* Create a peering connection from your primary VPC (e.g., in `ap-southeast-1`) to the new `us-east-1` VPC.
+* Accept the peering connection request in the `us-east-1` region.
+* **Update Route Tables:**
+  * In your primary cluster VPC route tables (especially those associated with the control plane and bastion subnets), add a route pointing the `us-east-1` VPC CIDR (`10.200.0.0/16`) to the VPC Peering Connection.
+  * In your `us-east-1` VPC route table, add a route pointing your primary cluster VPC CIDR back to the same VPC Peering Connection to allow return traffic.
+
+**Step 5: Create a Private Hosted Zone and Alias Record**
+* Navigate to the Route 53 Dashboard.
+* Click **Create hosted zone** and enter `tagging.us-east-1.amazonaws.com` as the Domain Name.
+* Select **Private hosted zone** as the type.
+* Associate this hosted zone with your **primary cluster VPC** (the VPC in your installation region).
+* Inside the newly created hosted zone, click **Create record**.
+* Leave the Record name empty (this creates an apex record for the domain itself).
+* Change the Record type to **A - Routes traffic to an IPv4 address and some AWS resources**.
+* Enter the **Private IP Address** retrieved in Step 3 into the value field.
+* Save the record.
+
+With this setup, traffic originating from your cluster destined for the `tagging.us-east-1.amazonaws.com` endpoint will resolve to the `us-east-1` private endpoint IP, traverse the VPC peer, and securely hit the AWS API without requiring outbound internet access.
