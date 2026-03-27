@@ -16,7 +16,7 @@ The Bastion node is the jump host used to initiate the OpenShift installer for t
 
 | Access Type | Required Endpoints / URLs |
 | :--- | :--- |
-| **Public Internet Access** | • `aws.amazon.com` (Temporary requirement due to OCPBUGS-77830)<br>• `tagging.us-east-1.amazonaws.com` (Required for cluster deletion only; not needed for installation. Also check if [Workaround for Public Endpoint Requirement for tagging.us-east-1.amazonaws.com](#workaround-for-public-endpoint-requirement-for-taggingus-east-1amazonawscom) can be implemented) |
+| **Public Internet Access** | • `aws.amazon.com` (Temporary requirement due to [OCPBUGS-77830](https://issues.redhat.com/browse/OCPBUGS-77830)<br>• `tagging.us-east-1.amazonaws.com` (Required for cluster deletion only; not needed for installation. Also check if [Workaround for Public Endpoint Requirement for tagging.us-east-1.amazonaws.com](#workaround-for-public-endpoint-requirement-for-taggingus-east-1amazonawscom) can be implemented) |
 | **AWS VPC Endpoints** | • `com.amazonaws.iam` (IAM - Cross-Region)<br>• `com.amazonaws.route53` (Route 53 - Cross-Region)<br>• `com.amazonaws.[region].servicequotas` (Service Quotas)<br>• `com.amazonaws.[region].ec2` (EC2)<br>• `com.amazonaws.[region].sts` (STS)<br>• `com.amazonaws.[region].elasticloadbalancing` (ELB)<br>• `com.amazonaws.[region].s3` (S3 Gateway Endpoint)<br>• `com.amazonaws.[region].tagging` (Tagging - Regional) |
 
 ## 2. Cluster (To complete its Installation)
