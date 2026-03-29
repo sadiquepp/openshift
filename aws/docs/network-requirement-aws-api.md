@@ -21,7 +21,7 @@ The Bastion node is the jump host used to initiate the OpenShift installer for t
 
 ## 2. Cluster (To complete its Installation)
 
-Once the Bastion node provisions the control plane and initial worker nodes, the cluster itself needs specific access to finish its own installation, verify its infrastructure, and pull necessary operators.
+Once the Bastion node provisions the control plane, the cluster itself needs specific access to finish its own installation, verify its infrastructure, and pull necessary operators.
 
 | Access Type | Required Endpoints / URLs |
 | :--- | :--- |
