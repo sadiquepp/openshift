@@ -180,12 +180,6 @@ spec:
     nodeSelector:
       matchLabels: 
         node-role.kubernetes.io/ingress: ""
-    podAntiAffinity:
-      requiredDuringSchedulingIgnoredDuringExecution:
-      - labelSelector:
-          matchLabels: 
-            ingresscontroller.operator.openshift.io/deployment-ingresscontroller: ingress-vlan-10
-        topologyKey: "kubernetes.io/hostname"
   routeSelector:
     matchLabels: 
       network: vlan-10
@@ -205,12 +199,6 @@ spec:
     nodeSelector:
       matchLabels: 
         node-role.kubernetes.io/ingress: ""
-    podAntiAffinity:
-      requiredDuringSchedulingIgnoredDuringExecution:
-      - labelSelector:
-          matchLabels: 
-            ingresscontroller.operator.openshift.io/deployment-ingresscontroller: ingress-vlan-20
-        topologyKey: "kubernetes.io/hostname"
   routeSelector:
     matchLabels: 
       network: vlan-20
