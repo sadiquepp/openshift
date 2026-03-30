@@ -216,19 +216,19 @@ sysctl -w net.ipv4.conf.all.rp_filter=2
 ## 6. Testing Commands
 Deploy Sample App & Create Route:
 
-# Create a test project and app
+1. Create a test project and app
 ```bash
 oc new-project antigravity-test
 oc new-app --docker-image=openshift/hello-openshift
 ```
 
-# Create route and label it for the VLAN 10 shard
+2. Create route and label it for the VLAN 10 shard
 ```bash
 oc create route edge hello-vlan10 --service=hello-openshift --hostname=hello.vlan10.apps.redhat.local
 oc label route hello-vlan10 network=vlan-10
 ```
 
-# Verify Connectivity from External RHEL Host:
+3. Verify Connectivity from External RHEL Host:
 
 ```bash
 # 1. Test ARP (L2)
