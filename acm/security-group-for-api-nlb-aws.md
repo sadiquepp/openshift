@@ -34,3 +34,4 @@ spec:
           valueJSON: '"sg-0cc571fe1ac5fe77f"'
 ```
 The security group identifier in the final line must be replaced with the specific value applicable to your environment.
+
