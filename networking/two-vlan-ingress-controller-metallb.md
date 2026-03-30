@@ -263,5 +263,5 @@ oc label route hello-vlan10 network=vlan-10
 arping -I eth1.10 192.168.10.100
 
 # 2. Test Connection (L4/L7)
-curl -v -k --resolve hello.vlan10.apps.redhat.local:443:192.168.10.100 [https://hello.vlan10.apps.redhat.local](https://hello.vlan10.apps.redhat.local)
+curl -v -k --resolve hello.vlan10.apps.redhat.local:443:192.168.10.100 https://hello.vlan10.apps.redhat.local
 ```
