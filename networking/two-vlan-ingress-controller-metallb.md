@@ -117,7 +117,7 @@ metadata:
   namespace: metallb-system
 spec:
   addresses: ["192.168.10.100-192.168.10.100"]
-  autoAssign: false
+  autoAssign: true
 ---
 apiVersion: metallb.io/v1beta1
 kind: L2Advertisement
@@ -144,7 +144,7 @@ metadata:
   namespace: metallb-system
 spec:
   addresses: ["192.168.20.100-192.168.20.100"]
-  autoAssign: false
+  autoAssign: true
 ---
 apiVersion: metallb.io/v1beta1
 kind: L2Advertisement
