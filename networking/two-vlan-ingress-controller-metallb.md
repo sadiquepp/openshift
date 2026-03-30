@@ -38,21 +38,29 @@ spec:
       - name: enp7s0.10
         type: vlan
         state: up
-        vlan: {base-iface: enp7s0, id: 10}
+        vlan: 
+          base-iface: enp7s0
+          id: 10
         ipv4:
           enabled: true
           dhcp: false
           forwarding: true
-          address: [{ip: 192.168.10.11, prefix-length: 24}]
+          address: 
+            - ip: 192.168.10.11
+              prefix-length: 24
       - name: enp7s0.20
         type: vlan
         state: up
-        vlan: {base-iface: enp7s0, id: 20}
+        vlan: 
+          base-iface: enp7s0
+          id: 20
         ipv4:
           enabled: true
           dhcp: false
           forwarding: true
-          address: [{ip: 192.168.20.11, prefix-length: 24}]
+          address: 
+            - ip: 192.168.20.11
+              prefix-length: 24
 ```
 
 - Worker 2 Policy
@@ -70,21 +78,29 @@ spec:
       - name: enp7s0.10
         type: vlan
         state: up
-        vlan: {base-iface: enp7s0, id: 10}
+        vlan: 
+          base-iface: enp7s0
+          id: 10
         ipv4:
           enabled: true
           dhcp: false
           forwarding: true
-          address: [{ip: 192.168.10.12, prefix-length: 24}]
+          address: 
+            - ip: 192.168.10.12
+              prefix-length: 24
       - name: enp7s0.20
         type: vlan
         state: up
-        vlan: {base-iface: enp7s0, id: 20}
+        vlan: 
+          base-iface: enp7s0
+          id: 20
         ipv4:
           enabled: true
           dhcp: false
           forwarding: true
-          address: [{ip: 192.168.20.12, prefix-length: 24}]
+          address: 
+            - ip: 192.168.20.12
+              prefix-length: 24
 ```
 
 ## 3. MetalLB LoadBalancer Configuration
