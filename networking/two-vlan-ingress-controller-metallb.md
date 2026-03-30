@@ -21,7 +21,7 @@ metadata:
   namespace: metallb-system
 ```
 ## 2. Node Network Configuration (NMState)
-Configure physical VLAN interfaces on the worker nodes. Note: forwarding: true is required to allow the Linux kernel to pass traffic from the secondary VLAN interface into the OpenShift SDN.
+Configure physical VLAN interfaces on the worker nodes. Note: `forwarding: true` is required to allow the Linux kernel to pass traffic from the secondary VLAN interface into the OpenShift SDN.
 
 - Worker 1 Policy
 ```yaml
@@ -164,6 +164,7 @@ spec:
 ## 4. Ingress Controller Sharding
 Deploy custom Ingress Controllers. We use podAntiAffinity to ensure one router pod exists on every ingress node to prevent traffic hangs under the Local traffic policy.
 
+- VLAN 10 Ingress Controller.
 ```yaml
 # 04-ingress-vlan10.yaml
 apiVersion: operator.openshift.io/v1
@@ -183,7 +184,10 @@ spec:
   routeSelector:
     matchLabels: 
       network: vlan-10
----
+```
+
+- VLAN 20 Ingress Controller.
+```yaml
 # 04-ingress-vlan20.yaml
 apiVersion: operator.openshift.io/v1
 kind: IngressController
