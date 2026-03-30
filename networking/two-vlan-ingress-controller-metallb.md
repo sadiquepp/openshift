@@ -106,6 +106,8 @@ spec:
 ## 3. MetalLB LoadBalancer Configuration
 Define the virtual IP pools and L2 advertisements. The nodeSelectors ensure MetalLB only announces VIPs from nodes physically connected to the VLAN trunk.
 
+- For VLAN 10
+
 ```yaml
 # 03-metallb-config.yaml
 apiVersion: metallb.io/v1beta1
@@ -123,10 +125,18 @@ metadata:
   name: vlan-10-adv
   namespace: metallb-system
 spec:
-  ipAddressPools: ["vlan-10-pool"]
-  interfaces: ["enp7s0.10"]
-  nodeSelectors: [{matchLabels: {node-role.kubernetes.io/ingress: ""}}]
----
+  ipAddressPools: 
+    - vlan-10-pool
+  interfaces: 
+    - enp7s0.10
+  nodeSelectors: 
+    - matchLabels: 
+        node-role.kubernetes.io/ingress: ""
+```
+
+- For VLAN 20
+
+```yaml
 apiVersion: metallb.io/v1beta1
 kind: IPAddressPool
 metadata:
@@ -142,9 +152,13 @@ metadata:
   name: vlan-20-adv
   namespace: metallb-system
 spec:
-  ipAddressPools: ["vlan-20-pool"]
-  interfaces: ["enp7s0.20"]
-  nodeSelectors: [{matchLabels: {node-role.kubernetes.io/ingress: ""}}]
+  ipAddressPools: 
+    - vlan-20-pool
+  interfaces: 
+    - enp7s0.20
+  nodeSelectors: 
+    - matchLabels: 
+        node-role.kubernetes.io/ingress: ""
 ```
 
 ## 4. Ingress Controller Sharding
@@ -164,14 +178,17 @@ spec:
     type: LoadBalancerService
   nodePlacement:
     nodeSelector:
-      matchLabels: {node-role.kubernetes.io/ingress: ""}
+      matchLabels: 
+        node-role.kubernetes.io/ingress: ""
     podAntiAffinity:
       requiredDuringSchedulingIgnoredDuringExecution:
       - labelSelector:
-          matchLabels: {ingresscontroller.operator.openshift.io/deployment-ingresscontroller: ingress-vlan-10}
+          matchLabels: 
+            ingresscontroller.operator.openshift.io/deployment-ingresscontroller: ingress-vlan-10
         topologyKey: "kubernetes.io/hostname"
   routeSelector:
-    matchLabels: {network: vlan-10}
+    matchLabels: 
+      network: vlan-10
 ---
 # 04-ingress-vlan20.yaml
 apiVersion: operator.openshift.io/v1
@@ -186,14 +203,17 @@ spec:
     type: LoadBalancerService
   nodePlacement:
     nodeSelector:
-      matchLabels: {node-role.kubernetes.io/ingress: ""}
+      matchLabels: 
+        node-role.kubernetes.io/ingress: ""
     podAntiAffinity:
       requiredDuringSchedulingIgnoredDuringExecution:
       - labelSelector:
-          matchLabels: {ingresscontroller.operator.openshift.io/deployment-ingresscontroller: ingress-vlan-20}
+          matchLabels: 
+            ingresscontroller.operator.openshift.io/deployment-ingresscontroller: ingress-vlan-20
         topologyKey: "kubernetes.io/hostname"
   routeSelector:
-    matchLabels: {network: vlan-20}
+    matchLabels: 
+      network: vlan-20
 ```
 
 ## 5. Post-Deployment Fixes (The "Trinity")
@@ -251,5 +271,5 @@ oc label route hello-vlan10 network=vlan-10
 arping -I eth1.10 192.168.10.100
 
 # 2. Test Connection (L4/L7)
-curl -v -k --resolve hello.vlan10.apps.redhat.local:443:192.168.10.100 [https://hello.vlan1
+curl -v -k --resolve hello.vlan10.apps.redhat.local:443:192.168.10.100 [https://hello.vlan10.apps.redhat.local](https://hello.vlan10.apps.redhat.local)
 ```
