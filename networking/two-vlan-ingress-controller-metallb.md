@@ -8,7 +8,7 @@ This repository contains the complete configuration for a high-availability, dua
 Install the **NMState** and **MetalLB** Operators from the OpenShift OperatorHub. Once installed, apply this manifest to initialize the required background daemons:
 
 ```yaml
-cat <<EOF | oc apply -f -
+cat <<EOF > 01-init.yaml
 apiVersion: nmstate.io/v1
 kind: NMState
 metadata:
