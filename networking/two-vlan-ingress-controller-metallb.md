@@ -26,6 +26,7 @@ Configure physical VLAN interfaces on the worker nodes. Note: `forwarding: true`
 
 - Worker 1 Policy
 ```yaml
+cat <<EOF > 02-nncp-worker1.yaml
 apiVersion: nmstate.io/v1
 kind: NodeNetworkConfigurationPolicy
 metadata:
@@ -61,10 +62,12 @@ spec:
           address: 
             - ip: 192.168.20.11
               prefix-length: 24
+EOF
 ```
 
 - Worker 2 Policy
 ```yaml
+cat <<EOF > 03-nncp-worker2.yaml
 apiVersion: nmstate.io/v1
 kind: NodeNetworkConfigurationPolicy
 metadata:
@@ -100,6 +103,7 @@ spec:
           address: 
             - ip: 192.168.20.12
               prefix-length: 24
+EOF
 ```
 
 ## 3. MetalLB LoadBalancer Configuration
@@ -108,7 +112,7 @@ Define the virtual IP pools and L2 advertisements. The nodeSelectors ensure Meta
 - For VLAN 10
 
 ```yaml
-# 03-metallb-config.yaml
+cat <<EOF > 04-metallb-config.yaml
 apiVersion: metallb.io/v1beta1
 kind: IPAddressPool
 metadata:
@@ -131,11 +135,13 @@ spec:
   nodeSelectors: 
     - matchLabels: 
         node-role.kubernetes.io/ingress: ""
+EOF
 ```
 
 - For VLAN 20
 
 ```yaml
+cat <<EOF > 05-metallb-config.yaml
 apiVersion: metallb.io/v1beta1
 kind: IPAddressPool
 metadata:
@@ -158,6 +164,7 @@ spec:
   nodeSelectors: 
     - matchLabels: 
         node-role.kubernetes.io/ingress: ""
+EOF
 ```
 
 ## 4. Ingress Controller Sharding
@@ -165,7 +172,7 @@ Deploy custom Ingress Controllers. We use podAntiAffinity to ensure one router p
 
 - VLAN 10 Ingress Controller.
 ```yaml
-# 04-ingress-vlan10.yaml
+cat <<EOF > 06-ingress-vlan10.yaml
 apiVersion: operator.openshift.io/v1
 kind: IngressController
 metadata:
@@ -183,11 +190,12 @@ spec:
   routeSelector:
     matchLabels: 
       network: vlan-10
+EOF
 ```
 
 - VLAN 20 Ingress Controller.
 ```yaml
-# 04-ingress-vlan20.yaml
+cat <<EOF > 07-ingress-vlan20.yaml
 apiVersion: operator.openshift.io/v1
 kind: IngressController
 metadata:
@@ -205,6 +213,7 @@ spec:
   routeSelector:
     matchLabels: 
       network: vlan-20
+EOF
 ```
 
 ## 5. Post-Deployment Fixes (The "Trinity")
