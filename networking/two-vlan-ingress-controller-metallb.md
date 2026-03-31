@@ -333,16 +333,13 @@ EOF
 ```bash
 oc apply -f 09-ingress-vlan20-service.yaml
 ```
-## 7. Post-Deployment Fixes (The "Trinity")
-The following manual steps are required to stabilize the routing path and prevent the Operator from reverting critical changes.
-
-1. Shard Default Controller
+## 7. Prevent routes on default IngressController
 Prevent the default ingress controller from intercepting VLAN routes:
 
 ```bash
 oc patch ingresscontroller default -n openshift-ingress-operator --type=merge -p '{"spec":{"routeSelector":{"matchExpressions":[{"key":"network","operator":"NotIn","values":["vlan-10","vlan-20"]}]}}}'
 ```
-## 8. Testing Commands
+## 8. Testing
 Deploy Sample App & Create Route:
 
 1. Create a test project and app
@@ -419,7 +416,6 @@ EOF
 ```bash
 oc apply -f 10-hello-openshift-route.yaml
 ```
-
 4. Verify Connectivity from External RHEL Host:
 
 ```bash
@@ -429,3 +425,4 @@ arping -I eth1.10 192.168.10.100
 # 2. Test Connection (L4/L7)
 curl -v -k --resolve hello.vlan10.apps.redhat.local:443:192.168.10.100 https://hello.vlan10.apps.redhat.local
 ```
+- Repeat the same test for vlan20.
