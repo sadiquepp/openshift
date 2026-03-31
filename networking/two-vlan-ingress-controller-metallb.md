@@ -303,16 +303,79 @@ Deploy Sample App & Create Route:
 1. Create a test project and app
 ```bash
 oc new-project vlan10
-oc new-app --docker-image=openshift/hello-openshift
 ```
 
-2. Create route and label it for the VLAN 10 shard
+2. Create test hello-openshift application.
+```yaml
+cat <<EOF > 09-hello-openshift.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: hello-openshift
+  namespace: vlan10
+  labels:
+    app: hello-openshift
+spec:
+  containers:
+    - name: hello-openshift
+      image: quay.io/openshift/origin-hello-openshift
+      ports:
+        - containerPort: 8888
+      securityContext:
+        privileged: false
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        runAsUser: 1001
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: RuntimeDefault
+---
+kind: Service
+apiVersion: v1
+metadata:
+  name: hello-openshift-service
+  namespace: vlan10
+  labels:
+    app: hello-openshift
+spec:
+  selector:
+    app: hello-openshift
+  ports:
+    - port: 8888
+EOF
+```
+- Apply it
 ```bash
-oc create route edge hello-vlan10 --service=hello-openshift --hostname=hello.vlan10.apps.redhat.local
-oc label route hello-vlan10 network=vlan-10
+oc apply -f 09-hello-openshift.yaml
 ```
 
-3. Verify Connectivity from External RHEL Host:
+3. Create route and label it for the VLAN 10 shard
+```yaml
+cat <<EOF > 10-hello-openshift-route.yaml
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: hello-openshift
+  namespace: vlan10
+  labels:
+    network: vlan-10
+spec:
+  host: hello-openshift.vlan10.apps.redhat.local
+  to:
+    kind: Service
+    name: hello-openshift-service
+  tls:
+    termination: edge
+EOF
+```
+- Apply it
+```bash
+oc apply -f 10-hello-openshift-route.yaml
+```
+
+4. Verify Connectivity from External RHEL Host:
 
 ```bash
 # 1. Test ARP (L2)
