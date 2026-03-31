@@ -3,8 +3,14 @@
 This repository contains the complete configuration for a high-availability, dual-VLAN ingress architecture on bare-metal OpenShift. It utilizes **MetalLB** for LoadBalancer VIPs and **NMState** for host-level networking and kernel tuning.
 
 ---
+## 1. Label your Ingress Nodes
 
-## 1. Install and Initialize Operators
+```bash
+oc label node worker1 node-role.kubernetes.io/ingress=""
+oc label node worker2 node-role.kubernetes.io/ingress=""
+```
+
+## 2. Install and Initialize Operators
 Install the **NMState** and **MetalLB** Operators from the OpenShift OperatorHub. Once installed, apply this manifest to initialize the required background daemons:
 
 ```yaml
@@ -21,7 +27,12 @@ metadata:
   namespace: metallb-system
 EOF
 ```
-## 2. Node Network Configuration (NMState)
+- Apply it
+```bash
+oc apply -f 01-init.yaml
+```
+
+## 3. Node Network Configuration (NMState)
 Configure physical VLAN interfaces on the worker nodes. Note: `forwarding: true` is required to allow the Linux kernel to pass traffic from the secondary VLAN interface into the OpenShift SDN.
 
 - Worker 1 Policy
@@ -64,7 +75,10 @@ spec:
               prefix-length: 24
 EOF
 ```
-
+- Apply it
+```bash
+oc apply -f 02-nncp-worker1.yaml
+```
 - Worker 2 Policy
 ```yaml
 cat <<EOF > 03-nncp-worker2.yaml
@@ -105,8 +119,11 @@ spec:
               prefix-length: 24
 EOF
 ```
-
-## 3. MetalLB LoadBalancer Configuration
+- Apply it
+```bash
+oc apply -f 03-nncp-worker2.yaml
+```
+## 4. MetalLB LoadBalancer Configuration
 Define the virtual IP pools and L2 advertisements. The nodeSelectors ensure MetalLB only announces VIPs from nodes physically connected to the VLAN trunk.
 
 - For VLAN 10
@@ -137,7 +154,10 @@ spec:
         node-role.kubernetes.io/ingress: ""
 EOF
 ```
-
+- Apply it
+```bash
+oc apply -f 04-metallb-config.yaml
+```
 - For VLAN 20
 
 ```yaml
@@ -166,8 +186,11 @@ spec:
         node-role.kubernetes.io/ingress: ""
 EOF
 ```
-
-## 4. Ingress Controller Sharding
+- Apply it
+```bash
+oc apply -f 05-metallb-config.yaml
+```
+## 5. Ingress Controller Sharding
 Deploy custom Ingress Controllers. We use podAntiAffinity to ensure one router pod exists on every ingress node to prevent traffic hangs under the Local traffic policy.
 
 - VLAN 10 Ingress Controller.
@@ -192,7 +215,10 @@ spec:
       network: vlan-10
 EOF
 ```
-
+- Apply it
+```bash
+oc apply -f 06-ingress-vlan10.yaml
+```
 - VLAN 20 Ingress Controller.
 ```yaml
 cat <<EOF > 07-ingress-vlan20.yaml
@@ -215,8 +241,11 @@ spec:
       network: vlan-20
 EOF
 ```
-
-## 5. Post-Deployment Fixes (The "Trinity")
+- Apply it
+```bash
+oc apply -f 07-ingress-vlan20.yaml
+```
+## 6. Post-Deployment Fixes (The "Trinity")
 The following manual steps are required to stabilize the routing path and prevent the Operator from reverting critical changes.
 
 1. Shard Default Controller
@@ -249,7 +278,7 @@ Allow asymmetric routing. Run on all ingress nodes via oc debug node:
 sysctl -w net.ipv4.conf.all.rp_filter=2
 ```
 
-## 6. Testing Commands
+## 7. Testing Commands
 Deploy Sample App & Create Route:
 
 1. Create a test project and app
