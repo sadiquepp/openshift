@@ -424,7 +424,7 @@ oc apply -f 10-hello-openshift-route.yaml
 arping -I eth1.10 192.168.10.100
 
 # 2. Test Connection (L4/L7)
-curl -v -k --resolve hello.vlan10.apps.redhat.local:443:192.168.10.100 https://hello.vlan10.apps.redhat.local
+curl -v -k --resolve hello-openshift.vlan10.apps.redhat.local:443:192.168.10.100 https://hello-openshift.vlan10.apps.redhat.local
 ```
 ### Vlan 20
 Deploy Sample App & Create Route:
@@ -510,5 +510,5 @@ oc apply -f 12-hello-openshift-route.yaml
 arping -I eth1.20 192.168.20.100
 
 # 2. Test Connection (L4/L7)
-curl -v -k --resolve hello.vlan20.apps.redhat.local:443:192.168.20.100 https://hello.vlan20.apps.redhat.local
+curl -v -k --resolve hello-openshift.vlan20.apps.redhat.local:443:192.168.20.100 https://hello-openshift.vlan20.apps.redhat.local
 ```
