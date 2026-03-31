@@ -217,7 +217,7 @@ EOF
 oc apply -f 06-metallb-config.yaml
 ```
 ## 6. Ingress Controller Sharding
-Deploy custom Ingress Controllers. We use podAntiAffinity to ensure one router pod exists on every ingress node to prevent traffic hangs under the Local traffic policy.
+Deploy custom Ingress Controllers.
 
 - VLAN 10 Ingress Controller.
 ```yaml
@@ -236,7 +236,7 @@ spec:
     nodeSelector:
       matchLabels: 
         node-role.kubernetes.io/ingress: ""
-  routeSelector:
+  namespaceSelector:
     matchLabels: 
       network: vlan-10
 EOF
@@ -293,7 +293,7 @@ spec:
     nodeSelector:
       matchLabels: 
         node-role.kubernetes.io/ingress: ""
-  routeSelector:
+  namespaceSelector:
     matchLabels: 
       network: vlan-20
 EOF
@@ -337,15 +337,16 @@ oc apply -f 09-ingress-vlan20-service.yaml
 Prevent the default ingress controller from intercepting VLAN routes:
 
 ```bash
-oc patch ingresscontroller default -n openshift-ingress-operator --type=merge -p '{"spec":{"routeSelector":{"matchExpressions":[{"key":"network","operator":"NotIn","values":["vlan-10","vlan-20"]}]}}}'
+oc patch ingresscontroller default -n openshift-ingress-operator --type=merge -p '{"spec":{"namespaceSelector":{"matchExpressions":[{"key":"network","operator":"NotIn","values":["vlan-10","vlan-20"]}]}}}'
 ```
 ## 8. Testing 
 ###  Vlan 10
 Deploy Sample App & Create Route:
 
-1. Create a test project and app
+1. Create a test project and label it.
 ```bash
 oc new-project vlan10
+oc label namespace vlan10 network=vlan-10
 ```
 
 2. Create test hello-openshift application.
@@ -402,8 +403,6 @@ kind: Route
 metadata:
   name: hello-openshift
   namespace: vlan10
-  labels:
-    network: vlan-10
 spec:
   host: hello-openshift.vlan10.apps.redhat.local
   to:
@@ -429,9 +428,10 @@ curl -v -k --resolve hello-openshift.vlan10.apps.redhat.local:443:192.168.10.100
 ### Vlan 20
 Deploy Sample App & Create Route:
 
-1. Create a test project and app
+1. Create a test project and label it.
 ```bash
 oc new-project vlan20
+oc label namespace vlan20 network=vlan-20
 ```
 
 2. Create test hello-openshift application.
@@ -488,8 +488,6 @@ kind: Route
 metadata:
   name: hello-openshift
   namespace: vlan20
-  labels:
-    network: vlan-20
 spec:
   host: hello-openshift.vlan20.apps.redhat.local
   to:
