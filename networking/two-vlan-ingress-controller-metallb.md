@@ -162,7 +162,7 @@ metadata:
   name: vlan-10-pool
   namespace: metallb-system
 spec:
-  addresses: ["192.168.10.100-192.168.10.100"]
+  addresses: ["192.168.10.100-192.168.10.105"]
   autoAssign: true
 ---
 apiVersion: metallb.io/v1beta1
@@ -194,7 +194,7 @@ metadata:
   name: vlan-20-pool
   namespace: metallb-system
 spec:
-  addresses: ["192.168.20.100-192.168.20.100"]
+  addresses: ["192.168.20.100-192.168.20.105"]
   autoAssign: true
 ---
 apiVersion: metallb.io/v1beta1
@@ -231,7 +231,7 @@ spec:
   domain: vlan10.apps.redhat.local
   replicas: 2
   endpointPublishingStrategy:
-    type: LoadBalancerService
+    type: Private
   nodePlacement:
     nodeSelector:
       matchLabels: 
@@ -245,6 +245,37 @@ EOF
 ```bash
 oc apply -f 07-ingress-vlan10.yaml
 ```
+- Create service manually.
+```yaml
+cat <<EOF > 08-ingress-vlan10-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: manual-vlan-10-ingress
+  namespace: openshift-ingress
+  annotations:
+    metallb.universe.tf/address-pool: vlan-10-pool
+    metallb.universe.tf/loadBalancerIPs: 192.168.10.100
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Cluster
+  selector:
+    ingresscontroller.operator.openshift.io/deployment-ingresscontroller: ingress-vlan-10
+  ports:
+  - name: http
+    protocol: TCP
+    port: 80
+    targetPort: 80
+  - name: https
+    protocol: TCP
+    port: 443
+    targetPort: 443
+EOF
+```
+- Apply it
+```bash
+oc apply -f 08-ingress-vlan10-service.yaml
+```
 - VLAN 20 Ingress Controller.
 ```yaml
 cat <<EOF > 08-ingress-vlan20.yaml
@@ -257,7 +288,7 @@ spec:
   domain: vlan20.apps.redhat.local
   replicas: 2
   endpointPublishingStrategy:
-    type: LoadBalancerService
+    type: Private
   nodePlacement:
     nodeSelector:
       matchLabels: 
@@ -271,6 +302,37 @@ EOF
 ```bash
 oc apply -f 08-ingress-vlan20.yaml
 ```
+- Create service manually.
+```yaml
+cat <<EOF > 09-ingress-vlan20-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: manual-vlan-20-ingress
+  namespace: openshift-ingress
+  annotations:
+    metallb.universe.tf/address-pool: vlan-20-pool
+    metallb.universe.tf/loadBalancerIPs: 192.168.20.100
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Cluster
+  selector:
+    ingresscontroller.operator.openshift.io/deployment-ingresscontroller: ingress-vlan-20
+  ports:
+  - name: http
+    protocol: TCP
+    port: 80
+    targetPort: 80
+  - name: https
+    protocol: TCP
+    port: 443
+    targetPort: 443
+EOF
+```
+- Apply it
+```bash
+oc apply -f 09-ingress-vlan20-service.yaml
+```
 ## 7. Post-Deployment Fixes (The "Trinity")
 The following manual steps are required to stabilize the routing path and prevent the Operator from reverting critical changes.
 
@@ -280,23 +342,6 @@ Prevent the default ingress controller from intercepting VLAN routes:
 ```bash
 oc patch ingresscontroller default -n openshift-ingress-operator --type=merge -p '{"spec":{"routeSelector":{"matchExpressions":[{"key":"network","operator":"NotIn","values":["vlan-10","vlan-20"]}]}}}'
 ```
-
-2. Lock Management State
-Set VLAN controllers to Unmanaged to preserve externalTrafficPolicy settings:
-
-```bash
-oc patch ingresscontroller ingress-vlan-10 -n openshift-ingress-operator --type=merge -p '{"spec":{"managementState":"Unmanaged"}}'
-oc patch ingresscontroller ingress-vlan-20 -n openshift-ingress-operator --type=merge -p '{"spec":{"managementState":"Unmanaged"}}'
-```
-
-3. Force Cluster Traffic Policy
-Update the generated Services to ensure the TCP handshake succeeds across nodes:
-
-```bash
-oc patch svc router-ingress-vlan-10 -n openshift-ingress -p '{"spec":{"externalTrafficPolicy":"Cluster"}}'
-oc patch svc router-ingress-vlan-20 -n openshift-ingress -p '{"spec":{"externalTrafficPolicy":"Cluster"}}'
-```
-
 ## 8. Testing Commands
 Deploy Sample App & Create Route:
 
