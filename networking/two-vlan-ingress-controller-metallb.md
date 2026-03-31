@@ -143,7 +143,7 @@ spec:
       nodeSelector:
         node-role.kubernetes.io/ingress: ""
 EOF
-
+```
 - Apply it
 ```bash
 oc apply -f 04-tuned.yaml
