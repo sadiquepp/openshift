@@ -4,11 +4,11 @@ This repository contains the complete configuration for a high-availability, dua
 
 ---
 
-## 1. Initialize Operators
+## 1. Install and Initialize Operators
 Install the **NMState** and **MetalLB** Operators from the OpenShift OperatorHub. Once installed, apply this manifest to initialize the required background daemons:
 
 ```yaml
-# 01-init.yaml
+cat <<EOF | oc apply -f -
 apiVersion: nmstate.io/v1
 kind: NMState
 metadata:
@@ -19,6 +19,7 @@ kind: MetalLB
 metadata:
   name: metallb
   namespace: metallb-system
+EOF
 ```
 ## 2. Node Network Configuration (NMState)
 Configure physical VLAN interfaces on the worker nodes. Note: `forwarding: true` is required to allow the Linux kernel to pass traffic from the secondary VLAN interface into the OpenShift SDN.
