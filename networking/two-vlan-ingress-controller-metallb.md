@@ -119,7 +119,7 @@ EOF
 ```bash
 oc apply -f 03-nncp-worker2.yaml
 ```
-## 4. Apply Tuned Profile to enable ip_forarding, rp_Filter    
+## 4. Apply Tuned Profile to enable ip_forwarding, rp_Filter    
 
 ```yaml
 cat <<EOF > 04-tuned.yaml
