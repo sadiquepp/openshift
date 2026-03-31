@@ -155,7 +155,7 @@ Define the virtual IP pools and L2 advertisements. The nodeSelectors ensure Meta
 - For VLAN 10
 
 ```yaml
-cat <<EOF > 04-metallb-config.yaml
+cat <<EOF > 05-metallb-config.yaml
 apiVersion: metallb.io/v1beta1
 kind: IPAddressPool
 metadata:
@@ -221,7 +221,7 @@ Deploy custom Ingress Controllers. We use podAntiAffinity to ensure one router p
 
 - VLAN 10 Ingress Controller.
 ```yaml
-cat <<EOF > 06-ingress-vlan10.yaml
+cat <<EOF > 07-ingress-vlan10.yaml
 apiVersion: operator.openshift.io/v1
 kind: IngressController
 metadata:
@@ -339,7 +339,8 @@ Prevent the default ingress controller from intercepting VLAN routes:
 ```bash
 oc patch ingresscontroller default -n openshift-ingress-operator --type=merge -p '{"spec":{"routeSelector":{"matchExpressions":[{"key":"network","operator":"NotIn","values":["vlan-10","vlan-20"]}]}}}'
 ```
-## 8. Testing
+## 8. Testing 
+###  Vlan 10
 Deploy Sample App & Create Route:
 
 1. Create a test project and app
@@ -425,4 +426,89 @@ arping -I eth1.10 192.168.10.100
 # 2. Test Connection (L4/L7)
 curl -v -k --resolve hello.vlan10.apps.redhat.local:443:192.168.10.100 https://hello.vlan10.apps.redhat.local
 ```
-- Repeat the same test for vlan20.
+### Vlan 20
+Deploy Sample App & Create Route:
+
+1. Create a test project and app
+```bash
+oc new-project vlan20
+```
+
+2. Create test hello-openshift application.
+```yaml
+cat <<EOF > 11-hello-openshift.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: hello-openshift
+  namespace: vlan20
+  labels:
+    app: hello-openshift
+spec:
+  containers:
+    - name: hello-openshift
+      image: quay.io/openshift/origin-hello-openshift
+      ports:
+        - containerPort: 8888
+      securityContext:
+        privileged: false
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        runAsUser: 1001
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: RuntimeDefault
+---
+kind: Service
+apiVersion: v1
+metadata:
+  name: hello-openshift-service
+  namespace: vlan20
+  labels:
+    app: hello-openshift
+spec:
+  selector:
+    app: hello-openshift
+  ports:
+    - port: 8888
+EOF
+```
+- Apply it
+```bash
+oc apply -f 11-hello-openshift.yaml
+```
+
+3. Create route and label it for the VLAN 10 shard
+```yaml
+cat <<EOF > 12-hello-openshift-route.yaml
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: hello-openshift
+  namespace: vlan20
+  labels:
+    network: vlan-20
+spec:
+  host: hello-openshift.vlan20.apps.redhat.local
+  to:
+    kind: Service
+    name: hello-openshift-service
+  tls:
+    termination: edge
+EOF
+```
+- Apply it
+```bash
+oc apply -f 12-hello-openshift-route.yaml
+```
+4. Verify Connectivity from External RHEL Host:
+
+```bash
+# 1. Test ARP (L2)
+arping -I eth1.20 192.168.20.100
+
+# 2. Test Connection (L4/L7)
+curl -v -k --resolve hello.vlan20.apps.redhat.local:443:192.168.20.100 https://hello.vlan20.apps.redhat.local
+```
