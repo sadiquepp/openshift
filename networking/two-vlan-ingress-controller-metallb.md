@@ -26,7 +26,6 @@ Configure physical VLAN interfaces on the worker nodes. Note: `forwarding: true`
 
 - Worker 1 Policy
 ```yaml
-# 02-nncp-worker1.yaml
 apiVersion: nmstate.io/v1
 kind: NodeNetworkConfigurationPolicy
 metadata:
@@ -66,7 +65,6 @@ spec:
 
 - Worker 2 Policy
 ```yaml
-# 02-nncp-worker2.yaml
 apiVersion: nmstate.io/v1
 kind: NodeNetworkConfigurationPolicy
 metadata:
