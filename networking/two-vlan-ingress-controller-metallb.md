@@ -33,7 +33,7 @@ oc apply -f 01-init.yaml
 ```
 
 ## 3. Node Network Configuration (NMState)
-Configure physical VLAN interfaces on the worker nodes. Note: `forwarding: true` is required to allow the Linux kernel to pass traffic from the secondary VLAN interface into the OpenShift SDN.
+Configure physical VLAN interfaces on the worker nodes.
 
 - Worker 1 Policy
 ```yaml
@@ -56,7 +56,6 @@ spec:
         ipv4:
           enabled: true
           dhcp: false
-          forwarding: true
           address: 
             - ip: 192.168.10.11
               prefix-length: 24
@@ -69,7 +68,6 @@ spec:
         ipv4:
           enabled: true
           dhcp: false
-          forwarding: true
           address: 
             - ip: 192.168.20.11
               prefix-length: 24
@@ -100,7 +98,6 @@ spec:
         ipv4:
           enabled: true
           dhcp: false
-          forwarding: true
           address: 
             - ip: 192.168.10.12
               prefix-length: 24
@@ -113,7 +110,6 @@ spec:
         ipv4:
           enabled: true
           dhcp: false
-          forwarding: true
           address: 
             - ip: 192.168.20.12
               prefix-length: 24
@@ -123,7 +119,37 @@ EOF
 ```bash
 oc apply -f 03-nncp-worker2.yaml
 ```
-## 4. MetalLB LoadBalancer Configuration
+## 4. Apply Tuned Profile to enable ip_forarding, rp_Filter    
+
+```yaml
+cat <<EOF > 04-tuned.yaml
+apiVersion: tuned.openshift.io/v1
+kind: Tuned
+metadata:
+  name: ingress-kernel-tuning
+  namespace: openshift-cluster-node-tuning-operator
+spec:
+  profile:
+  - name: ingress-forwarding
+    data: |
+      [sysctl]
+      net.ipv4.ip_forward=1
+      net.ipv4.conf.all.forwarding=1
+      net.ipv4.conf.all.rp_filter=2
+  recommend:
+  - priority: 20
+    profile: ingress-forwarding
+    operand:
+      nodeSelector:
+        node-role.kubernetes.io/ingress: ""
+EOF
+
+- Apply it
+```bash
+oc apply -f 04-tuned.yaml
+```
+
+## 5. MetalLB LoadBalancer Configuration
 Define the virtual IP pools and L2 advertisements. The nodeSelectors ensure MetalLB only announces VIPs from nodes physically connected to the VLAN trunk.
 
 - For VLAN 10
@@ -156,12 +182,12 @@ EOF
 ```
 - Apply it
 ```bash
-oc apply -f 04-metallb-config.yaml
+oc apply -f 05-metallb-config.yaml
 ```
 - For VLAN 20
 
 ```yaml
-cat <<EOF > 05-metallb-config.yaml
+cat <<EOF > 06-metallb-config.yaml
 apiVersion: metallb.io/v1beta1
 kind: IPAddressPool
 metadata:
@@ -188,9 +214,9 @@ EOF
 ```
 - Apply it
 ```bash
-oc apply -f 05-metallb-config.yaml
+oc apply -f 06-metallb-config.yaml
 ```
-## 5. Ingress Controller Sharding
+## 6. Ingress Controller Sharding
 Deploy custom Ingress Controllers. We use podAntiAffinity to ensure one router pod exists on every ingress node to prevent traffic hangs under the Local traffic policy.
 
 - VLAN 10 Ingress Controller.
@@ -217,11 +243,11 @@ EOF
 ```
 - Apply it
 ```bash
-oc apply -f 06-ingress-vlan10.yaml
+oc apply -f 07-ingress-vlan10.yaml
 ```
 - VLAN 20 Ingress Controller.
 ```yaml
-cat <<EOF > 07-ingress-vlan20.yaml
+cat <<EOF > 08-ingress-vlan20.yaml
 apiVersion: operator.openshift.io/v1
 kind: IngressController
 metadata:
@@ -243,9 +269,9 @@ EOF
 ```
 - Apply it
 ```bash
-oc apply -f 07-ingress-vlan20.yaml
+oc apply -f 08-ingress-vlan20.yaml
 ```
-## 6. Post-Deployment Fixes (The "Trinity")
+## 7. Post-Deployment Fixes (The "Trinity")
 The following manual steps are required to stabilize the routing path and prevent the Operator from reverting critical changes.
 
 1. Shard Default Controller
@@ -271,19 +297,12 @@ oc patch svc router-ingress-vlan-10 -n openshift-ingress -p '{"spec":{"externalT
 oc patch svc router-ingress-vlan-20 -n openshift-ingress -p '{"spec":{"externalTrafficPolicy":"Cluster"}}'
 ```
 
-4. Enable Loose Reverse Path Filtering
-Allow asymmetric routing. Run on all ingress nodes via oc debug node:
-
-```bash
-sysctl -w net.ipv4.conf.all.rp_filter=2
-```
-
-## 7. Testing Commands
+## 8. Testing Commands
 Deploy Sample App & Create Route:
 
 1. Create a test project and app
 ```bash
-oc new-project antigravity-test
+oc new-project vlan10
 oc new-app --docker-image=openshift/hello-openshift
 ```
 
