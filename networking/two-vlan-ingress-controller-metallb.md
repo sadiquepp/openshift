@@ -37,7 +37,7 @@ oc apply -f 01-init.yaml
 ## 3. Node Network Configuration (NMState)
 Configure physical VLAN interfaces on the worker nodes.
 
-- Worker 1 Policy
+- Worker 1 Policy. Make changes based on your environment for base interface name, ip addresses and vlan ids.
 ```yaml
 cat <<EOF > 02-nncp-worker1.yaml
 apiVersion: nmstate.io/v1
@@ -79,7 +79,7 @@ EOF
 ```bash
 oc apply -f 02-nncp-worker1.yaml
 ```
-- Worker 2 Policy
+- Worker 2 Policy. Make changes based on your environment for base interface name, ip addresses and vlan ids.
 ```yaml
 cat <<EOF > 03-nncp-worker2.yaml
 apiVersion: nmstate.io/v1
