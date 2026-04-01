@@ -337,7 +337,7 @@ oc apply -f 09-ingress-vlan20-service.yaml
 Prevent the default ingress controller from intercepting VLAN routes:
 
 ```bash
-oc patch ingresscontroller default -n openshift-ingress-operator --type=merge -p '{"spec":{"namespaceSelector":{"matchExpressions":[{"key":"network","operator":"NotIn","values":["vlan-10","vlan-20"]}]}}}'
+oc patch ingresscontroller default -n openshift-ingress-operator --type=merge -p '{"spec":{"namespaceSelector":{"matchExpressions":[{"key":"network","operator":"DoesNotExist"}]}}}'
 ```
 ## 8. Testing 
 ###  Vlan 10
