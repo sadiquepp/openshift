@@ -29,7 +29,7 @@ metadata:
   namespace: metallb-system
 EOF
 ```
-- Apply it
+- Apply it.
 ```bash
 oc apply -f 01-init.yaml
 ```
@@ -75,7 +75,7 @@ spec:
               prefix-length: 24
 EOF
 ```
-- Apply it
+- Apply it.
 ```bash
 oc apply -f 02-nncp-worker1.yaml
 ```
@@ -117,7 +117,7 @@ spec:
               prefix-length: 24
 EOF
 ```
-- Apply it
+- Apply it.
 ```bash
 oc apply -f 03-nncp-worker2.yaml
 ```
@@ -146,7 +146,7 @@ spec:
         node-role.kubernetes.io/ingress: ""
 EOF
 ```
-- Apply it
+- Apply it.
 ```bash
 oc apply -f 04-tuned.yaml
 ```
@@ -182,7 +182,7 @@ spec:
         node-role.kubernetes.io/ingress: ""
 EOF
 ```
-- Apply it
+- Apply it.
 ```bash
 oc apply -f 05-metallb-config.yaml
 ```
@@ -214,7 +214,7 @@ spec:
         node-role.kubernetes.io/ingress: ""
 EOF
 ```
-- Apply it
+- Apply it.
 ```bash
 oc apply -f 06-metallb-config.yaml
 ```
@@ -243,7 +243,7 @@ spec:
       network: vlan-10
 EOF
 ```
-- Apply it
+- Apply it.
 ```bash
 oc apply -f 07-ingress-vlan10.yaml
 ```
