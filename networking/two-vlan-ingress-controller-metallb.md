@@ -333,7 +333,7 @@ EOF
 ```bash
 oc apply -f 09-ingress-vlan20-service.yaml
 ```
-## 7. Prevent routes on default IngressController
+## 7. Prevent VLAN routes on default IngressController
 Prevent the default ingress controller from intercepting VLAN routes:
 
 ```bash
