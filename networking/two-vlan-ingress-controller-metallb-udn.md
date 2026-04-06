@@ -403,7 +403,7 @@ spec:
                 kubernetes.io/metadata.name: openshift-ingress
             podSelector:
               matchLabels:
-                ingresscontroller.operator.openshift.io/owning-ingresscontroller: ingress-vlan-10
+                ingresscontroller.operator.openshift.io/deployment-ingresscontroller: ingress-vlan-10
 ```
 - Apply it
 ```bash
@@ -546,7 +546,7 @@ spec:
                 kubernetes.io/metadata.name: openshift-ingress
             podSelector:
               matchLabels:
-                ingresscontroller.operator.openshift.io/owning-ingresscontroller: ingress-vlan-20
+                ingresscontroller.operator.openshift.io/deployment-ingresscontroller: ingress-vlan-20
 ```
 - Apply it
 ```bash
