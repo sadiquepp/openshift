@@ -637,7 +637,7 @@ Testing shows this is not working as expected. The goal was to have two separate
 - Even through the pod has UDN primary network, it's still connected to normal openshift pod network.
 ```bash
 # oc rsh hello-openshift
-sh-4.4$ ip a
+# ip a
 1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1000
     link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
     inet 127.0.0.1/8 scope host lo
@@ -671,13 +671,13 @@ default via 192.168.10.1 dev ovn-udn1
 - When Ingress Controller was configured, it did not use the UDN IP to forward to the pod. Instead it used the normal openshift pod network IP.
 
 ```bash
-oc project openshift-ingress
-oc rsh router-ingress-vlan-10-55985cf77c-k8z76
-cat /var/lib/haproxy/conf/os_edge_reencrypt_be.map 
+# oc project openshift-ingress
+# oc rsh router-ingress-vlan-10-55985cf77c-k8z76
+# cat /var/lib/haproxy/conf/os_edge_reencrypt_be.map 
 
 ^hello-openshiftudn\.vlan10\.apps\.redhat\.local\.?(:[0-9]+)?(/.*)?$ be_edge_http:vlan10udn:hello-openshift
 
-cat /var/lib/haproxy/conf/haproxy.config
+# cat /var/lib/haproxy/conf/haproxy.config
 
 backend be_edge_http:vlan10udn:hello-openshift
   mode http
