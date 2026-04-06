@@ -1,9 +1,9 @@
 # OpenShift Dual-VLAN Ingress with MetalLB
 
-This repository contains the complete configuration for a high-availability, dual-VLAN ingress architecture on bare-metal OpenShift. It utilizes **MetalLB** for LoadBalancer VIPs and **NMState** for host-level networking and kernel tuning. The goal is to facilitate traffic from two different VLANs to be served by two different Ingress Controllers. The traffic comes from one vlan segment originates from Internet and another vlan segment originates from internal network and they target different set of workloads within openshift.
+This repository contains the complete configuration for a high-availability, dual-VLAN ingress architecture on bare-metal OpenShift. It utilizes **MetalLB** for LoadBalancer VIPs and **NMState** for host-level networking and kernel tuning. The goal is to facilitate traffic from two different VLANs to be served by two different Ingress Controllers. The traffic comes from one vlan segment originates from Internet and another vlan segment originates from internal network and they target different set of workloads within openshift that run on different primary UDNs.
 
 Find below the network diagram to visualize it.
-![Network Diagram](images/openshift-dual-ingress-metallb.jpg)
+![Network Diagram](images/openshift-dual-ingress-metallb-udn.jpg)
 
 ## 1. Label your Ingress Nodes
 
@@ -631,7 +631,7 @@ arping -I eth1.20 192.168.20.100
 # 2. Test Connection (L4/L7)
 curl -v -k --resolve hello-openshift.vlan20.apps.redhat.local:443:192.168.20.100 https://hello-openshift.vlan20.apps.redhat.local
 ```
-## 9. Test Results and Conclusion
+## 9. Test Results
 Testing shows this is not working as expected. The goal was to have two separate ingress controllers for two different VLANs and serve traffic from two different VLANs to two different namespaces where pods in each namespaces is connected to two different UDNs.
 
 - Even through the pod has UDN primary network, it's still connected to normal openshift pod network.
@@ -696,3 +696,7 @@ backend be_edge_http:vlan10udn:hello-openshift
   server pod:hello-openshift:hello-openshift-service::10.131.0.45:8888 10.131.0.45:8888 cookie 85d77b1b01181b511a06f8afb8cd7e1d weight 1
 ```
 - This means the router pods still uses the pod primary network IP to forward traffic to. Not UDN IP.
+
+## 10. Conclusion
+If your security mandate dictates that Ingress traffic must flow to the UDN 192.168.10.x IP and completely bypass the OpenShift default network, you cannot use the native OpenShift IngressController or Route API. Native routes are fundamentally hardwired to use the eth0 cluster IP.
+
