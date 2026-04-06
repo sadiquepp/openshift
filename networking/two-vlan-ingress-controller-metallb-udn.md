@@ -354,6 +354,7 @@ metadata:
   name: vlan10udn
   labels:
     k8s.ovn.org/primary-user-defined-network: ""
+    network: vlan-10
 EOF
 ```
 - Apply it
@@ -498,6 +499,7 @@ metadata:
   name: vlan20udn
   labels:
     k8s.ovn.org/primary-user-defined-network: ""
+    network: vlan-20
 EOF
 ```
 - Apply it
@@ -629,3 +631,68 @@ arping -I eth1.20 192.168.20.100
 # 2. Test Connection (L4/L7)
 curl -v -k --resolve hello-openshift.vlan20.apps.redhat.local:443:192.168.20.100 https://hello-openshift.vlan20.apps.redhat.local
 ```
+## 9. Test Results and Conclusion
+Testing shows this is not working as expected. The goal was to have two separate ingress controllers for two different VLANs and serve traffic from two different VLANs to two different namespaces where pods in each namespaces is connected to two different UDNs.
+
+- Even through the pod has UDN primary network, it's still connected to normal openshift pod network.
+```bash
+# oc rsh hello-openshift
+sh-4.4$ ip a
+1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1000
+    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+    inet 127.0.0.1/8 scope host lo
+       valid_lft forever preferred_lft forever
+    inet6 ::1/128 scope host 
+       valid_lft forever preferred_lft forever
+2: eth0@if66: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1400 qdisc noqueue state UP group default 
+    link/ether 0a:58:0a:83:00:2d brd ff:ff:ff:ff:ff:ff link-netnsid 0
+    inet 10.131.0.45/23 brd 10.131.1.255 scope global eth0
+       valid_lft forever preferred_lft forever
+    inet6 fe80::858:aff:fe83:2d/64 scope link 
+       valid_lft forever preferred_lft forever
+3: ovn-udn1@if67: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1400 qdisc noqueue state UP group default 
+    link/ether 0a:58:c0:a8:0a:04 brd ff:ff:ff:ff:ff:ff link-netnsid 0
+    inet 192.168.10.4/24 brd 192.168.10.255 scope global ovn-udn1
+       valid_lft forever preferred_lft forever
+    inet6 fe80::858:c0ff:fea8:a04/64 scope link 
+       valid_lft forever preferred_lft forever
+```
+- This is expected. The goal of UDN is only east-west traffic. So the default route will be UDN network.
+```bash
+# ip r
+default via 192.168.10.1 dev ovn-udn1 
+10.128.0.0/14 via 10.131.0.1 dev eth0 
+10.131.0.0/23 dev eth0 proto kernel scope link src 10.131.0.45 
+100.64.0.0/16 via 10.131.0.1 dev eth0 
+100.65.0.0/16 via 192.168.10.1 dev ovn-udn1 
+172.30.0.0/16 via 192.168.10.1 dev ovn-udn1 
+192.168.10.0/24 dev ovn-udn1 proto kernel scope link src 192.168.10.4 
+```
+- When Ingress Controller was configured, it did not use the UDN IP to forward to the pod. Instead it used the normal openshift pod network IP.
+
+```bash
+oc project openshift-ingress
+oc rsh router-ingress-vlan-10-55985cf77c-k8z76
+cat /var/lib/haproxy/conf/os_edge_reencrypt_be.map 
+
+^hello-openshiftudn\.vlan10\.apps\.redhat\.local\.?(:[0-9]+)?(/.*)?$ be_edge_http:vlan10udn:hello-openshift
+
+cat /var/lib/haproxy/conf/haproxy.config
+
+backend be_edge_http:vlan10udn:hello-openshift
+  mode http
+  option redispatch
+  option forwardfor
+  balance random
+
+  timeout check 5000ms
+  http-request add-header X-Forwarded-Host %[req.hdr(host)]
+  http-request add-header X-Forwarded-Port %[dst_port]
+  http-request add-header X-Forwarded-Proto http if !{ ssl_fc }
+  http-request add-header X-Forwarded-Proto https if { ssl_fc }
+  http-request add-header X-Forwarded-Proto-Version h2 if { ssl_fc_alpn -i h2 }
+  http-request add-header Forwarded for=%[src];host=%[req.hdr(host)];proto=%[req.hdr(X-Forwarded-Proto)]
+  cookie f0faccc626b5998fa4d16100e00fa863 insert indirect nocache httponly secure attr SameSite=None
+  server pod:hello-openshift:hello-openshift-service::10.131.0.45:8888 10.131.0.45:8888 cookie 85d77b1b01181b511a06f8afb8cd7e1d weight 1
+```
+- This means the router pods still uses the pod primary network IP to forward traffic to. Not UDN IP.
