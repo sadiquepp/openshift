@@ -404,6 +404,7 @@ spec:
             podSelector:
               matchLabels:
                 ingresscontroller.operator.openshift.io/deployment-ingresscontroller: ingress-vlan-10
+EOF
 ```
 - Apply it
 ```bash
@@ -452,12 +453,12 @@ EOF
 ```
 - Apply it
 ```bash
-oc apply -f 12-hello-openshift.yaml
+oc apply -f 13-hello-openshift.yaml
 ```
 
 3. Create route and label it for the VLAN 10 shard
 ```yaml
-cat <<EOF > 13-hello-openshift-route.yaml
+cat <<EOF > 14-hello-openshift-route.yaml
 apiVersion: route.openshift.io/v1
 kind: Route
 metadata:
@@ -474,7 +475,7 @@ EOF
 ```
 - Apply it
 ```bash
-oc apply -f 13-hello-openshift-route.yaml
+oc apply -f 14-hello-openshift-route.yaml
 ```
 4. Verify Connectivity from External RHEL Host:
 
