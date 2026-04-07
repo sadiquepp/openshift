@@ -562,7 +562,7 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: hello-openshift
-  namespace: vlan20
+  namespace: vlan20udn
   labels:
     app: hello-openshift
 spec:
@@ -586,7 +586,7 @@ kind: Service
 apiVersion: v1
 metadata:
   name: hello-openshift-service
-  namespace: vlan20
+  namespace: vlan20udn
   labels:
     app: hello-openshift
 spec:
@@ -608,7 +608,7 @@ apiVersion: route.openshift.io/v1
 kind: Route
 metadata:
   name: hello-openshift
-  namespace: vlan20
+  namespace: vlan20udn
 spec:
   host: hello-openshiftudn.vlan20.apps.redhat.local
   to:
@@ -629,7 +629,7 @@ oc apply -f 18-hello-openshift-route.yaml
 arping -I eth1.20 192.168.20.100
 
 # 2. Test Connection (L4/L7)
-curl -v -k --resolve hello-openshift.vlan20.apps.redhat.local:443:192.168.20.100 https://hello-openshift.vlan20.apps.redhat.local
+curl -v -k --resolve hello-openshiftudn.vlan20.apps.redhat.local:443:192.168.20.100 https://hello-openshiftudn.vlan20.apps.redhat.local
 ```
 ## 9. Test Results
 Testing shows this is not working as expected. The goal was to have two separate ingress controllers for two different VLANs and serve traffic from two different VLANs to two different namespaces where pods in each namespaces is connected to two different UDNs.
