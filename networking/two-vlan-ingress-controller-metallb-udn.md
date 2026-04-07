@@ -374,7 +374,7 @@ spec:
   layer2:
     role: Primary
     subnets:
-      - "192.168.10.0/24"
+      - "172.16.10.0/24"
 EOF
 ```
 - Apply it
@@ -519,7 +519,7 @@ spec:
   layer2:
     role: Primary
     subnets:
-      - "192.168.20.0/24"
+      - "172.16.20.0/24"
 EOF
 ```
 - Apply it
@@ -652,7 +652,7 @@ Testing shows this is not working as expected. The goal was to have two separate
        valid_lft forever preferred_lft forever
 3: ovn-udn1@if67: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1400 qdisc noqueue state UP group default 
     link/ether 0a:58:c0:a8:0a:04 brd ff:ff:ff:ff:ff:ff link-netnsid 0
-    inet 192.168.10.4/24 brd 192.168.10.255 scope global ovn-udn1
+    inet 172.16.10.4/24 brd 172.16.10.255 scope global ovn-udn1
        valid_lft forever preferred_lft forever
     inet6 fe80::858:c0ff:fea8:a04/64 scope link 
        valid_lft forever preferred_lft forever
@@ -660,12 +660,12 @@ Testing shows this is not working as expected. The goal was to have two separate
 - This is expected. The goal of UDN is only east-west traffic. So the default route will be UDN network.
 ```bash
 # ip r
-default via 192.168.10.1 dev ovn-udn1 
+default via 172.16.10.1 dev ovn-udn1 
 10.128.0.0/14 via 10.131.0.1 dev eth0 
 10.131.0.0/23 dev eth0 proto kernel scope link src 10.131.0.45 
 100.64.0.0/16 via 10.131.0.1 dev eth0 
-100.65.0.0/16 via 192.168.10.1 dev ovn-udn1 
-172.30.0.0/16 via 192.168.10.1 dev ovn-udn1 
+100.65.0.0/16 via 172.16.10.1 dev ovn-udn1 
+172.30.0.0/16 via 172.16.10.1 dev ovn-udn1 
 192.168.10.0/24 dev ovn-udn1 proto kernel scope link src 192.168.10.4 
 ```
 - When Ingress Controller was configured, it did not use the UDN IP to forward to the pod. Instead it used the normal openshift pod network IP.
@@ -698,5 +698,5 @@ backend be_edge_http:vlan10udn:hello-openshift
 - This means the router pods still uses the pod primary network IP to forward traffic to. Not UDN IP.
 
 ## 10. Conclusion
-If your security mandate dictates that Ingress traffic must flow to the UDN 192.168.10.x IP and completely bypass the OpenShift default network, you cannot use the native OpenShift IngressController or Route API. Native routes are fundamentally hardwired to use the eth0 cluster IP.
+If your security mandate dictates that Ingress traffic must flow to the UDN 172.16.10.x IP and completely bypass the OpenShift default network, you cannot use the native OpenShift IngressController or Route API. Native routes are fundamentally hardwired to use the eth0 cluster IP.
 
