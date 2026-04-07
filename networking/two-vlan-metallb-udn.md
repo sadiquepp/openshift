@@ -469,7 +469,7 @@ default via 172.16.20.1 dev ovn-udn1
 ```bash
 # oc get svc
 NAME                       TYPE           CLUSTER-IP      EXTERNAL-IP      PORT(S)        AGE
-hello-openshift-service1   LoadBalancer   172.30.165.57   192.168.20.101   80:32694/TCP   5h2m
+hello-openshift-service   LoadBalancer   172.30.165.57   192.168.20.101   80:32694/TCP   5h2m
 ```
 
 - Look at the endpoint slices for the service and verify that a slice is configured using the pod IP that belongs to UDN. OVN will use the UDN base sice to forward traffic that lands on MetalLB and finally to the pod, not the slice from the default network.
