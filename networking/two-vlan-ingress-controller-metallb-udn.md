@@ -666,7 +666,7 @@ default via 172.16.10.1 dev ovn-udn1
 100.64.0.0/16 via 10.131.0.1 dev eth0 
 100.65.0.0/16 via 172.16.10.1 dev ovn-udn1 
 172.30.0.0/16 via 172.16.10.1 dev ovn-udn1 
-192.168.10.0/24 dev ovn-udn1 proto kernel scope link src 192.168.10.4 
+172.16.10.0/24 dev ovn-udn1 proto kernel scope link src 172.16.10.4 
 ```
 - When Ingress Controller was configured, it did not use the UDN IP to forward to the pod. Instead it used the normal openshift pod network IP.
 
