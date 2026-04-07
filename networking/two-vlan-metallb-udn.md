@@ -449,7 +449,7 @@ curl -v -k --resolve hello-openshiftudn.vlan20.apps.redhat.local:443:192.168.20.
        valid_lft forever preferred_lft forever
 3: ovn-udn1@if67: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1400 qdisc noqueue state UP group default 
     link/ether 0a:58:c0:a8:0a:04 brd ff:ff:ff:ff:ff:ff link-netnsid 0
-    inet 172.16.20.4/24 brd 172.16.20.255 scope global ovn-udn1
+    inet 172.16.20.5/24 brd 172.16.20.255 scope global ovn-udn1
        valid_lft forever preferred_lft forever
     inet6 fe80::858:c0ff:fea8:a04/64 scope link 
        valid_lft forever preferred_lft forever
@@ -463,9 +463,16 @@ default via 172.16.20.1 dev ovn-udn1
 100.64.0.0/16 via 10.131.0.1 dev eth0 
 100.65.0.0/16 via 172.16.20.1 dev ovn-udn1 
 172.30.0.0/16 via 172.16.20.1 dev ovn-udn1 
-172.16.20.0/24 dev ovn-udn1 proto kernel scope link src 172.16.20.4 
+172.16.20.0/24 dev ovn-udn1 proto kernel scope link src 172.16.20.5 
 ```
-- Look at the endpoint slide for the service and verify that a slice is configured using the pod IP that belongs to UDN. OVN will use the UDN base sice to forward traffic that lands on MetalLB and finally to the pod, not the slice from the default network.
+- Check the service.
+```bash
+# oc get svc
+NAME                       TYPE           CLUSTER-IP      EXTERNAL-IP      PORT(S)        AGE
+hello-openshift-service1   LoadBalancer   172.30.165.57   192.168.20.101   80:32694/TCP   5h2m
+```
+
+- Look at the endpoint slices for the service and verify that a slice is configured using the pod IP that belongs to UDN. OVN will use the UDN base sice to forward traffic that lands on MetalLB and finally to the pod, not the slice from the default network.
 
 ```bash
 # oc get endpointslices -n vlan20udn
