@@ -272,11 +272,11 @@ oc apply -f 11-cudn-vlan10.yaml
 ```
 3. Create test hello-openshift application to first namespace.
 ```yaml
-cat <<EOF > 13-hello-openshift1.yaml
+cat <<EOF > 13-hello-openshift.yaml
 apiVersion: v1
 kind: Pod
 metadata:
-  name: hello-openshift1
+  name: hello-openshift
   namespace: vlan10cudn1
   labels:
     app: hello-openshift
@@ -329,7 +329,7 @@ oc apply -f 12-metallb-service.yaml
 ```
 5. Create test hello-openshift application to second namespace.
 ```yaml
-cat <<EOF > 14-hello-openshift2.yaml
+cat <<EOF > 14-hello-openshift.yaml
 apiVersion: v1
 kind: Pod
 metadata:
@@ -392,8 +392,8 @@ arping -I eth1.10 192.168.10.102
 arping -I eth1.10 192.168.10.103
 
 # 2. Test Connection (L4/L7)
-curl -v -k --resolve hello-openshiftcudn1.vlan10.apps.redhat.local:443:192.168.10.102 https://hello-openshiftcudn1.vlan10.apps.redhat.local
-curl -v -k --resolve hello-openshiftcudn2.vlan10.apps.redhat.local:443:192.168.10.103 https://hello-openshiftcudn2.vlan10.apps.redhat.local
+curl -v -k --resolve hello-openshiftcudn1.vlan10.apps.redhat.local:443:192.168.10.102 http://hello-openshiftcudn1.vlan10.apps.redhat.local
+curl -v -k --resolve hello-openshiftcudn2.vlan10.apps.redhat.local:443:192.168.10.103 http://hello-openshiftcudn2.vlan10.apps.redhat.local
 ```
 ### Vlan 20
 Deploy Sample App & Create Route:
@@ -567,8 +567,8 @@ arping -I eth1.20 192.168.20.104
 arping -I eth1.20 192.168.20.105
 
 # 2. Test Connection (L4/L7)
-curl -v -k --resolve hello-openshiftcudn3.vlan20.apps.redhat.local:443:192.168.20.104 https://hello-openshiftcudn3.vlan20.apps.redhat.local
-curl -v -k --resolve hello-openshiftcudn4.vlan20.apps.redhat.local:443:192.168.20.105 https://hello-openshiftcudn4.vlan20.apps.redhat.local
+curl -v -k --resolve hello-openshiftcudn3.vlan20.apps.redhat.local:443:192.168.20.104 http://hello-openshiftcudn3.vlan20.apps.redhat.local
+curl -v -k --resolve hello-openshiftcudn4.vlan20.apps.redhat.local:443:192.168.20.105 http://hello-openshiftcudn4.vlan20.apps.redhat.local
 ```
 ## 9. How to Validate it's using UDN
 - rsh to the pod and validate it has UDN Interface.
@@ -582,51 +582,45 @@ curl -v -k --resolve hello-openshiftcudn4.vlan20.apps.redhat.local:443:192.168.2
        valid_lft forever preferred_lft forever
     inet6 ::1/128 scope host 
        valid_lft forever preferred_lft forever
-2: eth0@if66: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1400 qdisc noqueue state UP group default 
-    link/ether 0a:58:0a:83:00:2d brd ff:ff:ff:ff:ff:ff link-netnsid 0
-    inet 10.131.0.46/23 brd 10.131.1.255 scope global eth0
+2: eth0@if76: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1400 qdisc noqueue state UP group default 
+    link/ether 0a:58:0a:83:00:30 brd ff:ff:ff:ff:ff:ff link-netnsid 0
+    inet 10.131.0.48/23 brd 10.131.1.255 scope global eth0
        valid_lft forever preferred_lft forever
-    inet6 fe80::858:aff:fe83:2d/64 scope link 
+    inet6 fe80::858:aff:fe83:30/64 scope link 
        valid_lft forever preferred_lft forever
-3: ovn-udn1@if67: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1400 qdisc noqueue state UP group default 
-    link/ether 0a:58:c0:a8:0a:04 brd ff:ff:ff:ff:ff:ff link-netnsid 0
-    inet 172.16.20.5/24 brd 172.16.20.255 scope global ovn-udn1
+3: ovn-udn1@if77: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1400 qdisc noqueue state UP group default 
+    link/ether 0a:58:ac:10:01:07 brd ff:ff:ff:ff:ff:ff link-netnsid 0
+    inet 172.16.1.7/24 brd 172.16.1.255 scope global ovn-udn1
        valid_lft forever preferred_lft forever
-    inet6 fe80::858:c0ff:fea8:a04/64 scope link 
+    inet6 fe80::858:acff:fe10:107/64 scope link 
        valid_lft forever preferred_lft forever
 ```
 - This is expected. The goal of UDN is only east-west traffic. So the default route will be UDN network.
 ```bash
 # ip r
-default via 172.16.20.1 dev ovn-udn1 
-10.128.0.0/14 via 10.131.0.1 dev eth0 
-10.131.0.0/23 dev eth0 proto kernel scope link src 10.131.0.46 
-100.64.0.0/16 via 10.131.0.1 dev eth0 
-100.65.0.0/16 via 172.16.20.1 dev ovn-udn1 
-172.30.0.0/16 via 172.16.20.1 dev ovn-udn1 
-172.16.20.0/24 dev ovn-udn1 proto kernel scope link src 172.16.20.5 
+
 ```
 - Check the service.
 ```bash
 # oc get svc
-NAME                       TYPE           CLUSTER-IP      EXTERNAL-IP      PORT(S)        AGE
-hello-openshift-service   LoadBalancer   172.30.165.57   192.168.20.101   80:32694/TCP   5h2m
+NAME                      TYPE           CLUSTER-IP       EXTERNAL-IP      PORT(S)        AGE
+hello-openshift-service   LoadBalancer   172.30.194.235   192.168.10.103   80:30622/TCP   15m
 ```
 
 - Look at the endpoint slices for the service and verify that a slice is configured using the pod IP that belongs to UDN. OVN will use the UDN base sice to forward traffic that lands on MetalLB and finally to the pod, not the slice from the default network.
 
 ```bash
-# oc get endpointslices -n vlan20udn
-NAME                             ADDRESSTYPE   PORTS   ENDPOINTS     AGE
-hello-openshift-service-cs72n   IPv4          8888    172.16.20.5   75m
-hello-openshift-service-p85v6   IPv4          8888    10.131.0.46   75m
+# oc get endpointslices
+NAME                            ADDRESSTYPE   PORTS   ENDPOINTS     AGE
+hello-openshift-service-9c5bt   IPv4          8888    10.131.0.48   15m
+hello-openshift-service-qv2xc   IPv4          8888    172.16.1.7    15m
 ```
 
 - Get the worker node where the pod runs.
 ```bash
 # oc get po -o wide
-NAME              READY   STATUS    RESTARTS   AGE     IP            NODE      NOMINATED NODE   READINESS GATES
-hello-openshift   1/1     Running   0          3h30m   10.131.0.46   worker2   <none>           <none>
+NAME              READY   STATUS    RESTARTS   AGE   IP            NODE      NOMINATED NODE   READINESS GATES
+hello-openshift   1/1     Running   0          16m   10.131.0.48   worker2   <none>           <none>
 ```
 - Oc debug to the worker node and chroot to /host.
 ```bash
@@ -640,13 +634,13 @@ sh-5.1# chroot /host
 ```
 - Find the sandbox id of the hello-openshift pod
 ```bash
-crictl ps  | grep hello-openshift| grep vlan20udn | awk {'print $1'}
-76144fd3e2509
+crictl ps  | grep hello-openshift| grep vlan10cudn2 | awk {'print $1'}
+dbf94e9913d3a
 ```
 - Get the process id.
 ```bash
-sh-5.1# crictl inspect 76144fd3e2509 | jq .info.pid
-3060190
+sh-5.1# crictl inspect dbf94e9913d3a | jq .info.pid
+3802359
 ```
 - Switch to toolbox
 ```bash
@@ -667,17 +661,16 @@ nsenter -n -t 3060190 tcpdump -nni ovn-udn1
 dropped privs to tcpdump
 tcpdump: verbose output suppressed, use -v[v]... for full protocol decode
 listening on ovn-udn1, link-type EN10MB (Ethernet), snapshot length 262144 bytes
-07:02:18.445807 IP 100.65.0.6.36428 > 172.16.20.5.8888: Flags [S], seq 332586013, win 32120, options [mss 1460,sackOK,TS val 2157051289 ecr 0,nop,wscale 7], length 0
-07:02:18.445849 IP 172.16.20.5.8888 > 100.65.0.6.36428: Flags [S.], seq 528283999, ack 332586014, win 64704, options [mss 1360,sackOK,TS val 3965837155 ecr 2157051289,nop,wscale 7], length 0
-07:02:18.448371 IP 100.65.0.6.36428 > 172.16.20.5.8888: Flags [.], ack 1, win 251, options [nop,nop,TS val 2157051292 ecr 3965837155], length 0
-07:02:18.448447 IP 100.65.0.6.36428 > 172.16.20.5.8888: Flags [P.], seq 1:108, ack 1, win 251, options [nop,nop,TS val 2157051292 ecr 3965837155], length 107
-07:02:18.448462 IP 172.16.20.5.8888 > 100.65.0.6.36428: Flags [.], ack 108, win 505, options [nop,nop,TS val 3965837158 ecr 2157051292], length 0
-07:02:18.449712 IP 172.16.20.5.8888 > 100.65.0.6.36428: Flags [P.], seq 1:157, ack 108, win 505, options [nop,nop,TS val 3965837159 ecr 2157051292], length 156
-07:02:18.450101 IP 100.65.0.6.36428 > 172.16.20.5.8888: Flags [.], ack 157, win 250, options [nop,nop,TS val 2157051295 ecr 3965837159], length 0
-07:02:18.450224 IP 100.65.0.6.36428 > 172.16.20.5.8888: Flags [F.], seq 108, ack 157, win 250, options [nop,nop,TS val 2157051295 ecr 3965837159], length 0
-07:02:18.450318 IP 172.16.20.5.8888 > 100.65.0.6.36428: Flags [F.], seq 157, ack 109, win 505, options [nop,nop,TS val 3965837160 ecr 2157051295], length 0
-07:02:18.450601 IP 100.65.0.6.36428 > 172.16.20.5.8888: Flags [.], ack 158, win 250, options [nop,nop,TS val 2157051295 ecr 3965837160], length 0
-07:02:23.477106 ARP, Request who-has 172.16.20.1 tell 172.16.20.5, length 28
-07:02:23.477706 ARP, Reply 172.16.20.1 is-at 0a:58:ac:10:14:01, length 28
+14:38:53.694390 IP 100.65.0.5.56040 > 172.16.1.7.8888: Flags [S], seq 4189198073, win 32120, options [mss 1460,sackOK,TS val 277385134 ecr 0,nop,wscale 7], length 0
+14:38:53.694425 IP 172.16.1.7.8888 > 100.65.0.5.56040: Flags [S.], seq 264655645, ack 4189198074, win 64704, options [mss 1360,sackOK,TS val 714401721 ecr 277385134,nop,wscale 7], length 0
+14:38:53.695965 IP 100.65.0.5.56040 > 172.16.1.7.8888: Flags [.], ack 1, win 251, options [nop,nop,TS val 277385137 ecr 714401721], length 0
+14:38:53.696010 IP 100.65.0.5.56040 > 172.16.1.7.8888: Flags [P.], seq 1:110, ack 1, win 251, options [nop,nop,TS val 277385137 ecr 714401721], length 109
+14:38:53.696020 IP 172.16.1.7.8888 > 100.65.0.5.56040: Flags [.], ack 110, win 505, options [nop,nop,TS val 714401722 ecr 277385137], length 0
+14:38:53.697316 IP 172.16.1.7.8888 > 100.65.0.5.56040: Flags [P.], seq 1:157, ack 110, win 505, options [nop,nop,TS val 714401724 ecr 277385137], length 156
+14:38:53.697614 IP 100.65.0.5.56040 > 172.16.1.7.8888: Flags [.], ack 157, win 250, options [nop,nop,TS val 277385139 ecr 714401724], length 0
+14:38:53.697713 IP 100.65.0.5.56040 > 172.16.1.7.8888: Flags [F.], seq 110, ack 157, win 250, options [nop,nop,TS val 277385139 ecr 714401724], length 0
+14:38:53.697793 IP 172.16.1.7.8888 > 100.65.0.5.56040: Flags [F.], seq 157, ack 111, win 505, options [nop,nop,TS val 714401724 ecr 277385139], length 0
+14:38:53.698014 IP 100.65.0.5.56040 > 172.16.1.7.8888: Flags [.], ack 158, win 250, options [nop,nop,TS val 277385140 ecr 714401724], length 0
+14:38:59.061119 ARP, Request who-has 172.16.1.1 tell 172.16.1.7, length 28
 ```
 - Note the client ip will not be visible here since externaltrafficpolicy is set to Cluster which NATs the traffic to the node's internal NAT IP.
