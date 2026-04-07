@@ -481,7 +481,8 @@ NAME              READY   STATUS    RESTARTS   AGE     IP            NODE      N
 hello-openshift   1/1     Running   0          3h30m   10.131.0.46   worker2   <none>           <none>
 ```
 - Oc debug to the worker node and chroot to /host.
-`# oc debug node/worker2
+```bash
+# oc debug node/worker2
 Temporary namespace openshift-debug-qxz58 is created for debugging node...
 Starting pod/worker2-debug-5zzz6 ...
 To use host binaries, run `chroot /host`
