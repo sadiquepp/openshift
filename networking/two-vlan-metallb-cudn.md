@@ -263,7 +263,7 @@ spec:
     layer2:
       role: Primary
       subnets:
-        - cidr: 172.16.1.0/24
+        - "172.16.1.0/24"
 EOF
 ```
 - Apply it
