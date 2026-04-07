@@ -1,4 +1,4 @@
-# OpenShift Dual-VLAN Ingress with MetalLB and UDN
+# OpenShift Dual-VLAN Ingress with MetalLB and CUDN
 
 This repository contains the complete configuration for a high-availability, dual-VLAN ingress architecture on bare-metal OpenShift. It utilizes **MetalLB** for LoadBalancer VIPs and **NMState** for host-level networking and kernel tuning. The goal is to facilitate traffic from two different VLANs to be served by two different Ingress Controllers. The traffic comes from one vlan segment originates from Internet and another vlan segment originates from internal network and they target different set of workloads within openshift that run on different primary UDNs.
 
@@ -258,11 +258,12 @@ spec:
   namespaceSelector:
     matchLabels:
       network: vlan10cudn
-  topology: Layer2
-  layer2:
-    role: Primary
-    subnets:
-      - cidr: 172.16.1.0/24
+  network:
+    topology: Layer2
+    layer2:
+      role: Primary
+      subnets:
+        - cidr: 172.16.1.0/24
 EOF
 ```
 - Apply it
@@ -432,11 +433,12 @@ spec:
   namespaceSelector:
     matchLabels:
       network: vlan20cudn
-  topology: Layer2
-  layer2:
-    role: Primary
-    subnets:
-      - "172.16.2.0/24"
+  network:
+    topology: Layer2
+    layer2:
+      role: Primary
+      subnets:
+        - "172.16.2.0/24"
 EOF
 ```
 - Apply it
