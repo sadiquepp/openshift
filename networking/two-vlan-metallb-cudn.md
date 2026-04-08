@@ -679,8 +679,8 @@ listening on ovn-udn1, link-type EN10MB (Ethernet), snapshot length 262144 bytes
 Instead of using direct pods, this test uses VMs to test the connectivity powered by Openshift Virtualization.
 
 1. Install OpenShift Virtualization Operator and create the required CRD.
-2. Create a VM1 in the namespace vlan10cudn1 and label it app:web-cluster
-3. Create a VM2 in the namespace vlan10cudn1 and label it app:web-cluster
+2. Create a VM1 in the namespace `vlan10cudn1` and label it `app:web-cluster`
+3. Create a VM2 in the namespace `vlan10cudn1` and label it `app:web-cluster`
 
 - Since the namespace has CUDN label the primary interface of the vm will land on the CUDN automatically with no other interface within the vm.
 ![VM1](images/vm1.png)
