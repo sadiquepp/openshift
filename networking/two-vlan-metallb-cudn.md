@@ -3,7 +3,7 @@
 This repository contains the complete configuration for a high-availability, dual-VLAN ingress architecture on bare-metal OpenShift. It utilizes **MetalLB** for LoadBalancer VIPs and **NMState** for host-level networking and kernel tuning. The goal is to facilitate traffic from two different VLANs to be served by two different Ingress Controllers. The traffic comes from one vlan segment originates from Internet and another vlan segment originates from internal network and they target different set of workloads within openshift that run on different primary UDNs.
 
 Find below the network diagram to visualize it.
-![Network Diagram](images/dual_vlan_metallb_udn_direct.svg)
+![Network Diagram](images/dual_vlan_metallb_cudn.svg)
 
 ## 1. Label your Ingress Nodes
 
