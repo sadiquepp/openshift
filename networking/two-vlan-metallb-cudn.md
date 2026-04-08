@@ -683,7 +683,7 @@ Instead of using direct pods, this test uses VMs to test the connectivity powere
 3. Create a VM2 in the namespace vlan10cudn1 and label it app:web-cluster
 
 - Since the namespace has CUDN label the primary interface of the vm will land on the CUDN automatically with no other interface within the vm.
-[VM1](images/vm1.png)
+![VM1](images/vm1.png)
 ```
 4. Create a WebServer inside both vms using httpd and start the webserver. Make sure that the content of index.html on both vms reflect the hostname of the vm or unique content to identify from where the web request is served.
 5. Create a Service of type LoadBalancer in the namespace vlan10cudn1 and label it app:web-cluster.
