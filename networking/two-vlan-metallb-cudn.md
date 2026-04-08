@@ -221,7 +221,7 @@ oc apply -f 06-metallb-config.yaml
 
 ## 7. Testing 
 ###  Vlan 10
-Deploy Sample App & Create Route:
+Deploy Sample App and MetalLB Service
 
 1. Create two new namespaces and label it.
 ```yaml
@@ -674,3 +674,49 @@ listening on ovn-udn1, link-type EN10MB (Ethernet), snapshot length 262144 bytes
 14:38:59.061119 ARP, Request who-has 172.16.1.1 tell 172.16.1.7, length 28
 ```
 - Note the client ip will not be visible here since externaltrafficpolicy is set to Cluster which NATs the traffic to the node's internal NAT IP.
+
+## Testing this with OpenShift Virtualization Virtual Machines.
+Instead of using direct pods, this test uses VMs to test the connectivity powered by Openshift Virtualization.
+
+1. Install OpenShift Virtualization Operator and create the required CRD.
+2. Create a VM1 in the namespace vlan10cudn1 and label it app:web-cluster
+3. Create a VM2 in the namespace vlan10cudn1 and label it app:web-cluster
+
+- Since the namespace has CUDN label the primary interface of the vm will land on the CUDN automatically with no other interface within the vm.
+[VM1](images/vm1.png)
+```
+4. Create a WebServer inside both vms using httpd and start the webserver. Make sure that the content of index.html on both vms reflect the hostname of the vm or unique content to identify from where the web request is served.
+5. Create a Service of type LoadBalancer in the namespace vlan10cudn1 and label it app:web-cluster.
+```yaml
+cat <<EOF > 14-vm-loadbalancer.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-vm-loadbalancer
+  namespace: vlan10cudn1
+  annotations:
+    metallb.universe.tf/loadBalancerIPs: 192.168.10.104
+spec:
+  type: LoadBalancer
+  selector:
+    app: web-cluster
+  ports:
+    - name: http
+      protocol: TCP
+      port: 80
+      targetPort: 80
+EOF
+```
+- Apply it.
+```bash
+oc apply -f 14-vm-loadbalancer.yaml
+```
+6. Make sure that the endpointslices references cudn ip of both vms.
+```bash
+# oc get endpointslices
+NAME                                                          ADDRESSTYPE   PORTS   ENDPOINTS                 AGE
+web-vm-loadbalancer-fhjcx                                     IPv4          80      10.129.2.38,10.128.2.66   6h26m
+web-vm-loadbalancer-rsnlh                                     IPv4          80      172.16.1.17,172.16.1.19   6h26m
+```
+7. Curl the LB IP from external RHEL host. You should see the traffic from the external RHEL host getting loadbalanced between the webserver running on those two vms.
+
