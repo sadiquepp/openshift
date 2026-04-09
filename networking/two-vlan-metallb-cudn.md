@@ -693,12 +693,12 @@ sh-5.1# ovs-ofctl -O OpenFlow13 dump-flows br-int | grep "172.30.194.235"
  cookie=0x609565cf, duration=134639.694s, table=17, n_packets=0, n_bytes=0, priority=120,ct_state=+new-rel+trk,tcp,metadata=0xb,nw_dst=172.30.194.235,tp_dst=80 actions=load:0x1->NXM_NX_REG10[3],group:251
  cookie=0x80ab57e1, duration=134639.696s, table=21, n_packets=0, n_bytes=0, priority=120,ct_state=+new+trk,tcp,metadata=0xff0006,nw_dst=172.30.194.235,tp_dst=80 actions=load:0xac1ec2eb->NXM_NX_XXREG1[96..127],load:0x50->NXM_NX_XXREG0[32..47],group:252
 ```
-- The third line means a new packet lands on service IP to be forwarded to the group 251. Let us now explore group 251
+- The third line says a new packet lands on service IP to be forwarded to the group 251. Let us now explore group 251
 ```bash
 # ovs-ofctl -O OpenFlow13 dump-groups br-int | grep "group_id=251"
  group_id=251,type=select,bucket=weight:100,actions=ct(commit,table=18,zone=NXM_NX_REG11[0..15],nat(dst=172.16.1.7:8888),exec(load:0x1->NXM_NX_CT_MARK[1],load:0x1->NXM_NX_CT_MARK[3]))
 ```
-- Group 251 says to NAT the traffic to the pod's UDN IP. There is no entry in the table to do any NAT to pod default network IP.
+- Group 251 says to DNAT the traffic to the pod's UDN IP and move the packet to table 18. There is no entry in the table to do any NAT to pod default network IP.
 
 ## Testing with OpenShift Virtualization Virtual Machines
 Instead of using direct pods, this test uses VMs to test the connectivity powered by Openshift Virtualization.
