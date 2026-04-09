@@ -681,11 +681,6 @@ listening on ovn-udn1, link-type EN10MB (Ethernet), snapshot length 262144 bytes
 - You should see the traffic is being forwarded to the UDN interface.
 ```bash
 # oc debug node/worker1
-Temporary namespace openshift-debug-qxz58 is created for debugging node...
-Starting pod/worker1-debug-5zzz6 ...
-To use host binaries, run `chroot /host`
-Pod IP: 192.168.122.248
-If you don't see a command prompt, try pressing enter.
 sh-5.1# chroot /host
 sh-5.1# ovs-ofctl -O OpenFlow13 dump-flows br-int | grep "172.30.194.235"
  cookie=0x9fc41b98, duration=134639.693s, table=14, n_packets=0, n_bytes=0, priority=120,tcp,reg0=0x4/0x4,metadata=0xff0006,nw_dst=172.30.194.235,tp_dst=80 actions=load:0xac1ec2eb->NXM_NX_XXREG1[96..127],load:0x50->NXM_NX_XXREG0[32..47],ct(table=15,zone=NXM_NX_REG13[0..15],nat)
