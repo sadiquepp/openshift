@@ -399,7 +399,7 @@ curl -v -k --resolve hello-openshiftcudn2.vlan10.apps.redhat.local:443:192.168.1
 Deploy Sample App & Create Route:
 
 1. Create a test project vlan20udn and label it.
-```bash
+```yaml
 cat << EOF > 16-namespace.yaml
 apiVersion: v1
 kind: Namespace
@@ -408,7 +408,7 @@ metadata:
   labels:
     k8s.ovn.org/primary-user-defined-network: ""
     network: vlan20cudn
----
+
 apiVersion: v1
 kind: Namespace
 metadata:
