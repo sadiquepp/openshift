@@ -571,6 +571,7 @@ curl -v -k --resolve hello-openshiftcudn3.vlan20.apps.redhat.local:443:192.168.2
 curl -v -k --resolve hello-openshiftcudn4.vlan20.apps.redhat.local:443:192.168.20.105 http://hello-openshiftcudn4.vlan20.apps.redhat.local
 ```
 ## 9. How to Validate it's using UDN
+### 9.1 Validate it's using UDN via tcpdump
 - rsh to the pod and validate it has UDN Interface.
 
 ```bash
@@ -674,6 +675,30 @@ listening on ovn-udn1, link-type EN10MB (Ethernet), snapshot length 262144 bytes
 14:38:59.061119 ARP, Request who-has 172.16.1.1 tell 172.16.1.7, length 28
 ```
 - Note the client ip will not be visible here since externaltrafficpolicy is set to Cluster which NATs the traffic to the node's internal NAT IP.
+
+### 9.2 Validate it's using UDN via looking at ovs flows
+- One one of the worker nodes, check the ovs flows for the service ip from an`oc debug node/worker1` session.
+- You should see the traffic is being forwarded to the UDN interface.
+```bash
+# oc debug node/worker1
+Temporary namespace openshift-debug-qxz58 is created for debugging node...
+Starting pod/worker1-debug-5zzz6 ...
+To use host binaries, run `chroot /host`
+Pod IP: 192.168.122.248
+If you don't see a command prompt, try pressing enter.
+sh-5.1# chroot /host
+sh-5.1# ovs-ofctl -O OpenFlow13 dump-flows br-int | grep "172.30.194.235"
+ cookie=0x9fc41b98, duration=134639.693s, table=14, n_packets=0, n_bytes=0, priority=120,tcp,reg0=0x4/0x4,metadata=0xff0006,nw_dst=172.30.194.235,tp_dst=80 actions=load:0xac1ec2eb->NXM_NX_XXREG1[96..127],load:0x50->NXM_NX_XXREG0[32..47],ct(table=15,zone=NXM_NX_REG13[0..15],nat)
+ cookie=0xa2dbcd31, duration=134639.694s, table=15, n_packets=0, n_bytes=0, priority=100,ip,metadata=0xb,nw_dst=172.30.194.235 actions=ct(table=16,zone=NXM_NX_REG11[0..15],nat)
+ cookie=0x609565cf, duration=134639.694s, table=17, n_packets=0, n_bytes=0, priority=120,ct_state=+new-rel+trk,tcp,metadata=0xb,nw_dst=172.30.194.235,tp_dst=80 actions=load:0x1->NXM_NX_REG10[3],group:251
+ cookie=0x80ab57e1, duration=134639.696s, table=21, n_packets=0, n_bytes=0, priority=120,ct_state=+new+trk,tcp,metadata=0xff0006,nw_dst=172.30.194.235,tp_dst=80 actions=load:0xac1ec2eb->NXM_NX_XXREG1[96..127],load:0x50->NXM_NX_XXREG0[32..47],group:252
+```
+- The third line means a new packet lands on service IP to be forwarded to the group 251. Let us now explore group 251
+```bash
+# ovs-ofctl -O OpenFlow13 dump-groups br-int | grep "group_id=251"
+ group_id=251,type=select,bucket=weight:100,actions=ct(commit,table=18,zone=NXM_NX_REG11[0..15],nat(dst=172.16.1.7:8888),exec(load:0x1->NXM_NX_CT_MARK[1],load:0x1->NXM_NX_CT_MARK[3]))
+```
+- Group 251 says to NAT the traffic to the pod's UDN IP. There is no entry in the table to do any NAT to pod default network IP.
 
 ## Testing with OpenShift Virtualization Virtual Machines
 Instead of using direct pods, this test uses VMs to test the connectivity powered by Openshift Virtualization.
