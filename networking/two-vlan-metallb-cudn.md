@@ -753,16 +753,16 @@ Chain OVN-KUBE-EXTERNALIP (2 references)
 target     prot opt source               destination         
 DNAT       tcp  --  0.0.0.0/0            192.168.10.104       tcp dpt:80 to:172.30.161.145:80
 ```
-This means the packet that lands from end user on vlan tagged enp7s0.10 with destination IP of 192.168.10.104 will be DNAT to the cluster IP of the service before hitting the main routing table.
+This means the packet that lands from end user on vlan tagged `enp7s0.10` with destination IP of `192.168.10.104` will be DNAT to the cluster IP of the service before hitting the main routing table.
 
 - Inspecting the main routing table on the node will reveal below.
 ```bash
 # ip route | grep 172.30.0.0
 172.30.0.0/16 via 169.254.0.4 dev br-ex src 169.254.0.2 mtu 1400 
 ```
-This means, when a process on this host wants to talk to a Kubernetes Service (172.30.0.0/16), send the packet out of the br-ex bridge using its local IP 169.254.0.2, and hand it directly to the virtual OVN Gateway Router at 169.254.0.4."
+This means, when a process on this host wants to talk to a Kubernetes Service `172.30.0.0/16`, send the packet out of the `br-ex` bridge using its local IP `169.254.0.2`, and hand it directly to the virtual OVN Gateway Router at `169.254.0.4`."
 
-From here it's forwarded to br-int and follows what is outlined in section [9.2](#92-validate-its-using-udn-via-looking-at-ovs-flows) validating the traffic flow to the pod.
+From here it's forwarded to `br-int` and follows what is outlined in section [9.2 validating the traffic flow to the pod](#92-validate-its-using-udn-via-looking-at-ovs-flows) .
 
 - From there it's moved to group 309 
 ```bash
