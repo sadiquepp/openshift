@@ -739,3 +739,41 @@ web-vm-loadbalancer-rsnlh                                     IPv4          80  
 ```
 7. Curl the LB IP from external RHEL host. You should see the traffic from the external RHEL host getting loadbalanced between the webserver running on those two vms.
 
+## End-to-End Traffic decoded with UDN
+- Get the service and associated metallb IP.
+```bash
+# oc get svc
+NAME                                                    TYPE           CLUSTER-IP       EXTERNAL-IP      PORT(S)        AGE
+web-vm-loadbalancer                                     LoadBalancer   172.30.161.145   192.168.10.104   80:32026/TCP   4d22h
+```
+- 192.168.10.104 is the metallb IP.  Inspect the DNAT rules on the node where the metallb is running.
+```bash
+# iptables -nL OVN-KUBE-EXTERNALIP -t nat 
+Chain OVN-KUBE-EXTERNALIP (2 references)
+target     prot opt source               destination         
+DNAT       tcp  --  0.0.0.0/0            192.168.10.104       tcp dpt:80 to:172.30.161.145:80
+```
+This means the packet that lands from end user on vlan tagged enp7s0.10 with destination IP of 192.168.10.104 will be DNAT to the cluster IP of the service before hitting the main routing table.
+
+- Inspecting the main routing table on the node will reveal below.
+```bash
+# ip route | grep 172.30.0.0
+172.30.0.0/16 via 169.254.0.4 dev br-ex src 169.254.0.2 mtu 1400 
+```
+This means, when a process on this host wants to talk to a Kubernetes Service (172.30.0.0/16), send the packet out of the br-ex bridge using its local IP 169.254.0.2, and hand it directly to the virtual OVN Gateway Router at 169.254.0.4."
+
+From here it's forwarded to br-int and follows what is outlined in section [9.2](#92-validate-its-using-udn-via-looking-at-ovs-flows) validating the traffic flow to the pod.
+
+- From there it's moved to group 309 
+```bash
+# ovs-ofctl -O OpenFlow13 dump-flows br-int | grep "172.30.161.145"
+ cookie=0xddef43fe, duration=423704.547s, table=14, n_packets=0, n_bytes=0, priority=120,tcp,reg0=0x4/0x4,metadata=0xff0006,nw_dst=172.30.161.145,tp_dst=80 actions=load:0xac1ea191->NXM_NX_XXREG1[96..127],load:0x50->NXM_NX_XXREG0[32..47],ct(table=15,zone=NXM_NX_REG13[0..15],nat)
+ cookie=0x9c458b2d, duration=423704.547s, table=15, n_packets=66, n_bytes=5478, priority=100,ip,metadata=0xb,nw_dst=172.30.161.145 actions=ct(table=16,zone=NXM_NX_REG11[0..15],nat)
+ cookie=0xaf71e2e8, duration=423648.340s, table=17, n_packets=11, n_bytes=814, priority=120,ct_state=+new-rel+trk,tcp,metadata=0xb,nw_dst=172.30.161.145,tp_dst=80 actions=load:0x1->NXM_NX_REG10[3],group:309
+ cookie=0xfc6f238d, duration=423648.341s, table=21, n_packets=0, n_bytes=0, priority=120,ct_state=+new+trk,tcp,metadata=0xff0006,nw_dst=172.30.161.145,tp_dst=80 actions=load:0xac1ea191->NXM_NX_XXREG1[96..127],load:0x50->NXM_NX_XXREG0[32..47],group:310
+```
+- Group 309 is the one that forwards the packet to the UDN interface of the pod. In this case it's virtual interface of the VM1 (1 72.16.1.17) or VM2 (172.16.1.19).
+```bash
+# ovs-ofctl -O OpenFlow13 dump-groups br-int | grep "group_id=309"
+ group_id=309,type=select,bucket=weight:100,actions=ct(commit,table=18,zone=NXM_NX_REG11[0..15],nat(dst=172.16.1.17:80),exec(load:0x1->NXM_NX_CT_MARK[1],load:0x1->NXM_NX_CT_MARK[3])),bucket=weight:100,actions=ct(commit,table=18,zone=NXM_NX_REG11[0..15],nat(dst=172.16.1.19:80),exec(load:0x1->NXM_NX_CT_MARK[1],load:0x1->NXM_NX_CT_MARK[3]))
+```
