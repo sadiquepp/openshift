@@ -772,7 +772,7 @@ From here it's forwarded to `br-int` and follows what is outlined in section [9.
  cookie=0xaf71e2e8, duration=423648.340s, table=17, n_packets=11, n_bytes=814, priority=120,ct_state=+new-rel+trk,tcp,metadata=0xb,nw_dst=172.30.161.145,tp_dst=80 actions=load:0x1->NXM_NX_REG10[3],group:309
  cookie=0xfc6f238d, duration=423648.341s, table=21, n_packets=0, n_bytes=0, priority=120,ct_state=+new+trk,tcp,metadata=0xff0006,nw_dst=172.30.161.145,tp_dst=80 actions=load:0xac1ea191->NXM_NX_XXREG1[96..127],load:0x50->NXM_NX_XXREG0[32..47],group:310
 ```
-- Group 309 is the one that forwards the packet to the UDN interface of the pod. In this case it's virtual interface of the VM1 (1 72.16.1.17) or VM2 (172.16.1.19).
+- Group 309 is the one that forwards the packet to the UDN interface of the pod. In this case it's virtual interface of the VM1 `1 72.16.1.17` or VM2 `172.16.1.19`.
 ```bash
 # ovs-ofctl -O OpenFlow13 dump-groups br-int | grep "group_id=309"
  group_id=309,type=select,bucket=weight:100,actions=ct(commit,table=18,zone=NXM_NX_REG11[0..15],nat(dst=172.16.1.17:80),exec(load:0x1->NXM_NX_CT_MARK[1],load:0x1->NXM_NX_CT_MARK[3])),bucket=weight:100,actions=ct(commit,table=18,zone=NXM_NX_REG11[0..15],nat(dst=172.16.1.19:80),exec(load:0x1->NXM_NX_CT_MARK[1],load:0x1->NXM_NX_CT_MARK[3]))
