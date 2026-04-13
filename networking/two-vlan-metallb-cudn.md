@@ -746,7 +746,7 @@ web-vm-loadbalancer-rsnlh                                     IPv4          80  
 NAME                                                    TYPE           CLUSTER-IP       EXTERNAL-IP      PORT(S)        AGE
 web-vm-loadbalancer                                     LoadBalancer   172.30.161.145   192.168.10.104   80:32026/TCP   4d22h
 ```
-- 192.168.10.104 is the metallb IP.  Inspect the DNAT rules on the node where the metallb is running.
+- `192.168.10.104` is the metallb IP.  Inspect the DNAT rules on the node where the metallb is running.
 ```bash
 # iptables -nL OVN-KUBE-EXTERNALIP -t nat 
 Chain OVN-KUBE-EXTERNALIP (2 references)
