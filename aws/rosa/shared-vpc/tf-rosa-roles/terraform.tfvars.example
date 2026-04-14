@@ -1,0 +1,13 @@
+# Copy to terraform.tfvars and fill in real values.
+# Do NOT commit terraform.tfvars to source control.
+
+prefix_for_name               = "project_name"
+aws_region                    = "ap-southeast-1"
+openshift_cluster_name_suffix = "xt1"
+openshift_major_version       = "4.20"
+
+# Obtain after: rosa create oidc-config --managed --mode auto
+oidc_config_id = "<your-oidc-config-id>"
+
+# AWS account ID of the VPC owner (the account running tf-disconnected)
+vpc_owner_account_id = "<vpc-owner-account-id>"

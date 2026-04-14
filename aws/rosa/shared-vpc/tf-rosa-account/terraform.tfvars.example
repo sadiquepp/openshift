@@ -1,0 +1,25 @@
+# Copy to terraform.tfvars and fill in real values.
+# Do NOT commit terraform.tfvars to source control.
+
+prefix_for_name               = "project_name"
+aws_region                    = "ap-southeast-1"
+openshift_cluster_name_suffix = "xt1"
+openshift_base_domain         = "example.com"
+openshift_major_version       = "4.20"
+openshift_minor_version       = 0
+aws_ami                       = "ami-04698733964af06d5"
+aws_instance_type             = "t2.large"
+ec2_disk_size                 = 100
+
+# SSH public key to import
+ssh_public_key = "ssh-rsa AAAA..."
+
+# Passed in from the VPC owner account (tf-disconnected / tf-rosa-shared-vpc outputs)
+egress_vpc_id         = "vpc-xxxxxxxxxxxxxxxxx"
+egress_vpc_cidr       = "172.17.0.0/16"
+egress_subnet_id_a    = "subnet-xxxxxxxxxxxxxxxxx"
+disconnected_vpc_cidr = "172.16.0.0/16"
+
+# Sensitive — supply via TF_VAR_ env vars or a secrets manager, not plain tfvars
+# mirror_registry_password = "..."
+# pull_secret              = "..."
