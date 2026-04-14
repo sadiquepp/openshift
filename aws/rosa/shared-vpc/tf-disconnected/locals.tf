@@ -1,8 +1,19 @@
 locals {
+  azs = [
+    "${var.aws_region}a",
+    "${var.aws_region}b",
+    "${var.aws_region}c",
+  ]
+
   disconnected_vpc_name = "${var.prefix_for_name}-disconnected"
   egress_vpc_name       = "${var.prefix_for_name}-egress"
-  cluster_name          = "${var.prefix_for_name}-${var.openshift_cluster_name_suffix}"
 
-  route53_role_name = "${local.cluster_name}-shared-vpc-route53"
-  endpoint_role_name = "${local.cluster_name}-shared-vpc-endpoint"
+  # Interface endpoint services to create in the disconnected VPC
+  interface_endpoint_services = [
+    "ec2",
+    "sts",
+    "elasticloadbalancing",
+    "ecr.api",
+    "ecr.dkr",
+  ]
 }

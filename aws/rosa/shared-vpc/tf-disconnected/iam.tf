@@ -1,65 +1,46 @@
-# ─────────────────────────────────────────
-# The Ansible playbook rendered two Jinja2
-# templates (route53-policy.json.j2 and
-# endpoint-policy.json.j2) that are not
-# included in the repo. The assume-role
-# policies below follow the standard ROSA
-# shared-VPC pattern: the ROSA service
-# account in the *installer* account is
-# allowed to assume these roles.
-# Adjust the Principal if your templates
-# differed.
-# ─────────────────────────────────────────
-
-data "aws_iam_policy_document" "route53_assume_role" {
+data "aws_iam_policy_document" "ec2_assume_role" {
   statement {
     effect  = "Allow"
     actions = ["sts:AssumeRole"]
 
     principals {
-      type        = "AWS"
-      # Allow the target account (ROSA installer account) to assume this role
-      identifiers = ["arn:aws:iam::${var.aws_account_number_to_share_with}:root"]
+      type        = "Service"
+      identifiers = ["ec2.amazonaws.com"]
     }
   }
 }
 
-data "aws_iam_policy_document" "endpoint_assume_role" {
-  statement {
-    effect  = "Allow"
-    actions = ["sts:AssumeRole"]
-
-    principals {
-      type        = "AWS"
-      identifiers = ["arn:aws:iam::${var.aws_account_number_to_share_with}:root"]
-    }
-  }
-}
-
-resource "aws_iam_role" "route53" {
-  name               = local.route53_role_name
-  assume_role_policy = data.aws_iam_policy_document.route53_assume_role.json
+resource "aws_iam_role" "ocp_install" {
+  name               = "${var.prefix_for_name}-ocp-install-ec2"
+  assume_role_policy = data.aws_iam_policy_document.ec2_assume_role.json
 
   tags = {
-    Name = local.route53_role_name
+    Name = "${var.prefix_for_name}-ocp-install-ec2"
   }
 }
 
-resource "aws_iam_role_policy_attachment" "route53" {
-  role       = aws_iam_role.route53.name
-  policy_arn = "arn:aws:iam::aws:policy/ROSASharedVPCRoute53Policy"
+locals {
+  ocp_install_managed_policies = [
+    "arn:aws:iam::aws:policy/AmazonEC2FullAccess",
+    "arn:aws:iam::aws:policy/IAMFullAccess",
+    "arn:aws:iam::aws:policy/AutoScalingFullAccess",
+    "arn:aws:iam::aws:policy/ElasticLoadBalancingFullAccess",
+    "arn:aws:iam::aws:policy/AmazonS3FullAccess",
+    "arn:aws:iam::aws:policy/ResourceGroupsandTagEditorFullAccess",
+    "arn:aws:iam::aws:policy/AmazonRoute53FullAccess",
+    "arn:aws:iam::aws:policy/ServiceQuotasFullAccess",
+    "arn:aws:iam::aws:policy/CloudFrontFullAccess",
+  ]
 }
 
-resource "aws_iam_role" "endpoint" {
-  name               = local.endpoint_role_name
-  assume_role_policy = data.aws_iam_policy_document.endpoint_assume_role.json
+resource "aws_iam_role_policy_attachment" "ocp_install" {
+  for_each = toset(local.ocp_install_managed_policies)
 
-  tags = {
-    Name = local.endpoint_role_name
-  }
+  role       = aws_iam_role.ocp_install.name
+  policy_arn = each.value
 }
 
-resource "aws_iam_role_policy_attachment" "endpoint" {
-  role       = aws_iam_role.endpoint.name
-  policy_arn = "arn:aws:iam::aws:policy/ROSASharedVPCEndpointPolicy"
+resource "aws_iam_instance_profile" "ocp_install" {
+  name = "${var.prefix_for_name}-ocp-install-ec2"
+  role = aws_iam_role.ocp_install.name
 }

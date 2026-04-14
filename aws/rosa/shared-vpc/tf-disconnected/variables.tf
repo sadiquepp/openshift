@@ -1,39 +1,41 @@
 variable "prefix_for_name" {
-  description = "Prefix used for all resource names — must match the disconnected-env deployment"
+  description = "Prefix used for all resource names"
   type        = string
   default     = "project_name"
 }
 
 variable "aws_region" {
-  description = "AWS region"
+  description = "AWS region to deploy into"
   type        = string
   default     = "ap-southeast-1"
 }
 
-variable "openshift_base_domain" {
-  description = "Base DNS domain for the OpenShift cluster (e.g. example.com)"
+variable "aws_disconnected_vpc_cidr" {
+  description = "CIDR block for the disconnected VPC"
   type        = string
-  default     = "example.com"
+  default     = "172.16.0.0/16"
 }
 
-variable "openshift_cluster_name_suffix" {
-  description = "Short suffix appended to prefix_for_name to form the cluster name"
+variable "aws_egress_vpc_cidr" {
+  description = "CIDR block for the egress VPC"
   type        = string
-  default     = "xt1"
+  default     = "172.17.0.0/16"
 }
 
-variable "rosa_shared_vpc_cluster_domain" {
-  description = "Domain used for the ROSA shared-VPC hosted zone (rosa.<cluster>.<this>)"
-  type        = string
+variable "aws_disconnected_subnet_cidrs" {
+  description = "CIDRs for the three disconnected private subnets (one per AZ)"
+  type        = list(string)
+  default     = ["172.16.1.0/24", "172.16.2.0/24", "172.16.3.0/24"]
 }
 
-variable "aws_account_number_to_share_with" {
-  description = "AWS account ID that will receive the RAM subnet share (the ROSA account)"
-  type        = string
+variable "aws_egress_subnet_public_cidrs" {
+  description = "CIDRs for the egress public subnets (one per AZ)"
+  type        = list(string)
+  default     = ["172.17.1.0/24", "172.17.2.0/24", "172.17.3.0/24"]
 }
 
-variable "resource_share_name" {
-  description = "Suffix for the RAM resource share name"
-  type        = string
-  default     = "rosa-share-subnet"
+variable "aws_egress_subnet_private_cidrs" {
+  description = "CIDRs for the egress private subnets (one per AZ)"
+  type        = list(string)
+  default     = ["172.17.4.0/24", "172.17.5.0/24", "172.17.6.0/24"]
 }
