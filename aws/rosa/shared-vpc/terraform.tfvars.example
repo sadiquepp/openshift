@@ -1,0 +1,23 @@
+# Option A — cross-account role assumption (recommended for CI/CD pipelines)
+# The identity running terraform must have sts:AssumeRole on both of these.
+vpc_owner_role_arn    = "arn:aws:iam::<VPC_OWNER_ACCOUNT>:role/TerraformAutomation"
+rosa_account_role_arn = "arn:aws:iam::<ROSA_ACCOUNT>:role/TerraformAutomation"
+
+# Option B — named AWS profiles (comment out the role ARNs above, and in main.tf
+# uncomment the profile lines and comment out the assume_role dynamic blocks)
+# Then run: AWS_PROFILE=vpc-owner terraform apply -target=module.disconnected_vpc
+# etc. — see Makefile for the profile-based workflow.
+
+prefix_for_name               = "project_name"
+aws_region                    = "ap-southeast-1"
+openshift_cluster_name_suffix = "xt1"
+openshift_base_domain         = "example.com"
+openshift_major_version       = "4.20"
+openshift_minor_version       = 0
+rosa_shared_vpc_cluster_domain = "rosa.example.com"
+oidc_config_id                = "<from: rosa create oidc-config --managed>"
+
+# Sensitive — supply via TF_VAR_ environment variables, not plain tfvars
+# ssh_public_key           = "ssh-rsa AAAA..."
+# mirror_registry_password = "..."
+# pull_secret              = "{...}"

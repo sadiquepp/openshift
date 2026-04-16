@@ -1,47 +1,64 @@
-# ─────────────────────────────────────────
-# The Ansible playbook rendered two Jinja2
-# templates (route53-policy.json.j2 and
-# endpoint-policy.json.j2) that are not
-# included in the repo. The assume-role
-# policies below follow the standard ROSA
-# shared-VPC pattern: the ROSA service
-# account in the *installer* account is
-# allowed to assume these roles.
-# Adjust the Principal if your templates
-# differed.
-# ─────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# Trust policies rendered from the actual Jinja2 templates:
+#   route53-policy.json.j2  — trusts 3 specific roles in the ROSA account
+#   endpoint-policy.json.j2 — trusts 2 specific roles in the ROSA account
+#
+# Note the cross-account dependency:
+#   These roles live in the VPC owner account but trust roles that are
+#   created in the ROSA account (Step 2 / tf-rosa-roles).
+#   The ROSA account ID and cluster name must be passed in as variables.
+# ─────────────────────────────────────────────────────────────────────────────
 
-data "aws_iam_policy_document" "route53_assume_role" {
+locals {
+  rosa_cluster_name = "${var.prefix_for_name}-${var.openshift_cluster_name_suffix}"
+  rosa_account_id   = var.rosa_account_id
+}
+
+# ── Route53 trust policy ───────────────────────────────────────────────────────
+# Trusts: ingress-operator, HCP-ROSA-Installer-Role, control-plane-operator
+
+data "aws_iam_policy_document" "route53_trust" {
   statement {
     effect  = "Allow"
     actions = ["sts:AssumeRole"]
 
     principals {
-      type        = "AWS"
-      # Allow the target account (ROSA installer account) to assume this role
-      identifiers = ["arn:aws:iam::${var.aws_account_number_to_share_with}:root"]
+      type = "AWS"
+      identifiers = [
+        "arn:aws:iam::${local.rosa_account_id}:role/${local.rosa_cluster_name}-openshift-ingress-operator-cloud-credentials",
+        "arn:aws:iam::${local.rosa_account_id}:role/${local.rosa_cluster_name}-HCP-ROSA-Installer-Role",
+        "arn:aws:iam::${local.rosa_account_id}:role/${local.rosa_cluster_name}-kube-system-control-plane-operator",
+      ]
     }
   }
 }
 
-data "aws_iam_policy_document" "endpoint_assume_role" {
+# ── Endpoint trust policy ──────────────────────────────────────────────────────
+# Trusts: HCP-ROSA-Installer-Role, control-plane-operator
+
+data "aws_iam_policy_document" "endpoint_trust" {
   statement {
     effect  = "Allow"
     actions = ["sts:AssumeRole"]
 
     principals {
-      type        = "AWS"
-      identifiers = ["arn:aws:iam::${var.aws_account_number_to_share_with}:root"]
+      type = "AWS"
+      identifiers = [
+        "arn:aws:iam::${local.rosa_account_id}:role/${local.rosa_cluster_name}-HCP-ROSA-Installer-Role",
+        "arn:aws:iam::${local.rosa_account_id}:role/${local.rosa_cluster_name}-kube-system-control-plane-operator",
+      ]
     }
   }
 }
+
+# ── IAM roles (in the VPC owner account) ──────────────────────────────────────
 
 resource "aws_iam_role" "route53" {
-  name               = local.route53_role_name
-  assume_role_policy = data.aws_iam_policy_document.route53_assume_role.json
+  name               = "${local.rosa_cluster_name}-shared-vpc-route53"
+  assume_role_policy = data.aws_iam_policy_document.route53_trust.json
 
   tags = {
-    Name = local.route53_role_name
+    Name = "${local.rosa_cluster_name}-shared-vpc-route53"
   }
 }
 
@@ -51,11 +68,11 @@ resource "aws_iam_role_policy_attachment" "route53" {
 }
 
 resource "aws_iam_role" "endpoint" {
-  name               = local.endpoint_role_name
-  assume_role_policy = data.aws_iam_policy_document.endpoint_assume_role.json
+  name               = "${local.rosa_cluster_name}-shared-vpc-endpoint"
+  assume_role_policy = data.aws_iam_policy_document.endpoint_trust.json
 
   tags = {
-    Name = local.endpoint_role_name
+    Name = "${local.rosa_cluster_name}-shared-vpc-endpoint"
   }
 }
 

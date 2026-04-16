@@ -42,3 +42,8 @@ output "rosa_create_cluster_hint" {
     operator_roles     = { for k, v in aws_iam_role.operator : k => v.arn }
   }
 }
+
+output "rosa_account_id" {
+  description = "AWS account ID of the ROSA/installer account (from data.aws_caller_identity)"
+  value       = data.aws_caller_identity.current.account_id
+}
