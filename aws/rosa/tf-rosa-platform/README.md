@@ -10,7 +10,7 @@ This deployment targets a scenario where:
 
 - **Network isolation is required.** The OCP worker nodes run in a private VPC with no direct internet access (the "disconnected VPC"). All outbound traffic is routed through a separate egress VPC via a Transit Gateway.
 - **Two AWS accounts are involved.** Network infrastructure lives in a *VPC owner account*. The ROSA cluster, IAM roles, and the installer EC2 run in a separate *ROSA account*. Subnets are shared cross-account via AWS RAM.
-- **A local mirror registry is required.** Because the cluster nodes cannot reach the internet or Red Hat's registries directly, a Quay mirror registry is installed on a bastion EC2 in the egress VPC. OCP images are mirrored into it before the cluster is installed.
+- **The bastion EC2 serves two distinct purposes.** First, it is the ROSA installer node — it runs the ROSA CLI, cluster create/delete scripts, and STS credential tooling. ROSA itself does not require a mirror registry; it pulls images via the Squid proxy on the bastion, which provides controlled internet egress. Second, the bastion hosts a Quay mirror registry to support self-managed OpenShift deployments into the disconnected VPC, where nodes have no internet access at all and must pull all images from a local source.
 - **ROSA HCP with STS is used.** All operator permissions use short-lived STS credentials via IRSA (IAM Roles for Service Accounts), with OIDC WebIdentity trust policies scoped to specific Kubernetes service accounts.
 
 ---
@@ -27,13 +27,18 @@ This deployment targets a scenario where:
 │  │  Public subnets (AZ1-3)  │             │                      │ │
 │  │  ┌────────────────────┐  │             │  Private subnets     │ │
 │  │  │ Bastion EC2        │  │             │  (AZ1-3) — OCP nodes │ │
-│  │  │ · Quay mirror :8443│  │             │                      │ │
-│  │  │ · Squid proxy :3128│  │             │  VPC Endpoints:      │ │
-│  │  │ · OCP installer    │  │             │  S3, EC2, STS, ELB   │ │
-│  │  │ · oc-mirror, ccoctl│  │             │  ECR.api, ECR.dkr    │ │
-│  │  └────────────────────┘  │             │                      │ │
-│  │  Private subnets (AZ1-3) │             └──────────────────────┘ │
-│  └──────────────────────────┘                                       │
+│  │  │                    │  │             │                      │ │
+│  │  │ ROSA installer:    │  │             │  VPC Endpoints:      │ │
+│  │  │ · ROSA CLI         │──┼─── proxy ──►│  S3, EC2, STS, ELB   │ │
+│  │  │ · Squid proxy :3128│  │             │  ECR.api, ECR.dkr    │ │
+│  │  │ · oc, kubectl      │  │             │                      │ │
+│  │  │ · ccoctl, STS      │  │             └──────────────────────┘ │
+│  │  │                    │  │                                       │
+│  │  │ Self-managed OCP:  │  │                                       │
+│  │  │ · Quay mirror :8443│  │                                       │
+│  │  │ · oc-mirror        │  │                                       │
+│  │  │ · openshift-install│  │                                       │
+│  │  └────────────────────┘  │                                       │
 │                                                                     │
 │  Route53 private zones (associated with both VPCs):                 │
 │  · <cluster>.<base_domain>                                          │
@@ -89,7 +94,7 @@ tf-rosa-platform/
 | `tf-disconnected` | VPC owner | Disconnected VPC + 3 private subnets, Egress VPC + public/private subnets, Internet Gateway, Transit Gateway + attachments + route tables, S3 gateway endpoint, EC2/STS/ELB/ECR interface endpoints, IAM instance role for the installer EC2 |
 | `tf-rosa-roles` | ROSA | 3 account roles (Installer, Support, Worker), 8 operator roles with OIDC WebIdentity trust policies scoped to specific service accounts, 2 cross-account assume-role managed policies targeting the VPC owner's shared-VPC roles |
 | `tf-rosa-shared-vpc` | VPC owner | 2 shared-VPC IAM roles (Route53, Endpoint) with trust policies pinned to exact ROSA account role ARNs, 3 Route53 private hosted zones associated with both VPCs, AWS RAM resource share granting the ROSA account access to the 4 subnets |
-| `tf-installer-ec2` | ROSA | EC2 key pair, security group (ports 22, 5999, 8443, 3128), installer EC2 instance in the egress public subnet with cloud-init bootstrapping (packages, mirror registry install, OCP client tools, image mirroring prep) |
+| `tf-installer-ec2` | ROSA | EC2 key pair, security group (ports 22, 5999, 8443, 3128), installer EC2 instance in the egress public subnet with cloud-init bootstrapping (packages, OCP client tools, Quay mirror registry, Squid proxy, ROSA CLI, ROSA Terraform repos) |
 
 ---
 
@@ -202,15 +207,18 @@ make all
 
 ## What happens after `terraform apply`
 
-The apply completes when the bastion EC2 is running and cloud-init has finished bootstrapping. Cloud-init handles:
+The apply completes when the bastion EC2 is running and cloud-init has finished bootstrapping. The bastion is then ready to serve its two distinct purposes.
+
+### Purpose 1 — ROSA HCP installer
+
+ROSA does not require a mirror registry. It pulls images directly from Red Hat's registries via the Squid proxy running on the bastion, which provides controlled internet egress from the disconnected VPC. Cloud-init sets up the ROSA toolchain:
 
 - Installing system packages (podman, squid, awscli2, ansible-core, terraform, etc.)
-- Installing the Quay mirror registry and trusting its root CA
-- Downloading and extracting OCP client tools (oc, oc-mirror, rosa, kubectl)
-- Placing the pull secret and logging into the local registry
-- Cloning the ROSA Terraform repos onto the bastion
+- Downloading and extracting OCP client tools (oc, rosa, kubectl, oc-mirror)
+- Cloning the ROSA Terraform repos (`terraform-rosa`, `terraform-rhcs-rosa-hcp`)
+- Starting and enabling Squid proxy
 
-The following steps **cannot be automated in Terraform** and must be completed by running the Ansible playbook against the bastion after apply:
+The following steps must then be completed by running the Ansible playbook:
 
 ```bash
 # The exact command is printed as a Terraform output:
@@ -220,14 +228,24 @@ terraform output ansible_run_command
 ansible-playbook setup-bastion-ec2.yaml -i '<bastion_ip>,' -u ec2-user
 ```
 
-The Ansible playbook completes:
-- Rendering and copying squid config + allow list
+The Ansible playbook completes the ROSA setup:
+- Rendering and copying the Squid config and allow list
 - Rendering ROSA cluster create/delete scripts
-- Running `oc mirror` to sync OCP images into the local registry (this takes 30–60 minutes)
-- Extracting the `openshift-install` binary and `ccoctl` from the mirror
 - Running `ccoctl aws create-all` to generate STS manifests
-- Rendering `install-config.yaml`, generating manifests, and patching the DNS config
-- Copying STS credentials into the install directory
+- Rendering `install-config.yaml` and generating manifests for self-managed installs
+
+### Purpose 2 — Self-managed OpenShift installer (disconnected)
+
+For self-managed OpenShift deployments into the disconnected VPC, nodes have no internet access and must pull all images from a local registry. Cloud-init also sets up the mirror registry toolchain:
+
+- Installing the Quay mirror registry at `$HOSTNAME:8443` and trusting its root CA
+- Placing the Red Hat pull secret and logging into the local registry
+
+The Ansible playbook then completes the mirror registry setup:
+- Running `oc mirror` to sync OCP release images into the local Quay registry (30–60 minutes)
+- Extracting the `openshift-install` binary from the mirror registry
+- Patching the DNS manifest (`cluster-dns-02-config.yml`) for disconnected operation
+- Copying STS credentials and TLS files into the install directory
 
 ---
 
