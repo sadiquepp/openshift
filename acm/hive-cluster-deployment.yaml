@@ -1,0 +1,169 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cluster_name
+---
+apiVersion: hive.openshift.io/v1
+kind: ClusterDeployment
+metadata:
+  name: cluster_name
+  namespace: cluster_name
+  labels:
+    cloud: AWS
+    region: <aws_region>
+    vendor: OpenShift
+    cluster.open-cluster-management.io/clusterset: default
+spec:
+  boundServiceAccountSigningKeySecretRef:
+    name: bound-service-account-signing-key
+  baseDomain: <base_domain>
+  clusterName: cluster_name
+  controlPlaneConfig:
+    servingCertificates: {}
+  installAttemptsLimit: 1
+  installed: false
+  platform:
+    aws:
+      credentialsSecretRef:
+        name: cluster_name-aws-creds
+      region: <aws_region>
+      privateLink:
+        enabled: false
+  provisioning:
+    manifestsSecretRef:
+      name: sts-manifests
+    installConfigSecretRef:
+      name: cluster_name-install-config
+    sshPrivateKeySecretRef:
+      name: cluster_name-ssh-private-key
+    imageSetRef:
+      name: openshift-4-20-13
+  pullSecretRef:
+    name: cluster_name-pull-secret
+---
+apiVersion: cluster.open-cluster-management.io/v1
+kind: ManagedCluster
+metadata:
+  name: cluster_name
+  labels:
+    name: cluster_name
+    cloud: Amazon
+    region: <aws_region>
+    vendor: OpenShift
+    cluster.open-cluster-management.io/clusterset: default
+spec:
+  hubAcceptsClient: true
+---
+apiVersion: hive.openshift.io/v1
+kind: MachinePool
+metadata:
+  name: cluster_name-worker
+  namespace: cluster_name
+spec:
+  name: worker
+  clusterDeploymentRef:
+    name: cluster_name
+  platform:
+    aws:
+      zones:
+        - <aws_region>a
+        - <aws_region>b
+        - <aws_region>c
+      rootVolume:
+        iops: 2000
+        size: 100
+        type: io1
+      type: m5.xlarge
+  replicas: 3
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cluster_name-pull-secret
+  namespace: cluster_name
+stringData:
+  .dockerconfigjson: |
+    {
+      "auths": {
+        "registry_url": {
+          "auth": "base64_encoded_username:password"
+        }
+      }
+    }
+type: kubernetes.io/dockerconfigjson
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cluster_name-install-config
+  namespace: cluster_name
+type: Opaque
+data:
+  install-config.yaml: >-
+    <base64_encoded_install_config>
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cluster_name-ssh-private-key
+  namespace: cluster_name
+stringData:
+  ssh-privatekey:
+type: Opaque
+---
+apiVersion: v1
+kind: Secret
+type: Opaque
+metadata:
+  name: cluster_name-aws-creds
+  namespace: cluster_name
+stringData:
+  aws_access_key_id: 
+  aws_secret_access_key: 
+---
+apiVersion: agent.open-cluster-management.io/v1
+kind: KlusterletAddonConfig
+metadata:
+  name: cluster_name
+  namespace: cluster_name
+spec:
+  clusterName: cluster_name
+  clusterNamespace: cluster_name
+  clusterLabels:
+    cloud: Amazon
+    vendor: OpenShift
+  applicationManager:
+    proxyPolicy: OCPGlobalProxy
+    enabled: true
+  policyController:
+    proxyPolicy: OCPGlobalProxy
+    enabled: true
+  searchCollector:
+    proxyPolicy: OCPGlobalProxy
+    enabled: true
+  certPolicyController:
+    proxyPolicy: OCPGlobalProxy
+    enabled: true
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: bound-service-account-signing-key
+  namespace: cluster_name
+type: Opaque
+data:
+  bound-service-account-signing-key.key: base64_encoded_private_key  
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sts-manifests
+  namespace: cluster_name
+data:
+  cluster-authentication-02-config.yaml: 
+  openshift-cloud-credential-operator-cloud-credential-operator-iam-ro-creds-credentials.yaml: 
+  openshift-cloud-network-config-controller-cloud-credentials-credentials.yaml: 
+  openshift-cluster-csi-drivers-ebs-cloud-credentials-credentials.yaml: 
+  openshift-image-registry-installer-cloud-credentials-credentials.yaml: 
+  openshift-ingress-operator-cloud-credentials-credentials.yaml: 
+  openshift-machine-api-aws-cloud-credentials-credentials.yaml: 

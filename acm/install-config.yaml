@@ -1,0 +1,73 @@
+apiVersion: v1
+metadata:
+  name: 'cluster_name'
+baseDomain: base_domain
+credentialsMode: Manual
+proxy:
+  httpProxy: http://<proxy_ip>:3128
+  httpsProxy: http://<proxy_ip>:3128
+  noProxy: s3.dualstack.<aws_region>.amazonaws.com,s3.<aws_region>.amazonaws.com,ec2.<aws_region>.amazonaws.com,elasticloadbalancing.<aws_region>.amazonaws.com,sts.<aws_region>.amazonaws.com,.registry.redhat.io,.quay.io,<proxy_ip>,tagging.us-east-1.amazonaws.com,tagging.ap-southeast-1.amazonaws.com,servicequotas.ap-southeast-1.amazonaws.com,quay.io,registry.redhat.io,.sadiqueonline.com,route53.amazonaws.com,iam.amazonaws.com
+controlPlane:
+  architecture: amd64
+  hyperthreading: Enabled
+  name: master
+  replicas: 3
+  platform:
+    aws:
+      rootVolume:
+        iops: 4000
+        size: 100
+        type: io1
+      type: m5.xlarge
+compute:
+- hyperthreading: Enabled
+  architecture: amd64
+  name: 'worker'
+  replicas: 3
+  platform:
+    aws:
+      rootVolume:
+        iops: 2000
+        size: 100
+        type: io1
+      type: m5.xlarge
+networking:
+  networkType: OVNKubernetes
+  clusterNetwork:
+  - cidr: 10.128.0.0/14
+    hostPrefix: 23
+  machineNetwork:
+  - cidr: vpc_cidr
+  serviceNetwork:
+  - 172.30.0.0/16
+platform:
+  aws:
+    region: <aws_region>
+    zones:
+      - <aws_region>a
+      - <aws_region>b
+      - <aws_region>c
+    subnets:
+      - subnet-id-az1
+      - subnet-id-az2
+      - subnet-id-az3
+    serviceEndpoints:
+      - name: sts
+        url: https://sts.<aws_region>.amazonaws.com
+publish: Internal
+imageContentSources:
+- mirrors:
+  - <proxy_ip>:8443/openshift/release-images
+  source: quay.io/openshift-release-dev/ocp-release
+- mirrors:
+  - <proxy_ip>:8443/openshift/release
+  source: quay.io/openshift-release-dev/ocp-v4.0-art-dev
+- mirrors:
+  - <proxy_ip>:8443/multicluster-engine
+  source: registry.redhat.io/multicluster-engine
+pullSecret: "" # skip, hive will inject based on it's secrets
+sshKey: |-
+    ssh_publi_key
+additionalTrustBundle: |-
+    -----BEGIN CERTIFICATE-----
+    -----END CERTIFICATE-----

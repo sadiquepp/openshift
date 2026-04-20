@@ -1,0 +1,47 @@
+# ── Cluster identity ───────────────────────────────────────────────────────────
+# INFRA_ID=$(jq -r .infraID install-dir/metadata.json)
+infrastructure_name = "mycluster-xxxxx"
+cluster_name        = "mycluster"
+cluster_domain      = "example.com"
+aws_region          = "ap-southeast-1"
+
+# ── Network ────────────────────────────────────────────────────────────────────
+vpc_id            = "vpc-xxxxxxxxxxxxxxxxx"
+vpc_cidr          = "172.16.0.0/16"
+loadbalancer_cidr = "172.16.0.0/16"   # CIDR of your external load balancer
+
+bootstrap_subnet_id = "subnet-xxxxxxxxxxxxxxxxx"  # any AZ
+subnet_id_az1       = "subnet-xxxxxxxxxxxxxxxxx"
+subnet_id_az2       = "subnet-xxxxxxxxxxxxxxxxx"
+subnet_id_az3       = "subnet-xxxxxxxxxxxxxxxxx"
+
+# ── AMI ────────────────────────────────────────────────────────────────────────
+# See: https://docs.redhat.com/en/documentation/openshift_container_platform/4.18/html/installing_on_aws/user-provisioned-infrastructure#installation-aws-user-infra-rhcos-ami_installing-restricted-networks-aws
+rhcos_ami_id = "ami-xxxxxxxxxxxxxxxxx"
+
+# ── Instance types ─────────────────────────────────────────────────────────────
+bootstrap_instance_type = "i3.large"
+master_instance_type    = "m5.xlarge"
+worker_instance_type    = "m5.xlarge"
+infra_instance_type     = "m6i.xlarge"
+
+# ── Fixed private IPs (pre-reserve in AWS VPC subnet CIDR reservations) ────────
+bootstrap_private_ip = "172.16.1.10"
+master0_private_ip   = "172.16.1.20"
+master1_private_ip   = "172.16.2.20"
+master2_private_ip   = "172.16.3.20"
+worker1_private_ip   = "172.16.1.30"
+worker2_private_ip   = "172.16.2.30"
+worker3_private_ip   = "172.16.3.30"
+infra1_private_ip    = "172.16.1.40"
+infra2_private_ip    = "172.16.2.40"
+infra3_private_ip    = "172.16.3.40"
+
+# ── Ignition ───────────────────────────────────────────────────────────────────
+# Extract with:
+#   export CERTIFICATE_AUTHORITY=$(cat install-dir/master.ign | cut -f8 -d{ | cut -f2,3 -d: | cut -f1 -d})
+# Value looks like: data:text/plain;charset=utf-8;base64,<base64>
+certificate_authority = "data:text/plain;charset=utf-8;base64,..."
+
+# ── Feature flags ──────────────────────────────────────────────────────────────
+create_infra_nodes = true

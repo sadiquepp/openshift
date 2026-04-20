@@ -1,0 +1,27 @@
+apiVersion: hive.openshift.io/v1
+kind: MachinePool
+metadata:
+  name: cluster3-database
+  namespace: cluster3
+spec:
+  name: database
+  clusterDeploymentRef:
+    name: cluster3
+  replicas: 3
+  platform:
+    aws:
+      zones:
+        - ap-southeast-1a
+        - ap-southeast-1b
+        - ap-southeast-1c
+      rootVolume:
+        iops: 2000
+        size: 128
+        type: io1
+      type: m5.xlarge
+      metadataService:
+        authentication: Required
+      subnets:
+        - subnet-080b1fe7e9714739f
+        - subnet-09486e56fc317ed1f
+        - subnet-05ddbd502f9ebbb5d 
