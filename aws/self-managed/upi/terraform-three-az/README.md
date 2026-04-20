@@ -70,17 +70,18 @@ These steps run on the bastion EC2 before `terraform apply`.
 **Extract `openshift-install` from the mirror registry:**
 ```bash
 export REGISTRY_URL=mirror.hub.mylab.com
+export REGISTRY_PORT=8443
 export OPENSHIFT_VERSION=4.18.5-x86_64
 oc adm release extract -a <pull-secret-file> \
   --idms-file=<idms-file.yaml> \
   --command=openshift-install \
-  $REGISTRY_URL:8443/openshift/release-images:$OPENSHIFT_VERSION
+  $REGISTRY_URL:$REGISTRY_PORT/openshift/release-images:$OPENSHIFT_VERSION
 ```
 
 **Extract `ccoctl`:**
 ```bash
 mkdir sts && cd sts
-RELEASE_IMAGE=$(~/openshift-install version | awk '/release image/ {print $3}')
+RELEASE_IMAGE=$(../openshift-install version | awk '/release image/ {print $3}')
 CCO_IMAGE=$(oc adm release info -a pull-secret.json --image-for='cloud-credential-operator' $RELEASE_IMAGE)
 oc image extract $CCO_IMAGE --file="/usr/bin/ccoctl" -a pull-secret.json
 chmod 755 ccoctl
