@@ -72,7 +72,7 @@ These steps run on the bastion EC2 before `terraform apply`.
 export REGISTRY_URL=mirror.hub.mylab.com
 export OPENSHIFT_VERSION=4.18.5-x86_64
 oc adm release extract -a <pull-secret-file> \
-  --icsp-file=<icsp-file.yaml> \
+  --idms-file=<idms-file.yaml> \
   --command=openshift-install \
   $REGISTRY_URL:8443/openshift/release-images:$OPENSHIFT_VERSION
 ```
