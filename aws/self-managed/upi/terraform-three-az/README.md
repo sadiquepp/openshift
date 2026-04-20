@@ -118,15 +118,15 @@ cd ..
 **Prepare `install-config.yaml`**. Set the variables and update the registry certificate appropriately.
 
 ```bash
-export AWS_REGION=ap-southeast-1
-export CLUSTER_DOMAIN=upi.sadiqueonline.com
-export CLUSTER_NAME=cluster1
-export VPC_CIDR=172.16.1.0/16
+export AWS_REGION=
+export CLUSTER_DOMAIN=
+export CLUSTER_NAME=
+export VPC_CIDR=
 export SUBNET_ID_AZ1=
 export SUBNET_ID_AZ2=
 export SUBNET_ID_AZ3=
-export REGISTRY_URL=mirror.hub.mylab.com
-export REGISTRY_PORT=8443
+export REGISTRY_URL=
+export REGISTRY_PORT=
 export REGISTRY_PASSWORD_BASE64=""
 ```
 
@@ -316,6 +316,9 @@ done
 
 **Taint to prevent user workloads:**
 ```bash
+export INFRA1_PRIVATE_IP=
+export INFRA2_PRIVATE_IP=
+export INFRA3_PRIVATE_IP=
 for IP in $INFRA1_PRIVATE_IP $INFRA2_PRIVATE_IP $INFRA3_PRIVATE_IP; do
   NODE=$(oc get nodes -o wide | grep $IP | awk '{print $1}')
   oc adm taint nodes $NODE node-role.kubernetes.io/infra=reserved:NoSchedule
