@@ -66,6 +66,7 @@ resource "aws_security_group_rule" "master_api_vpc" {
 }
 
 resource "aws_security_group_rule" "master_api_lb" {
+  count             = var.loadbalancer_cidr != var.vpc_cidr ? 1 : 0
   security_group_id = aws_security_group.master.id
   type              = "ingress"
   description       = "Kubernetes API from LB"
@@ -86,6 +87,7 @@ resource "aws_security_group_rule" "master_mcs_vpc" {
 }
 
 resource "aws_security_group_rule" "master_mcs_lb" {
+  count             = var.loadbalancer_cidr != var.vpc_cidr ? 1 : 0
   security_group_id = aws_security_group.master.id
   type              = "ingress"
   description       = "MCS from LB"
@@ -334,6 +336,7 @@ resource "aws_security_group_rule" "worker_ssh" {
 # ── Worker ingress — from LB CIDR ─────────────────────────────────────────────
 
 resource "aws_security_group_rule" "worker_https_lb" {
+  count             = var.loadbalancer_cidr != var.vpc_cidr ? 1 : 0
   security_group_id = aws_security_group.worker.id
   type              = "ingress"
   description       = "HTTPS from LB"
@@ -344,6 +347,7 @@ resource "aws_security_group_rule" "worker_https_lb" {
 }
 
 resource "aws_security_group_rule" "worker_http_lb" {
+  count             = var.loadbalancer_cidr != var.vpc_cidr ? 1 : 0
   security_group_id = aws_security_group.worker.id
   type              = "ingress"
   description       = "HTTP from LB"
@@ -354,6 +358,7 @@ resource "aws_security_group_rule" "worker_http_lb" {
 }
 
 resource "aws_security_group_rule" "worker_healthcheck_lb" {
+  count             = var.loadbalancer_cidr != var.vpc_cidr ? 1 : 0
   security_group_id = aws_security_group.worker.id
   type              = "ingress"
   description       = "Healthcheck from LB"
