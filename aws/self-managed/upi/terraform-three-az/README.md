@@ -305,7 +305,12 @@ Also remove the bootstrap node from the external load balancer backends for port
 ## Configure infra nodes (if deployed)
 
 After infra nodes have joined and their CSRs are approved:
-
+**Load Infra Node IP Address to variables**
+```bash
+export INFRA1_PRIVATE_IP=
+export INFRA2_PRIVATE_IP=
+export INFRA3_PRIVATE_IP=
+```
 **Label as infra:**
 ```bash
 for IP in $INFRA1_PRIVATE_IP $INFRA2_PRIVATE_IP $INFRA3_PRIVATE_IP; do
@@ -316,9 +321,6 @@ done
 
 **Taint to prevent user workloads:**
 ```bash
-export INFRA1_PRIVATE_IP=
-export INFRA2_PRIVATE_IP=
-export INFRA3_PRIVATE_IP=
 for IP in $INFRA1_PRIVATE_IP $INFRA2_PRIVATE_IP $INFRA3_PRIVATE_IP; do
   NODE=$(oc get nodes -o wide | grep $IP | awk '{print $1}')
   oc adm taint nodes $NODE node-role.kubernetes.io/infra=reserved:NoSchedule
