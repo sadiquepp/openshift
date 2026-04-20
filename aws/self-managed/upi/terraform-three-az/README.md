@@ -82,8 +82,8 @@ oc adm release extract -a <pull-secret-file> \
 ```bash
 mkdir sts && cd sts
 RELEASE_IMAGE=$(../openshift-install version | awk '/release image/ {print $3}')
-CCO_IMAGE=$(oc adm release info -a pull-secret.json --image-for='cloud-credential-operator' $RELEASE_IMAGE)
-oc image extract $CCO_IMAGE --file="/usr/bin/ccoctl" -a pull-secret.json
+CCO_IMAGE=$(oc adm release info -a ../pull-secret.json --image-for='cloud-credential-operator' $RELEASE_IMAGE)
+oc image extract $CCO_IMAGE --file="/usr/bin/ccoctl" -a ../pull-secret.json
 chmod 755 ccoctl
 ```
 
