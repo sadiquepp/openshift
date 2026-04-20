@@ -91,8 +91,8 @@ chmod 755 ccoctl
 ```bash
 oc adm release extract --credentials-requests \
   --cloud=aws --to=credrequests \
-  -a pull-secret.json \
-  $REGISTRY_URL:8443/openshift/release-images:$OPENSHIFT_VERSION
+  -a ../pull-secret.json \
+  $REGISTRY_URL:$REGISTRY_PORT/openshift/release-images:$OPENSHIFT_VERSION
 
 # Remove any operators you are not deploying
 rm -f credrequests/0000_50_cloud-credential-operator_05-iam-ro-credentialsrequest.yaml
@@ -100,10 +100,12 @@ rm -f credrequests/0000_50_cloud-credential-operator_05-iam-ro-credentialsreques
 
 **Create STS resources:**
 ```bash
+export AWS_REGION=ap-southeast-1
+export CLUSTER_NAME=cluster1
 ./ccoctl aws create-all \
-  --name <cluster-name-xxx> \
+  --name $CLUSTER_NAME \
   --credentials-requests-dir credrequests/ \
-  --region ap-southeast-1 \
+  --region $AWS_REGION \
   --create-private-s3-bucket
 cd ..
 ```
