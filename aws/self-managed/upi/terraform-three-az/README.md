@@ -115,8 +115,66 @@ cd ..
 
 ## Generate OpenShift manifests and ignition
 
-**Prepare `install-config.yaml`** using the provided example. Update `baseDomain`, `machineNetwork`, `pullSecret`, `imageContentSources`, `sshKey`, and `additionalTrustBundle`.
+**Prepare `install-config.yaml`**. Set the variables and update the registry certificate appropriately.
 
+```bash
+export AWS_REGION=ap-southeast-1
+export CLUSTER_DOMAIN=upi.sadiqueonline.com
+export CLUSTER_NAME=cluster1
+export VPC_CIDR=172.16.1.0/16
+export SUBNET_ID_AZ1=
+export SUBNET_ID_AZ2=
+export SUBNET_ID_AZ3=
+export REGISTRY_URL=mirror.hub.mylab.com
+export REGISTRY_PORT=8443
+export REGISTRY_PASSWORD_BASE64=""
+```
+
+```bash
+cat <<EOF > install-config.yaml
+apiVersion: v1
+baseDomain: ${CLUSTER_DOMAIN}
+credentialsMode: Manual
+controlPlane:
+  name: master
+  replicas: 3
+  platform:
+    aws:
+      type: m5.xlarge
+      zones:
+        - ${AWS_REGION}a
+        - ${AWS_REGION}b
+        - ${AWS_REGION}c
+      rootVolume:
+        iops: 2000
+        size: 100
+        type: io1
+      metadataService:
+        authentication: Required
+      subnets: 
+      - ${SUBNET_ID_AZ1}
+      - ${SUBNET_ID_AZ2}
+      - ${SUBNET_ID_AZ3}
+      serviceEndpoints:
+        - name: sts
+          url: https://sts.${AWS_REGION}.amazonaws.com
+publish: Internal
+pullSecret: '{"auths":{"${REGISTRY_URL}:${REGISTRY_PORT}": {"auth": "${REGISTRY_PASSWORD_BASE64}"} }}'
+imageDigestSources:
+- mirrors:
+  - ${REGISTRY_URL}:${REGISTRY_PORT}/openshift/release-images
+  source: quay.io/openshift-release-dev/ocp-release
+- mirrors:
+  - ${REGISTRY_URL}:${REGISTRY_PORT}/openshift/release
+  source: quay.io/openshift-release-dev/ocp-v4.0-art-dev
+sshKey: |
+  ssh-rsa key
+additionalTrustBundle: |
+    -----BEGIN CERTIFICATE-----
+    -----END CERTIFICATE-----
+EOF
+```
+**Create manifests**
 ```bash
 mkdir install-dir
 cp install-config.yaml install-dir/
