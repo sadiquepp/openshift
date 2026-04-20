@@ -69,10 +69,12 @@ These steps run on the bastion EC2 before `terraform apply`.
 
 **Extract `openshift-install` from the mirror registry:**
 ```bash
+export REGISTRY_URL=mirror.hub.mylab.com
+export OPENSHIFT_VERSION=4.18.5-x86_64
 oc adm release extract -a <pull-secret-file> \
   --icsp-file=<icsp-file.yaml> \
   --command=openshift-install \
-  mirror.hub.mylab.com:8443/openshift/release-images:4.18.5-x86_64
+  $REGISTRY_URL:8443/openshift/release-images:$OPENSHIFT_VERSION
 ```
 
 **Extract `ccoctl`:**
@@ -80,7 +82,7 @@ oc adm release extract -a <pull-secret-file> \
 mkdir sts && cd sts
 RELEASE_IMAGE=$(~/openshift-install version | awk '/release image/ {print $3}')
 CCO_IMAGE=$(oc adm release info -a pull-secret.json --image-for='cloud-credential-operator' $RELEASE_IMAGE)
-oc image extract $CCO_IMAGE --file="/usr/bin/ccoctl" -a /home/ec2-user/pull-secret.txt
+oc image extract $CCO_IMAGE --file="/usr/bin/ccoctl" -a pull-secret.json
 chmod 755 ccoctl
 ```
 
@@ -89,7 +91,7 @@ chmod 755 ccoctl
 oc adm release extract --credentials-requests \
   --cloud=aws --to=credrequests \
   -a pull-secret.json \
-  mirror.mylab.com:8443/openshift/release-images:4.18.5-x86_64
+  $REGISTRY_URL:8443/openshift/release-images:$OPENSHIFT_VERSION
 
 # Remove any operators you are not deploying
 rm -f credrequests/0000_50_cloud-credential-operator_05-iam-ro-credentialsrequest.yaml
