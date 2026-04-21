@@ -2,13 +2,14 @@
 # INFRA_ID=$(jq -r .infraID install-dir/metadata.json)
 infrastructure_name = "mycluster-xxxxx"
 cluster_name        = "mycluster"
-cluster_domain      = "example.com"
+cluster_domain      = "upi.example.com"
 aws_region          = "ap-southeast-1"
 
 # ── Network ────────────────────────────────────────────────────────────────────
 vpc_id            = "vpc-xxxxxxxxxxxxxxxxx"
 vpc_cidr          = "172.16.0.0/16"
-loadbalancer_cidr = "172.16.0.0/16"   # CIDR of your external load balancer
+egress_vpc_id     = "vpc-xxxxxxxxxxxxxxxxx"  # Egress VPC — for hosted zone association
+loadbalancer_cidr = "172.16.0.0/16"          # CIDR of your external load balancer
 
 bootstrap_subnet_id = "subnet-xxxxxxxxxxxxxxxxx"  # any AZ
 subnet_id_az1       = "subnet-xxxxxxxxxxxxxxxxx"
@@ -45,3 +46,8 @@ certificate_authority = "data:text/plain;charset=utf-8;base64,..."
 
 # ── Feature flags ──────────────────────────────────────────────────────────────
 create_infra_nodes = true
+
+# Set to true to have Terraform create an internal NLB, target groups,
+# listeners, and Route53 A records (api, api-int, *.apps).
+# When false (default) you must provide your own load balancer and DNS.
+create_nlb_and_dns = false  # true = Terraform creates NLB + Route53 A records

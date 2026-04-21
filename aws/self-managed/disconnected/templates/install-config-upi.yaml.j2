@@ -1,0 +1,65 @@
+apiVersion: v1
+baseDomain: upi.{{ openshift_base_domain }}
+credentialsMode: Manual
+compute:
+- architecture: amd64
+  hyperthreading: Enabled
+  name: worker
+  replicas: 0
+  platform: {}
+controlPlane:
+  architecture: amd64
+  hyperthreading: Enabled
+  name: master
+  replicas: 3
+  platform:
+    aws:
+      type: m5.xlarge
+      zones:
+        - {{ aws_region }}a
+        - {{ aws_region }}b
+        - {{ aws_region }}c
+      rootVolume:
+        iops: 2000
+        size: 100
+        type: io1
+      metadataService:
+        authentication: Required
+      subnets:
+      - {{ disconnected_subnet_id_a }}
+      - {{ disconnected_subnet_id_b }}
+      - {{ disconnected_subnet_id_c }}
+      serviceEndpoints:
+        - name: sts
+          url: https://sts.{{ aws_region }}.amazonaws.com
+metadata:
+  creationTimestamp: null
+  name: {{ openshift_cluster_name }}
+networking:
+  clusterNetwork:
+  - cidr: 10.128.0.0/14
+    hostPrefix: 23
+  machineNetwork:
+  - cidr: {{ disconnected_vpc_cidr }}
+  networkType: OVNKubernetes
+  serviceNetwork:
+  - 172.30.0.0/16
+platform:
+  aws:
+    region: {{ aws_region }}
+    subnets:
+    - {{ disconnected_subnet_id_a }}
+    - {{ disconnected_subnet_id_b }}
+    - {{ disconnected_subnet_id_c }}
+publish: Internal
+pullSecret: '{"auths":{"{{ installer_quay_hostname.stdout }}:8443": {"auth": {{ quay_credential.stdout }}} }}'
+imageDigestSources:
+- mirrors:
+  - {{ installer_quay_hostname.stdout }}:8443/openshift/release-images
+  source: quay.io/openshift-release-dev/ocp-release
+- mirrors:
+  - {{ installer_quay_hostname.stdout }}:8443/openshift/release
+  source: quay.io/openshift-release-dev/ocp-v4.0-art-dev
+sshKey: |
+  {{ ssh_public_key_for_ec2_and_openshit_node }}
+additionalTrustBundle: |

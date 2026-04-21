@@ -1,6 +1,12 @@
 # Disconnected OpenShift UPI on AWS — Terraform
 
-Deploys a self-managed OpenShift cluster using **User Provisioned Infrastructure (UPI)** in a disconnected AWS VPC across three availability zones, with an externally managed load balancer for API and Ingress. This repository replaces the original five CloudFormation stacks and their parameter JSON files with a single unified Terraform deployment.
+Deploys a self-managed OpenShift cluster using **User Provisioned Infrastructure (UPI)** in a disconnected AWS VPC across three availability zones. This repository replaces the original five CloudFormation stacks and their parameter JSON files with a single unified Terraform deployment.
+
+UPI clusters use a separate DNS namespace (`upi.<base_domain>`) so they can coexist alongside IPI clusters in the same environment. Terraform always creates a dedicated Route53 private hosted zone for the UPI cluster.
+
+Load balancing can be managed in two ways (controlled by `create_nlb_and_dns`):
+- **Bring your own** (`false`, default) -- provide an external LB and create A records in the Terraform-created hosted zone.
+- **Terraform-managed** (`true`) -- Terraform creates an internal NLB with listeners/target-groups and Route53 A records (`api`, `api-int`, `*.apps`) in the hosted zone.
 
 ---
 
@@ -17,13 +23,11 @@ Deploys a self-managed OpenShift cluster using **User Provisioned Infrastructure
 
 - A disconnected VPC with all required VPC endpoints (S3, EC2, STS, ELB). See [Network Requirements for Disconnected OpenShift on AWS](https://github.com/sadiquepp/openshift/blob/main/aws/docs/network-requirement-aws-api.md#2-cluster-to-complete-its-installation).
 - A mirror registry with the required release and operator images already mirrored and accessible from the VPC.
-- An external load balancer configured to:
+- **If `create_nlb_and_dns = false`** (default): An external load balancer, configured before deploy:
   - Listen on **6443** and **22623** for API traffic, with bootstrap + 3 master nodes as backends.
   - Listen on **443** and **80** for `*.apps` traffic, using **1936** (HTTP `/healthz`) for health checks. Use only infra nodes as backends if dedicated infra nodes are deployed, otherwise use worker nodes.
-- DNS (managed outside OpenShift — no Route53 integration):
-  - `api.<cluster>.<domain>` → external LB
-  - `api-int.<cluster>.<domain>` → external LB
-  - `*.apps.<cluster>.<domain>` → external LB
+  - Create A records in the Terraform-created hosted zone: `api.<cluster>.upi.<domain>`, `api-int.<cluster>.upi.<domain>`, `*.apps.<cluster>.upi.<domain>` → LB.
+- **If `create_nlb_and_dns = true`**: No external LB needed. Terraform creates the NLB, target groups, listeners, and Route53 A records automatically in the hosted zone it creates.
 - Pre-determined and **reserved** private IPs for all nodes in AWS VPC → Subnets → Actions → **Edit IPv4 CIDR Reservation**:
   - 1 bootstrap (any AZ), 3 masters (one per AZ), 3 workers (one per AZ), 3 infra nodes (one per AZ) if applicable.
 
@@ -57,7 +61,9 @@ tf-ocp-upi/
 ├── control_plane.tf          # Three master EC2 instances (one per AZ)
 ├── workers.tf                # Three worker EC2 instances (one per AZ)
 ├── infra_nodes.tf            # Three infra EC2 instances (optional, toggled by variable)
-├── outputs.tf                # SG IDs, IPs, and useful post-install commands
+├── dns.tf                    # Route53 private hosted zone for the UPI cluster
+├── nlb.tf                    # Internal NLB, target groups, listeners, Route53 A records (optional)
+├── outputs.tf                # SG IDs, IPs, DNS zone, NLB outputs, post-install commands
 └── terraform.tfvars.example  # Copy to terraform.tfvars and fill in values
 ```
 
@@ -257,6 +263,7 @@ Terraform creates all resources in the correct dependency order:
 4. Control plane EC2 instances (all three)
 5. Worker EC2 instances (all three)
 6. Infra EC2 instances (if `create_infra_nodes = true`)
+7. Internal NLB, target groups, listeners, and Route53 records (if `create_nlb_and_dns = true`)
 
 ---
 
@@ -289,16 +296,13 @@ oc get nodes
 Once the cluster is healthy and masters have formed a quorum, the bootstrap node is no longer needed:
 
 ```bash
-# Terraform targeted destroy — leaves all other resources intact
-terraform destroy \
-  -target=aws_instance.bootstrap \
-  -target=aws_network_interface.bootstrap \
-  -target=aws_security_group.bootstrap
+# Print the destroy command (includes NLB detachments when create_nlb_and_dns = true)
+terraform output bootstrap_terminate_command
+
+# Run the printed command — leaves all other resources intact
 ```
 
-> The output `bootstrap_terminate_command` prints this exact command after `terraform apply`.
-
-Also remove the bootstrap node from the external load balancer backends for ports 6443 and 22623.
+> When `create_nlb_and_dns = true`, the command also removes the bootstrap target group attachments for ports 6443 and 22623. When using your own LB, remember to remove the bootstrap from its backends manually.
 
 ---
 

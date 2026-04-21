@@ -53,7 +53,44 @@ output "infra_private_ips" {
   }
 }
 
+# ── DNS ───────────────────────────────────────────────────────────────────────
+
+output "hosted_zone_id" {
+  description = "Route53 private hosted zone ID created for the UPI cluster"
+  value       = aws_route53_zone.cluster.zone_id
+}
+
+output "hosted_zone_name" {
+  description = "Route53 private hosted zone name (cluster_name.cluster_domain)"
+  value       = aws_route53_zone.cluster.name
+}
+
+# ── NLB (only when create_nlb_and_dns = true) ─────────────────────────────────
+
+output "nlb_dns_name" {
+  description = "NLB DNS name — api/api-int/apps records point here (empty when create_nlb_and_dns = false)"
+  value       = var.create_nlb_and_dns ? aws_lb.cluster[0].dns_name : ""
+}
+
+output "nlb_arn" {
+  description = "NLB ARN (empty when create_nlb_and_dns = false)"
+  value       = var.create_nlb_and_dns ? aws_lb.cluster[0].arn : ""
+}
+
+# ── Post-install commands ─────────────────────────────────────────────────────
+
 output "bootstrap_terminate_command" {
   description = "Command to destroy bootstrap resources once the cluster is healthy"
-  value       = "terraform destroy -target=aws_instance.bootstrap -target=aws_network_interface.bootstrap -target=aws_security_group.bootstrap"
+  value = join(" ", concat(
+    [
+      "terraform destroy",
+      "-target=aws_instance.bootstrap",
+      "-target=aws_network_interface.bootstrap",
+      "-target=aws_security_group.bootstrap",
+    ],
+    var.create_nlb_and_dns ? [
+      "-target=aws_lb_target_group_attachment.api[\\\"bootstrap\\\"]",
+      "-target=aws_lb_target_group_attachment.mcs[\\\"bootstrap\\\"]",
+    ] : []
+  ))
 }

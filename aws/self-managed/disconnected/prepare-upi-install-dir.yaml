@@ -1,0 +1,184 @@
+---
+- name: Prepare UPI install directory (install-dir-upi)
+  hosts: aws_ec2
+  gather_facts: false
+  remote_user: ec2-user
+  vars:
+    prefix_for_name: project_name
+    aws_region: ap-southeast-1
+    openshift_base_domain: example.com
+    openshift_cluster_name_suffix: xt1
+    openshift_cluster_name: "{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}"
+    sts_suffix: "{{ openshift_cluster_name }}-sts"
+    pull_secret_location: /home/ec2-user/pull-secret.txt
+    quay_root_mount: /registry
+    upi_install_dir: /home/ec2-user/install-dir-upi
+  tasks:
+
+  - name: Store Hostname Into a Variable
+    shell: echo $HOSTNAME
+    register: installer_quay_hostname
+
+  - name: Store the mirror registry credentials to a variable
+    shell: |
+      CREDENTIAL=$(grep -A1 {{ installer_quay_hostname.stdout }} {{ pull_secret_location }} | grep -v {{ installer_quay_hostname.stdout }} | awk {'print $2'})
+      echo $CREDENTIAL
+    register: quay_credential
+
+  - name: Create UPI install directory
+    file:
+      path: "{{ upi_install_dir }}"
+      state: directory
+
+  - name: Generate UPI install-config.yaml
+    template:
+      src: install-config-upi.yaml.j2
+      dest: /home/ec2-user/install-config-upi.yaml
+
+  - name: Append Quay Root CA to UPI install-config.yaml
+    shell: |
+      sed 's/^/    /' {{ quay_root_mount }}/quay-rootCA/rootCA.pem >> /home/ec2-user/install-config-upi.yaml
+    become: true
+
+  - name: Copy install-config.yaml into UPI install directory
+    copy:
+      src: /home/ec2-user/install-config-upi.yaml
+      dest: "{{ upi_install_dir }}/install-config.yaml"
+      remote_src: yes
+
+  - name: Generate manifests
+    shell: |
+      /home/ec2-user/openshift-install create manifests --dir {{ upi_install_dir }}
+
+  - name: Remove machine-managed master machine resources
+    shell: |
+      rm -f {{ upi_install_dir }}/openshift/99_openshift-cluster-api_master-machines-*.yaml
+      rm -f {{ upi_install_dir }}/openshift/99_openshift-machine-api_master-control-plane-machine-set.yaml
+
+  - name: Remove machine-managed worker machineset resources
+    shell: |
+      rm -f {{ upi_install_dir }}/openshift/99_openshift-cluster-api_worker-machineset-*.yaml
+
+  - name: Remove privateZone from DNS config
+    lineinfile:
+      path: "{{ upi_install_dir }}/manifests/cluster-dns-02-config.yml"
+      state: absent
+      regexp: "{{ item }}"
+    loop:
+      - '^\s*privateZone:'
+      - '^\s*id:'
+
+  - name: Set ingress to HostNetwork for external LB
+    replace:
+      path: "{{ upi_install_dir }}/manifests/cluster-ingress-default-ingresscontroller.yaml"
+      regexp: 'type:\s+LoadBalancerService'
+      replace: 'type: HostNetwork'
+
+  - name: Copy STS manifests into UPI install directory
+    copy:
+      src: /home/ec2-user/sts/manifests/
+      dest: "{{ upi_install_dir }}/manifests/"
+      remote_src: yes
+
+  - name: Copy STS tls files into UPI install directory
+    copy:
+      src: /home/ec2-user/sts/tls
+      dest: "{{ upi_install_dir }}/"
+      remote_src: yes
+
+  - name: Create ignition configs
+    shell: |
+      /home/ec2-user/openshift-install create ignition-configs --dir {{ upi_install_dir }}
+
+  - name: Extract infrastructure ID
+    shell: |
+      jq -r .infraID {{ upi_install_dir }}/metadata.json
+    register: upi_infra_id
+
+  - name: Display infrastructure ID
+    debug:
+      msg: "UPI infrastructure_name = {{ upi_infra_id.stdout }}"
+
+  - name: Upload bootstrap.ign to S3
+    shell: |
+      aws s3 mb s3://{{ upi_infra_id.stdout }} 2>/dev/null || true
+      aws s3 cp {{ upi_install_dir }}/bootstrap.ign s3://{{ upi_infra_id.stdout }}/bootstrap.ign
+
+  - name: Extract certificate authority from master.ign
+    shell: |
+      python3 -c "
+      import json
+      ign = json.load(open('{{ upi_install_dir }}/master.ign'))
+      print(ign['ignition']['security']['tls']['certificateAuthorities'][0]['source'])
+      "
+    register: upi_cert_authority
+
+  - name: Copy UPI terraform files to bastion
+    copy:
+      src: "{{ playbook_dir }}/../upi/terraform-three-az/"
+      dest: /home/ec2-user/upi-terraform/
+
+  - name: Generate pre-filled terraform.tfvars for UPI terraform
+    copy:
+      dest: /home/ec2-user/upi-terraform/terraform.tfvars
+      content: |
+        # ── Auto-populated by prepare-upi-install-dir.yaml ───────────────
+        # These values were extracted from the disconnected environment
+        # and the UPI ignition artifacts.
+
+        # Cluster identity
+        infrastructure_name = "{{ upi_infra_id.stdout }}"
+        cluster_name        = "{{ openshift_cluster_name }}"
+        cluster_domain      = "upi.{{ openshift_base_domain }}"
+        aws_region          = "{{ aws_region }}"
+
+        # Network
+        vpc_id              = "{{ disconnected_vpc_id }}"
+        vpc_cidr            = "{{ disconnected_vpc_cidr }}"
+        egress_vpc_id       = "{{ egress_vpc_id }}"
+        bootstrap_subnet_id = "{{ disconnected_subnet_id_a }}"
+        subnet_id_az1       = "{{ disconnected_subnet_id_a }}"
+        subnet_id_az2       = "{{ disconnected_subnet_id_b }}"
+        subnet_id_az3       = "{{ disconnected_subnet_id_c }}"
+
+        # Ignition certificate authority
+        certificate_authority = "{{ upi_cert_authority.stdout }}"
+
+        # NLB — set to true to let Terraform create the NLB and Route53 A records.
+        # When false (default), provide your own load balancer and create DNS
+        # records in the hosted zone that Terraform creates.
+        create_nlb_and_dns = true
+
+        # ── TODO: Fill in the values below before running terraform ──────
+
+        # RHCOS AMI for your OCP version and region
+        # See: https://docs.redhat.com/en/documentation/openshift_container_platform/4.18/html/installing_on_aws/user-provisioned-infrastructure#installation-aws-user-infra-rhcos-ami_installing-restricted-networks-aws
+        rhcos_ami_id = "REPLACE_ME"
+
+        # External load balancer CIDR (for security group rules on ports 443, 80, 1936)
+        # Set to the VPC CIDR if the LB is within the disconnected VPC.
+        loadbalancer_cidr = "{{ disconnected_vpc_cidr }}"
+
+        # Pre-reserved private IPs — reserve these in AWS VPC → Subnets →
+        # Actions → Edit IPv4 CIDR Reservation before running terraform apply.
+        bootstrap_private_ip = "REPLACE_ME"
+        master0_private_ip   = "REPLACE_ME"
+        master1_private_ip   = "REPLACE_ME"
+        master2_private_ip   = "REPLACE_ME"
+        worker1_private_ip   = "REPLACE_ME"
+        worker2_private_ip   = "REPLACE_ME"
+        worker3_private_ip   = "REPLACE_ME"
+        infra1_private_ip    = "REPLACE_ME"
+        infra2_private_ip    = "REPLACE_ME"
+        infra3_private_ip    = "REPLACE_ME"
+
+        # Set to false if you don't need dedicated infra nodes
+        create_infra_nodes = true
+
+  - name: Display next steps
+    debug:
+      msg: >-
+        UPI terraform is ready at /home/ec2-user/upi-terraform/ with a
+        pre-filled terraform.tfvars. Edit the file to set rhcos_ami_id
+        and the pre-reserved private IPs, then run: cd ~/upi-terraform
+        && terraform init && terraform apply

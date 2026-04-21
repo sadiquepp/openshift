@@ -165,7 +165,20 @@ variable "allowed_bootstrap_ssh_cidr" {
   default     = "0.0.0.0/0"
 }
 
+# ── DNS ───────────────────────────────────────────────────────────────────────
+
+variable "egress_vpc_id" {
+  description = "Egress VPC ID — the UPI hosted zone is associated with this VPC so the bastion can resolve cluster DNS"
+  type        = string
+}
+
 # ── Feature flags ──────────────────────────────────────────────────────────────
+
+variable "create_nlb_and_dns" {
+  description = "Create an internal NLB with listeners/target-groups and Route53 A records. Set to false to bring your own load balancer and DNS."
+  type        = bool
+  default     = false
+}
 
 variable "create_infra_nodes" {
   description = "Set to true to deploy dedicated infra nodes in addition to workers"
