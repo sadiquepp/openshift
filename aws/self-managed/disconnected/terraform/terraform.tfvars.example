@@ -1,0 +1,28 @@
+# ── Required ──────────────────────────────────────────────────────
+ssh_public_key = "ssh-rsa AAAAB3Nza..."
+
+# ── Naming ────────────────────────────────────────────────────────
+prefix_for_name               = "myproject"
+openshift_base_domain         = "example.com"
+openshift_cluster_name_suffix = "xt1"
+
+# ── Region ────────────────────────────────────────────────────────
+aws_region = "ap-southeast-1"
+
+# ── Disconnected VPC ─────────────────────────────────────────────
+disconnected_vpc_cidr    = "172.16.0.0/16"
+disconnected_subnet_cidrs = ["172.16.1.0/24", "172.16.2.0/24", "172.16.3.0/24"]
+
+# ── Egress VPC ───────────────────────────────────────────────────
+egress_vpc_cidr              = "172.17.0.0/16"
+egress_public_subnet_cidrs   = ["172.17.1.0/24", "172.17.2.0/24", "172.17.3.0/24"]
+egress_private_subnet_cidrs  = ["172.17.4.0/24", "172.17.5.0/24", "172.17.6.0/24"]
+
+# ── VPC Endpoints ────────────────────────────────────────────────
+interface_endpoint_services = ["ec2", "sts", "elasticloadbalancing", "ecr.api", "ecr.dkr"]
+
+# ── Bastion EC2 ──────────────────────────────────────────────────
+ssh_private_key_path    = "~/.ssh/id_rsa"
+installer_ami           = "ami-04698733964af06d5"
+installer_instance_type = "t2.large"
+installer_disk_size     = 100
