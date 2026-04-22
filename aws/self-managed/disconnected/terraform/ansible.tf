@@ -31,7 +31,7 @@ resource "local_file" "ansible_vars" {
     openshift_base_domain           = var.openshift_base_domain
     openshift_cluster_name_suffix   = var.openshift_cluster_name_suffix
     vpc_owner_aws_account_number    = data.aws_caller_identity.current.account_id
-    hypershift_local_hosted_zone_id = aws_route53_zone.cluster.zone_id
+    hosted_zone_id_for_domain       = aws_route53_zone.cluster.zone_id
     disconnected_vpc_id             = aws_vpc.disconnected.id
     disconnected_vpc_cidr           = aws_vpc.disconnected.cidr_block
     disconnected_subnet_id_a        = aws_subnet.disconnected[0].id
