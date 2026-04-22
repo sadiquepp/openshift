@@ -78,8 +78,17 @@ disconnected/
 ---
 
 ## Environment Setup
+### 1. Setup the Bastion node. (only applies to RHEL9. Follow docs if using a different operating system)
 
-### 1. Create `terraform.tfvars`
+```
+bash
+sudo yum-config-manager --add-repo https://rpm.releases.hashicorp.com/RHEL/hashicorp.repo
+sudo yum install ansible-core terraform -y
+ansible-galaxy collection install community.aws
+ansible-galaxy collection install amazon.aws
+git clone https://github.com/sadiquepp/openshift.git
+```
+### 2. Create `terraform.tfvars`
 
 ```hcl
 # ── Required ──────────────────────────────────────────────────────
@@ -100,12 +109,25 @@ installer_instance_type = "t2.large"
 installer_disk_size     = 100
 ```
 
-### 2. Run the setup
+### 3. Run the setup
 
 ```bash
-cd aws/self-managed/disconnected/terraform
-./deploy.sh -e "pull_secret=$(cat ~/pull-secret.json)"
+cd openshift/aws/self-managed/disconnected/terraform
+./deploy.sh \
+  --pull-secret-file ~/pull-secret.json \
+  --mirror-registry-password 'MyP@ss' \
+  --openshift-version 4.20.0 \
+  --rosa-token-file ~/rosa-token.txt
 ```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--pull-secret-file` | Yes | Path to the OpenShift pull secret JSON file |
+| `--mirror-registry-password` | No | Password for the Quay mirror registry (default: playbook value) |
+| `--openshift-version` | No | Full version string, e.g. `4.20.0` (default: `4.20.0`) |
+| `--rosa-token-file` | No | Path to a file containing your ROSA API token |
+
+Any extra arguments are forwarded to the Ansible playbooks (e.g. `-e "key=value"`).
 
 This runs three steps:
 
@@ -125,7 +147,7 @@ When complete, the bastion has:
 - STS credentials in `~/sts/`
 - ROSA scripts pre-templated
 
-### 3. SSH into the bastion
+### 4. SSH into the bastion
 
 ```bash
 BASTION_IP=$(terraform output -raw installer_public_ip)
@@ -257,12 +279,12 @@ openshift-install wait-for install-complete \
 
 ### Option C: ROSA (Red Hat OpenShift Service on AWS)
 
-Several ROSA scripts are pre-templated on the bastion:
+Several ROSA scripts are pre-templated on the bastion. If `--rosa-token-file`
+was provided to `deploy.sh`, the `rosa login` command is already embedded in
+each script. Otherwise, log in manually first.
 
 ```bash
 ssh ec2-user@$BASTION_IP
-
-rosa login --token=<your-token>
 
 # Classic ROSA
 ./rosa-create-cluster.sh
@@ -315,6 +337,13 @@ To delete:
 | `disconnected_subnet_cidrs` | `[172.16.1-3.0/24]` | Private subnet CIDRs (one per AZ) |
 | `egress_vpc_cidr` | `172.17.0.0/16` | Egress VPC CIDR |
 | `egress_public_subnet_cidrs` | `[172.17.1-3.0/24]` | Egress public subnet CIDRs |
+| `egress_private_subnet_cidrs` | `[172.17.4-6.0/24]` | Egress private subnet CIDRs |
+
+### VPC Endpoints
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `interface_endpoint_services` | `[ec2, sts, elasticloadbalancing, ecr.api, ecr.dkr]` | AWS services to create Interface VPC endpoints for |
 
 ### Bastion EC2
 
