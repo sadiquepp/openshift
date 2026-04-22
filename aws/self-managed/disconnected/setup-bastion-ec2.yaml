@@ -258,6 +258,7 @@
   - name: Mirror Images to the local registry
     shell: |
       oc mirror -c imageset-config.yaml --workspace file://oc-mirror-output/ docker://$HOSTNAME:8443 --v2
+    when: registry_check.rc != 0
 
   - name: Extract Openshift Install Binary from mirror registry
     shell: |
