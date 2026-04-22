@@ -185,6 +185,13 @@
       state: directory
     become: true
 
+  - name: Check if mirror registry is already running
+    shell: |
+      podman login -u init -p {{ mirror_registry_password }} $(hostname):8443 2>/dev/null
+    register: registry_check
+    ignore_errors: true
+    changed_when: false
+
   - name: Install Mirror Registry
     shell: |
       /home/ec2-user/mirror-registry install \
@@ -194,6 +201,7 @@
       --initPassword {{ mirror_registry_password }}
     register: mirror_registry_install_output
     become: true
+    when: registry_check.rc != 0
 
   - name: Copy Quay Root CA
     copy:
