@@ -260,10 +260,16 @@
       oc mirror -c imageset-config.yaml --workspace file://oc-mirror-output/ docker://$HOSTNAME:8443 --v2
     when: registry_check.rc != 0
 
+  - name: Check if install-dir already exists
+    stat:
+      path: /home/ec2-user/install-dir/manifests
+    register: install_dir_check
+
   - name: Extract Openshift Install Binary from mirror registry
     shell: |
       oc adm release extract -a {{ pull_secret_location }} \
        --command=openshift-install "$HOSTNAME:8443/{{ openshift_local_repository }}:{{ openshift_version }}-x86_64"
+    when: not install_dir_check.stat.exists
 
   - name: Create credentials/Install directory
     file:
@@ -272,6 +278,7 @@
     loop:
       - install-dir
       - sts
+    when: not install_dir_check.stat.exists
 
   - name: Extract ccoutils
     shell: |
@@ -279,16 +286,19 @@
       RELEASE_IMAGE=$(/home/ec2-user/openshift-install version | awk '/release image/ {print $3}')
       CCO_IMAGE=$(oc adm release info -a /home/ec2-user/pull-secret.txt --image-for='cloud-credential-operator' $RELEASE_IMAGE)
       oc image extract $CCO_IMAGE --file="/usr/bin/ccoctl" -a /home/ec2-user/pull-secret.txt
+    when: not install_dir_check.stat.exists
 
   - name: Changing permission of ccoutil to 755
     file:
       path: /home/ec2-user/sts/ccoctl
       mode: 0755
+    when: not install_dir_check.stat.exists
 
   - name: Delete existing sts resources
     shell: |
       cd /home/ec2-user/sts
       /home/ec2-user/sts/ccoctl aws delete --name {{ sts_suffix }} --region {{ aws_region }}
+    when: not install_dir_check.stat.exists
 
   - name: Extract the list of CredentialsRequest objects from the OpenShift Container Platform release image
     shell: |
@@ -298,6 +308,7 @@
       --cloud=aws \
       --to=/home/ec2-user/sts/credrequests \
       ${RELEASE_IMAGE}
+    when: not install_dir_check.stat.exists
 
   - name: Create All STS Files
     shell: |
@@ -307,6 +318,7 @@
       --name {{ sts_suffix }} \
       --region {{ aws_region }} \
       --create-private-s3-bucket
+    when: not install_dir_check.stat.exists
 
   - name: Copy install-config.yaml
     template:
@@ -314,11 +326,22 @@
       dest: "{{ item }}"
     loop:
       - install-config.yaml
+    when: not install_dir_check.stat.exists
 
-  - name: Copy Quay Root CA to install-config.yaml
-    shell: |
-      sed 's/^/    /' /registry/quay-rootCA/rootCA.pem >> /home/ec2-user/install-config.yaml
+  - name: Read Quay Root CA
+    slurp:
+      src: "{{ quay_root_mount }}/quay-rootCA/rootCA.pem"
+    register: quay_root_ca
     become: true
+    when: not install_dir_check.stat.exists
+
+  - name: Append Quay Root CA to install-config.yaml
+    blockinfile:
+      path: /home/ec2-user/install-config.yaml
+      marker: ""
+      insertafter: EOF
+      block: "{{ quay_root_ca.content | b64decode | regex_replace('(?m)^', '    ') }}"
+    when: not install_dir_check.stat.exists
 
   - name: Copy Install-config.yaml to install-dir
     copy:
@@ -326,34 +349,40 @@
       dest: "/home/ec2-user/install-dir/install-config.yaml"
       remote_src: yes
       mode: 0644
+    when: not install_dir_check.stat.exists
 
   - name: Generate Manifests
     shell: |
       /home/ec2-user/openshift-install create manifests --dir /home/ec2-user/install-dir
+    when: not install_dir_check.stat.exists
 
   - name: Remove DNS related records
     lineinfile:
       path: /home/ec2-user/install-dir/manifests/cluster-dns-02-config.yml
       state: absent
       regexp: '^  privateZone:'
+    when: not install_dir_check.stat.exists
 
   - name: Remove DNS related records
     lineinfile:
       path: /home/ec2-user/install-dir/manifests/cluster-dns-02-config.yml
       state: absent
       regexp: '^    id:'
+    when: not install_dir_check.stat.exists
 
   - name: Copy STS credentials to install-dir/manifests
     copy:
       src: "/home/ec2-user/sts/manifests/"
       dest: "/home/ec2-user/install-dir/manifests/"
       remote_src: yes
+    when: not install_dir_check.stat.exists
 
   - name: Copy STS tls files to install-dir/
     copy:
       src: /home/ec2-user/sts/tls
       dest: /home/ec2-user/install-dir/
       remote_src: yes
+    when: not install_dir_check.stat.exists
 
 #  - name: Install the cluster
 #    shell: |
