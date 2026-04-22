@@ -78,20 +78,19 @@ disconnected/
 ---
 
 ## Environment Setup
-### 1. Setup the Bastion node. (only applies to RHEL9. Follow docs if using a different operating system)
+### 1. Setup the Bastion node. (only applies to RHEL9/Fedora. Follow respective docs if using a different operating system)
 
 ```bash
 sudo yum-config-manager --add-repo https://rpm.releases.hashicorp.com/RHEL/hashicorp.repo
 sudo yum install ansible-core terraform awscli -y
-ansible-galaxy collection install community.aws
-ansible-galaxy collection install amazon.aws
-git clone https://github.com/sadiquepp/openshift.git
-aws configure
-ssh-keygen
+ansible-galaxy collection install community.aws amazon.aws
+git clone https://github.com/sadiquepp/openshift.git # Clone the repository
+aws configure # Configure AWS credentials
+ssh-keygen # Generate SSH key pair
 ```
 ### 2. Create `terraform.tfvars`
 
-```hcl
+```hcl 
 # ── Required ──────────────────────────────────────────────────────
 ssh_public_key = "ssh-rsa AAAAB3Nza..."
 

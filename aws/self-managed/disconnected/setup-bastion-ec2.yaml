@@ -62,6 +62,13 @@
       clone: yes
       dest: /home/ec2-user/terraform-rosa
 
+  - name: Enable mouse scrolling for tmux
+    lineinfile:
+      path: /home/ec2-user/.tmux.conf
+      line: "set -g mouse on"
+      create: yes
+      state: present
+
   - name: Git Clone ROSA Terraform HCP
     git:
       repo: https://github.com/terraform-redhat/terraform-rhcs-rosa-hcp.git
