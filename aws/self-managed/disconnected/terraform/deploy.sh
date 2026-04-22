@@ -10,14 +10,65 @@
 # using the method of your choice: IPI, UPI, or ROSA.
 #
 # Usage:
-#   ./deploy.sh -e "pull_secret=$(cat ~/pull-secret.json)"
+#   ./deploy.sh \
+#     --pull-secret-file ~/pull-secret.json \
+#     --mirror-registry-password 'MyP@ss' \
+#     --openshift-version 4.20.0 \
+#     --rosa-token-file ~/rosa-token.txt
 #
-#   Any extra arguments are forwarded to the Ansible playbooks.
+#   All flags are optional except --pull-secret-file.
+#   Any extra arguments after the flags are forwarded to the Ansible playbooks.
 #
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLAYBOOK_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# ── Parse arguments ──────────────────────────────────────────────────────────
+
+PULL_SECRET_FILE=""
+MIRROR_REGISTRY_PASSWORD=""
+OPENSHIFT_VERSION=""
+ROSA_TOKEN=""
+EXTRA_ARGS=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --pull-secret-file)
+      PULL_SECRET_FILE="$2"; shift 2 ;;
+    --mirror-registry-password)
+      MIRROR_REGISTRY_PASSWORD="$2"; shift 2 ;;
+    --openshift-version)
+      OPENSHIFT_VERSION="$2"; shift 2 ;;
+    --rosa-token-file)
+      ROSA_TOKEN="$(cat "$2")"; shift 2 ;;
+    *)
+      EXTRA_ARGS+=("$1"); shift ;;
+  esac
+done
+
+if [[ -z "$PULL_SECRET_FILE" ]]; then
+  echo "Error: --pull-secret-file is required" >&2
+  echo "Usage: $0 --pull-secret-file ~/pull-secret.json [options...]" >&2
+  exit 1
+fi
+
+ANSIBLE_EXTRA=(-e "pull_secret=$(cat "$PULL_SECRET_FILE")")
+
+if [[ -n "$MIRROR_REGISTRY_PASSWORD" ]]; then
+  ANSIBLE_EXTRA+=(-e "mirror_registry_password=$MIRROR_REGISTRY_PASSWORD")
+fi
+
+if [[ -n "$OPENSHIFT_VERSION" ]]; then
+  MAJOR="${OPENSHIFT_VERSION%.*}"
+  MINOR="${OPENSHIFT_VERSION##*.}"
+  ANSIBLE_EXTRA+=(-e "openshift_major_version=$MAJOR")
+  ANSIBLE_EXTRA+=(-e "openshift_minor_version=$MINOR")
+fi
+
+if [[ -n "$ROSA_TOKEN" ]]; then
+  ANSIBLE_EXTRA+=(-e "rosa_token=$ROSA_TOKEN")
+fi
 
 # ── Step 1: Terraform (infra + bastion EC2) ──────────────────────────────────
 
@@ -41,14 +92,10 @@ echo "================================================================"
 echo "  Waiting 30s for EC2 SSH to become available ..."
 sleep 30
 
-EXTRA_ARGS=()
-if [[ $# -gt 0 ]]; then
-  EXTRA_ARGS=("$@")
-fi
-
 ansible-playbook \
   -i "$SCRIPT_DIR/inventory.ini" \
   -e "@$SCRIPT_DIR/ansible-vars.json" \
+  "${ANSIBLE_EXTRA[@]}" \
   "${EXTRA_ARGS[@]}" \
   "$PLAYBOOK_DIR/setup-bastion-ec2.yaml"
 
@@ -62,6 +109,7 @@ echo "================================================================"
 ansible-playbook \
   -i "$SCRIPT_DIR/inventory.ini" \
   -e "@$SCRIPT_DIR/ansible-vars.json" \
+  "${ANSIBLE_EXTRA[@]}" \
   "${EXTRA_ARGS[@]}" \
   "$PLAYBOOK_DIR/prepare-upi-install-dir.yaml"
 
