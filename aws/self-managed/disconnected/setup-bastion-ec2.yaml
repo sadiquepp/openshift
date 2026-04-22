@@ -249,11 +249,13 @@
     template:
       src: "imageset-config.yaml.j2"
       dest: "/home/ec2-user/imageset-config.yaml"
+    when: registry_check.rc != 0
 
   - name: Create oc-mirror-output Directory
     file:
       path: "/home/ec2-user/oc-mirror-output"
       state: directory
+    when: registry_check.rc != 0
 
   - name: Mirror Images to the local registry
     shell: |
