@@ -267,6 +267,11 @@
       path: /home/ec2-user/install-dir/manifests
     register: install_dir_check
 
+  - name: Check if sts-dir already exists
+    stat:
+      path: /home/ec2-user/sts/manifests
+    register: sts_dir_check
+
   - name: Extract Openshift Install Binary from mirror registry
     shell: |
       oc adm release extract -a {{ pull_secret_location }} \
@@ -288,19 +293,19 @@
       RELEASE_IMAGE=$(/home/ec2-user/openshift-install version | awk '/release image/ {print $3}')
       CCO_IMAGE=$(oc adm release info -a /home/ec2-user/pull-secret.txt --image-for='cloud-credential-operator' $RELEASE_IMAGE)
       oc image extract $CCO_IMAGE --file="/usr/bin/ccoctl" -a /home/ec2-user/pull-secret.txt
-    when: not install_dir_check.stat.exists
+    when: not sts_dir_check.stat.exists
 
   - name: Changing permission of ccoutil to 755
     file:
       path: /home/ec2-user/sts/ccoctl
       mode: 0755
-    when: not install_dir_check.stat.exists
+    when: not sts_dir_check.stat.exists
 
   - name: Delete existing sts resources
     shell: |
       cd /home/ec2-user/sts
       /home/ec2-user/sts/ccoctl aws delete --name {{ sts_suffix }} --region {{ aws_region }}
-    when: not install_dir_check.stat.exists
+    when: not sts_dir_check.stat.exists
 
   - name: Extract the list of CredentialsRequest objects from the OpenShift Container Platform release image
     shell: |
@@ -310,7 +315,7 @@
       --cloud=aws \
       --to=/home/ec2-user/sts/credrequests \
       ${RELEASE_IMAGE}
-    when: not install_dir_check.stat.exists
+    when: not sts_dir_check.stat.exists
 
   - name: Create All STS Files
     shell: |
@@ -320,7 +325,7 @@
       --name {{ sts_suffix }} \
       --region {{ aws_region }} \
       --create-private-s3-bucket
-    when: not install_dir_check.stat.exists
+    when: not sts_dir_check.stat.exists
 
   - name: Copy install-config.yaml
     template:
