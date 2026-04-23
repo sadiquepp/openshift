@@ -47,9 +47,44 @@ variable "egress_private_subnet_cidrs" {
 # ── VPC Endpoints ─────────────────────────────────────────────────────────────
 
 variable "interface_endpoint_services" {
-  description = "List of AWS services to create Interface VPC endpoints for"
+  description = "List of AWS services to create Interface VPC endpoints for in the disconnected VPC"
   type        = list(string)
-  default     = ["ec2", "sts", "elasticloadbalancing", "ecr.api", "ecr.dkr"]
+  default     = ["ec2", "sts", "elasticloadbalancing", "ecr.api", "ecr.dkr", "iam", "route53"]
+}
+
+# ── Cross-region endpoints (us-east-1) ────────────────────────────────────────
+# The Tagging API endpoint is only available in us-east-1. When enabled, this
+# creates a small VPC in us-east-1, peers it with the disconnected VPC, creates
+# interface endpoints there, and adds Route53 private zone overrides so the
+# disconnected VPC resolves the service hostnames to the endpoint ENI IPs
+# reachable via peering.
+#
+# Note: IAM and Route53 now support cross-region VPC endpoints natively
+# (since Nov 2025) and are created directly in the disconnected VPC via
+# interface_endpoint_services above.
+
+variable "create_cross_region_endpoints" {
+  description = "Create a us-east-1 VPC with peering and interface endpoints for global AWS services that lack cross-region endpoint support (e.g. Tagging)"
+  type        = bool
+  default     = false
+}
+
+variable "cross_region_endpoint_services" {
+  description = "AWS services to create interface endpoints for in us-east-1. Only used when create_cross_region_endpoints = true."
+  type        = list(string)
+  default     = ["tagging"]
+}
+
+variable "cross_region_vpc_cidr" {
+  description = "CIDR for the small VPC in us-east-1 hosting global service interface endpoints"
+  type        = string
+  default     = "10.99.0.0/24"
+}
+
+variable "cross_region_subnet_cidr" {
+  description = "Subnet CIDR within the us-east-1 VPC"
+  type        = string
+  default     = "10.99.0.0/26"
 }
 
 # ── OpenShift Cluster ─────────────────────────────────────────────────────────

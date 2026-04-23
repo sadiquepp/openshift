@@ -19,7 +19,17 @@ egress_public_subnet_cidrs   = ["172.17.1.0/24", "172.17.2.0/24", "172.17.3.0/24
 egress_private_subnet_cidrs  = ["172.17.4.0/24", "172.17.5.0/24", "172.17.6.0/24"]
 
 # ── VPC Endpoints ────────────────────────────────────────────────
-interface_endpoint_services = ["ec2", "sts", "elasticloadbalancing", "ecr.api", "ecr.dkr"]
+interface_endpoint_services = ["ec2", "sts", "elasticloadbalancing", "ecr.api", "ecr.dkr", "iam", "route53"]
+
+# ── Cross-region endpoints (us-east-1) ──────────────────────────
+# The Tagging API endpoint is only available in us-east-1.
+# Set to true to create a us-east-1 VPC with peering and a
+# Route53 private zone override so the disconnected VPC can
+# reach tagging.us-east-1.amazonaws.com privately.
+create_cross_region_endpoints  = false
+cross_region_endpoint_services = ["tagging"]
+cross_region_vpc_cidr          = "10.99.0.0/24"
+cross_region_subnet_cidr       = "10.99.0.0/26"
 
 # ── Bastion EC2 ──────────────────────────────────────────────────
 ssh_private_key_path    = "~/.ssh/id_rsa"

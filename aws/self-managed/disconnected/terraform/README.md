@@ -30,7 +30,7 @@ the method of your choice: **IPI**, **UPI**, or **ROSA**.
                         │  └───────────┘ └───────┘ └───────────┘   │
                         │                                          │
                         │  VPC Endpoints: S3, EC2, STS, ELB,       │
-                        │                 ECR API, ECR DKR         │
+                        │    ECR API, ECR DKR, IAM, Route53        │
                         │                                          │
                         │  Route53 Private Zone:                   │
                         │    <cluster>.<domain>                    │
@@ -55,7 +55,8 @@ disconnected/
 │   ├── vpc.tf                       # Disconnected + Egress VPCs and subnets
 │   ├── transit_gateway.tf           # IGW, Transit Gateway, route tables
 │   ├── iam.tf                       # IAM role + instance profile for bastion EC2
-│   ├── endpoints.tf                 # Security group + VPC endpoints
+│   ├── endpoints.tf                 # Security group + VPC endpoints (S3, EC2, STS, ELB, ECR, IAM, Route53)
+│   ├── tagging_endpoint.tf          # Optional: cross-region tagging endpoint via us-east-1 VPC peering
 │   ├── route53.tf                   # Private hosted zone + egress VPC association
 │   ├── ec2.tf                       # SSH key pair, security group, bastion EC2 instance
 │   ├── ansible.tf                   # Generated Ansible inventory + vars
@@ -343,7 +344,25 @@ To delete:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `interface_endpoint_services` | `[ec2, sts, elasticloadbalancing, ecr.api, ecr.dkr]` | AWS services to create Interface VPC endpoints for |
+| `interface_endpoint_services` | `[ec2, sts, elasticloadbalancing, ecr.api, ecr.dkr, iam, route53]` | AWS services to create Interface VPC endpoints for in the disconnected VPC |
+
+### Cross-region Endpoints (us-east-1)
+
+The Tagging API endpoint is only available in us-east-1. When enabled, Terraform
+creates a small VPC in us-east-1, peers it with the disconnected VPC, creates the
+interface endpoint there, and adds a Route53 private zone override so the
+disconnected VPC resolves `tagging.us-east-1.amazonaws.com` to a private IP
+reachable via peering.
+
+IAM and Route53 support cross-region VPC endpoints natively (since Nov 2025)
+and are created directly in the disconnected VPC via `interface_endpoint_services`.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `create_cross_region_endpoints` | `false` | Create a us-east-1 VPC with peering and interface endpoints for the Tagging API |
+| `cross_region_endpoint_services` | `[tagging]` | Services to create endpoints for in us-east-1 |
+| `cross_region_vpc_cidr` | `10.99.0.0/24` | CIDR for the us-east-1 VPC |
+| `cross_region_subnet_cidr` | `10.99.0.0/26` | Subnet CIDR within the us-east-1 VPC |
 
 ### Bastion EC2
 
