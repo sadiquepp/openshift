@@ -84,7 +84,7 @@ disconnected/
 ```bash
 sudo yum-config-manager --add-repo https://rpm.releases.hashicorp.com/RHEL/hashicorp.repo
 sudo yum install ansible-core terraform awscli -y
-ansible-galaxy collection install community.aws amazon.aws
+ansible-galaxy collection install community.aws amazon.aws community.general
 git clone https://github.com/sadiquepp/openshift.git # Clone the repository
 aws configure # Configure AWS credentials
 ssh-keygen # Generate SSH key pair
@@ -170,7 +170,7 @@ load balancers, DNS) automatically.
 ssh ec2-user@$BASTION_IP
 
 # install-dir is already prepared with manifests and STS credentials
-openshift-install create cluster \
+./openshift-install create cluster \
   --dir ~/install-dir \
   --log-level=debug
 ```
@@ -178,7 +178,7 @@ openshift-install create cluster \
 To destroy:
 
 ```bash
-openshift-install destroy cluster \
+./openshift-install destroy cluster \
   --dir ~/install-dir \
   --log-level=debug
 ```

@@ -391,6 +391,13 @@
       remote_src: yes
     when: not install_dir_check.stat.exists
 
+  - name: Take a backup of the install-dir
+    community.general.archive:
+      path: /home/ec2-user/install-dir
+      dest: /home/ec2-user/install-dir-backup.tgz
+      format: tgz
+      when: not install_dir_check.stat.exists
+
 #  - name: Install the cluster
 #    shell: |
 #      openshift-install create cluster --dir /home/ec2-user/install-dir --log-level=debug
