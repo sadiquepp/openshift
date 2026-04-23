@@ -51,6 +51,7 @@ resource "aws_vpc_endpoint" "interface" {
 
 # ── Global Interface Endpoints (iam, route53) ────────────────────────────────
 # Cross-region VPC endpoints use a global service name: com.amazonaws.<service>
+# with service_region pointing to where the service is hosted (us-east-1).
 # DNS resolves to private IPs in the disconnected VPC (e.g. iam.amazonaws.com)
 
 resource "aws_vpc_endpoint" "global" {
@@ -58,6 +59,7 @@ resource "aws_vpc_endpoint" "global" {
 
   vpc_id              = aws_vpc.disconnected.id
   service_name        = "com.amazonaws.${each.key}"
+  service_region      = "us-east-1"
   vpc_endpoint_type   = "Interface"
   subnet_ids          = [aws_subnet.disconnected[0].id]
   security_group_ids  = [aws_security_group.vpc_endpoint.id]
