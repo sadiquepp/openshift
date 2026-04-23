@@ -47,9 +47,15 @@ variable "egress_private_subnet_cidrs" {
 # ── VPC Endpoints ─────────────────────────────────────────────────────────────
 
 variable "interface_endpoint_services" {
-  description = "List of AWS services to create Interface VPC endpoints for in the disconnected VPC"
+  description = "Regional AWS services to create Interface VPC endpoints for (service name: com.amazonaws.<region>.<service>)"
   type        = list(string)
-  default     = ["ec2", "sts", "elasticloadbalancing", "ecr.api", "ecr.dkr", "iam", "route53"]
+  default     = ["ec2", "sts", "elasticloadbalancing", "ecr.api", "ecr.dkr"]
+}
+
+variable "global_endpoint_services" {
+  description = "Global AWS services with cross-region VPC endpoint support (service name: com.amazonaws.<service>, no region prefix)"
+  type        = list(string)
+  default     = ["iam", "route53"]
 }
 
 # ── Cross-region endpoints (us-east-1) ────────────────────────────────────────

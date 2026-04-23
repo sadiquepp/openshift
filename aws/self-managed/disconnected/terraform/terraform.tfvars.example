@@ -19,7 +19,10 @@ egress_public_subnet_cidrs   = ["172.17.1.0/24", "172.17.2.0/24", "172.17.3.0/24
 egress_private_subnet_cidrs  = ["172.17.4.0/24", "172.17.5.0/24", "172.17.6.0/24"]
 
 # ── VPC Endpoints ────────────────────────────────────────────────
-interface_endpoint_services = ["ec2", "sts", "elasticloadbalancing", "ecr.api", "ecr.dkr", "iam", "route53"]
+# Regional endpoints: com.amazonaws.<region>.<service>
+interface_endpoint_services = ["ec2", "sts", "elasticloadbalancing", "ecr.api", "ecr.dkr"]
+# Global cross-region endpoints: com.amazonaws.<service>  (no region prefix)
+global_endpoint_services    = ["iam", "route53"]
 
 # ── Cross-region endpoints (us-east-1) ──────────────────────────
 # The Tagging API endpoint is only available in us-east-1.

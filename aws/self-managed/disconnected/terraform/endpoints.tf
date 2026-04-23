@@ -31,13 +31,33 @@ resource "aws_vpc_endpoint" "s3" {
   }
 }
 
-# ── Interface Endpoints (ec2, sts, elb, ecr.api, ecr.dkr) ────────────────────
+# ── Regional Interface Endpoints (ec2, sts, elb, ecr.api, ecr.dkr) ───────────
+# Service name format: com.amazonaws.<region>.<service>
 
 resource "aws_vpc_endpoint" "interface" {
   for_each = toset(var.interface_endpoint_services)
 
   vpc_id              = aws_vpc.disconnected.id
   service_name        = "com.amazonaws.${var.aws_region}.${each.key}"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = [aws_subnet.disconnected[0].id]
+  security_group_ids  = [aws_security_group.vpc_endpoint.id]
+  private_dns_enabled = true
+
+  tags = {
+    Name = "${var.prefix_for_name}-${each.key}-disconnected"
+  }
+}
+
+# ── Global Interface Endpoints (iam, route53) ────────────────────────────────
+# Cross-region VPC endpoints use a global service name: com.amazonaws.<service>
+# DNS resolves to private IPs in the disconnected VPC (e.g. iam.amazonaws.com)
+
+resource "aws_vpc_endpoint" "global" {
+  for_each = toset(var.global_endpoint_services)
+
+  vpc_id              = aws_vpc.disconnected.id
+  service_name        = "com.amazonaws.${each.key}"
   vpc_endpoint_type   = "Interface"
   subnet_ids          = [aws_subnet.disconnected[0].id]
   security_group_ids  = [aws_security_group.vpc_endpoint.id]

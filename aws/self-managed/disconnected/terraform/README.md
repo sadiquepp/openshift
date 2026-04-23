@@ -344,7 +344,8 @@ To delete:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `interface_endpoint_services` | `[ec2, sts, elasticloadbalancing, ecr.api, ecr.dkr, iam, route53]` | AWS services to create Interface VPC endpoints for in the disconnected VPC |
+| `interface_endpoint_services` | `[ec2, sts, elasticloadbalancing, ecr.api, ecr.dkr]` | Regional AWS services (`com.amazonaws.<region>.<service>`) |
+| `global_endpoint_services` | `[iam, route53]` | Global AWS services with cross-region endpoint support (`com.amazonaws.<service>`, no region prefix). DNS resolves to private IPs in the disconnected VPC (e.g. `iam.amazonaws.com`). |
 
 ### Cross-region Endpoints (us-east-1)
 
