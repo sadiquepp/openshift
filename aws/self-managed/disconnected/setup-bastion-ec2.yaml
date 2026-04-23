@@ -396,9 +396,9 @@
   - name: Take a backup of the install-dir
     community.general.archive:
       path: /home/ec2-user/install-dir
-      dest: /home/ec2-user/install-dir-backup.tar
-      format: tar
-      when: not install_dir_check.stat.exists
+      dest: /home/ec2-user/install-dir-backup.bz2
+      format: bz2
+    when: not install_dir_check.stat.exists
 
 #  - name: Install the cluster
 #    shell: |

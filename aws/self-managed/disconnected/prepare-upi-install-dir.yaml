@@ -116,8 +116,8 @@
   - name: Take a backup of the install-dir
     community.general.archive:
       path: "{{ upi_install_dir }}"
-      dest: "{{ upi_install_dir }}-backup.tar"
-      format: tar
+      dest: "{{ upi_install_dir }}-backup.bz2"
+      format: bz2
 
   - name: Copy UPI terraform files to bastion
     copy:
