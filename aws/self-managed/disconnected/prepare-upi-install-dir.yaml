@@ -101,8 +101,23 @@
 
   - name: Upload bootstrap.ign to S3
     shell: |
-      aws s3 mb s3://{{ upi_infra_id.stdout }} 2>/dev/null || true
-      aws s3 cp {{ upi_install_dir }}/bootstrap.ign s3://{{ upi_infra_id.stdout }}/bootstrap.ign
+      aws s3 mb s3://{{ upi_infra_id.stdout }} --region {{ aws_region }} 2>/dev/null || true
+      aws s3api put-bucket-policy --bucket {{ upi_infra_id.stdout }} --region {{ aws_region }} --policy '{
+        "Version": "2012-10-17",
+        "Statement": [{
+          "Sid": "AllowBootstrapIgnitionFromVPC",
+          "Effect": "Allow",
+          "Principal": "*",
+          "Action": "s3:GetObject",
+          "Resource": "arn:aws:s3:::{{ upi_infra_id.stdout }}/*",
+          "Condition": {
+            "StringEquals": { "aws:sourceVpc": "{{ disconnected_vpc_id }}" }
+          }
+        }]
+      }'
+      aws s3 cp {{ upi_install_dir }}/bootstrap.ign \
+        s3://{{ upi_infra_id.stdout }}/bootstrap.ign \
+        --region {{ aws_region }}
 
   - name: Extract certificate authority from master.ign
     shell: |
