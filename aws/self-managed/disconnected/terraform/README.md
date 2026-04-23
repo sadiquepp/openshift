@@ -396,6 +396,13 @@ These values are also automatically written to `ansible-vars.json` for use
 by Ansible playbooks.
 
 ---
+## Populate Operators from Mirror Registry
+- To populate operators from the mirror registry, run the following commands from the bastion node.
+```bash
+export KUBECONFIG=~/install-dir/auth/kubeconfig # Change it apprpriately if using UPI or IPI
+oc patch OperatorHub cluster --type json -p '[{"op": "add", "path": "/spec/disableAllDefaultSources", "value": true}]'
+oc apply -f oc-mirror-output/working-dir/cluster-resources
+```
 
 ## Teardown
 
