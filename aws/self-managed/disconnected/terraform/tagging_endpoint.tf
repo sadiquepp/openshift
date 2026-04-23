@@ -94,7 +94,7 @@ data "aws_network_interface" "cross_region_endpoint" {
   for_each = local.cross_region_services
   provider = aws.us_east_1
 
-  id = aws_vpc_endpoint.cross_region[each.key].network_interface_ids[0]
+  id = tolist(aws_vpc_endpoint.cross_region[each.key].network_interface_ids)[0]
 }
 
 # ── 3. VPC peering: disconnected (ap-southeast-1) ↔ cross-region (us-east-1)
