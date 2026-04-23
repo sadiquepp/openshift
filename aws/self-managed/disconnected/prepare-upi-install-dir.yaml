@@ -161,16 +161,16 @@
 
         # Pre-reserved private IPs — reserve these in AWS VPC → Subnets →
         # Actions → Edit IPv4 CIDR Reservation before running terraform apply.
-        bootstrap_private_ip = "REPLACE_ME"
-        master0_private_ip   = "REPLACE_ME"
-        master1_private_ip   = "REPLACE_ME"
-        master2_private_ip   = "REPLACE_ME"
-        worker1_private_ip   = "REPLACE_ME"
-        worker2_private_ip   = "REPLACE_ME"
-        worker3_private_ip   = "REPLACE_ME"
-        infra1_private_ip    = "REPLACE_ME"
-        infra2_private_ip    = "REPLACE_ME"
-        infra3_private_ip    = "REPLACE_ME"
+        bootstrap_private_ip = "{{ disconnected_subnet_id_a_cidr | regex_replace('\\.[0-9]+/.*$', '.X') }}"
+        master0_private_ip   = "{{ disconnected_subnet_id_a_cidr | regex_replace('\\.[0-9]+/.*$', '.X') }}"
+        master1_private_ip   = "{{ disconnected_subnet_id_b_cidr | regex_replace('\\.[0-9]+/.*$', '.X') }}"
+        master2_private_ip   = "{{ disconnected_subnet_id_c_cidr | regex_replace('\\.[0-9]+/.*$', '.X') }}"
+        worker1_private_ip   = "{{ disconnected_subnet_id_a_cidr | regex_replace('\\.[0-9]+/.*$', '.X') }}"
+        worker2_private_ip   = "{{ disconnected_subnet_id_b_cidr | regex_replace('\\.[0-9]+/.*$', '.X') }}"
+        worker3_private_ip   = "{{ disconnected_subnet_id_c_cidr | regex_replace('\\.[0-9]+/.*$', '.X') }}"
+        infra1_private_ip    = "{{ disconnected_subnet_id_a_cidr | regex_replace('\\.[0-9]+/.*$', '.X') }}"
+        infra2_private_ip    = "{{ disconnected_subnet_id_b_cidr | regex_replace('\\.[0-9]+/.*$', '.X') }}"
+        infra3_private_ip    = "{{ disconnected_subnet_id_c_cidr | regex_replace('\\.[0-9]+/.*$', '.X') }}"
 
         # Set to false if you don't need dedicated infra nodes
         create_infra_nodes = true

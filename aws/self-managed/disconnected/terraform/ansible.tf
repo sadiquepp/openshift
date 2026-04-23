@@ -38,6 +38,9 @@ resource "local_file" "ansible_vars" {
     disconnected_subnet_id_a        = aws_subnet.disconnected[0].id
     disconnected_subnet_id_b        = aws_subnet.disconnected[1].id
     disconnected_subnet_id_c        = aws_subnet.disconnected[2].id
+    disconnected_subnet_id_a_cidr   = aws_subnet.disconnected[0].cidr_block
+    disconnected_subnet_id_b_cidr   = aws_subnet.disconnected[1].cidr_block
+    disconnected_subnet_id_c_cidr   = aws_subnet.disconnected[2].cidr_block
     egress_vpc_id                   = aws_vpc.egress.id
   })
 }
