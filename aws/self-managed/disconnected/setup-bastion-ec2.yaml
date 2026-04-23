@@ -22,6 +22,8 @@
     hypershift_local_hosted_zone_id: abcde
     rosa_shared_vpc_hosted_zone_id: abcde
     rosa_shared_vpc_cluster_domain: example.com
+    mirror_operators:
+      - aws-load-balancer-operator
   tasks:
 
   - name: Wait for SSH banners

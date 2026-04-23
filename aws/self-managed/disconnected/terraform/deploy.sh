@@ -14,7 +14,8 @@
 #     --pull-secret-file ~/pull-secret.json \
 #     --mirror-registry-password 'MyP@ss' \
 #     --openshift-version 4.20.0 \
-#     --rosa-token-file ~/rosa-token.txt
+#     --rosa-token-file ~/rosa-token.txt \
+#     --operators 'aws-load-balancer-operator,cluster-logging,elasticsearch-operator'
 #
 #   All flags are optional except --pull-secret-file.
 #   Any extra arguments after the flags are forwarded to the Ansible playbooks.
@@ -30,6 +31,7 @@ PULL_SECRET_FILE=""
 MIRROR_REGISTRY_PASSWORD=""
 OPENSHIFT_VERSION=""
 ROSA_TOKEN=""
+OPERATORS=""
 EXTRA_ARGS=()
 
 while [[ $# -gt 0 ]]; do
@@ -42,6 +44,8 @@ while [[ $# -gt 0 ]]; do
       OPENSHIFT_VERSION="$2"; shift 2 ;;
     --rosa-token-file)
       ROSA_TOKEN="$(cat "$2")"; shift 2 ;;
+    --operators)
+      OPERATORS="$2"; shift 2 ;;
     *)
       EXTRA_ARGS+=("$1"); shift ;;
   esac
@@ -68,6 +72,12 @@ fi
 
 if [[ -n "$ROSA_TOKEN" ]]; then
   ANSIBLE_EXTRA+=(-e "rosa_token=$ROSA_TOKEN")
+fi
+
+if [[ -n "$OPERATORS" ]]; then
+  # Convert comma-separated "op1,op2,op3" to JSON list '["op1","op2","op3"]'
+  OPS_JSON=$(echo "$OPERATORS" | tr ',' '\n' | sed 's/^ *//;s/ *$//' | jq -R . | jq -s -c .)
+  ANSIBLE_EXTRA+=(-e "mirror_operators=$OPS_JSON")
 fi
 
 # ── Step 1: Terraform (infra + bastion EC2) ──────────────────────────────────

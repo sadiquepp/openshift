@@ -118,7 +118,8 @@ cd openshift/aws/self-managed/disconnected/terraform
   --pull-secret-file ~/pull-secret.json \
   --mirror-registry-password 'MyP@ss' \
   --openshift-version 4.20.0 \
-  --rosa-token-file ~/rosa-token.txt
+  --rosa-token-file ~/rosa-token.txt \
+  --operators 'aws-load-balancer-operator,cluster-logging,elasticsearch-operator'
 ```
 
 | Flag | Required | Description |
@@ -127,6 +128,12 @@ cd openshift/aws/self-managed/disconnected/terraform
 | `--mirror-registry-password` | No | Password for the Quay mirror registry (default: playbook value) |
 | `--openshift-version` | No | Full version string, e.g. `4.20.0` (default: `4.20.0`) |
 | `--rosa-token-file` | No | Path to a file containing your ROSA API token |
+| `--operators` | No | Comma-separated list of operators to mirror (default: `aws-load-balancer-operator`) |
+
+> **Disk sizing:** Each mirrored operator adds several GB of images to the bastion's
+> mirror registry. If you include more than a handful of operators, increase
+> `installer_disk_size` in `terraform.tfvars` (e.g. `200` or `300` GB) before
+> running `deploy.sh`.
 
 Any extra arguments are forwarded to the Ansible playbooks (e.g. `-e "key=value"`).
 

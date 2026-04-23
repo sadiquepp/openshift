@@ -10,6 +10,8 @@ mirror:
   operators:
     - catalog: registry.redhat.io/redhat/redhat-operator-index:v{{ openshift_major_version }} 
       packages: 
-       - name: aws-load-balancer-operator
+{% for op in mirror_operators %}
+       - name: {{ op }}
+{% endfor %}
   additionalImages: 
    - name: registry.redhat.io/ubi8/ubi:latest
