@@ -394,7 +394,7 @@
     when: not install_dir_check.stat.exists
 
   - name: Take a backup of the install-dir
-    community.general.archive:
+    commaunity.general.archive:
       path: /home/ec2-user/install-dir
       dest: /home/ec2-user/install-dir-backup.tgz
       format: tgz

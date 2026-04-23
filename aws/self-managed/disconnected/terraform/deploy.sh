@@ -77,7 +77,7 @@ fi
 if [[ -n "$OPERATORS" ]]; then
   # Convert comma-separated "op1,op2,op3" to JSON list '["op1","op2","op3"]'
   OPS_JSON=$(echo "$OPERATORS" | tr ',' '\n' | sed 's/^ *//;s/ *$//' | jq -R . | jq -s -c .)
-  ANSIBLE_EXTRA+=(-e "mirror_operators=$OPS_JSON")
+  ANSIBLE_EXTRA+=(-e "{\"mirror_operators\": $OPS_JSON}")
 fi
 
 # ── Step 1: Terraform (infra + bastion EC2) ──────────────────────────────────
