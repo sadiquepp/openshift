@@ -315,7 +315,7 @@
       --cloud=aws \
       --to=/home/ec2-user/sts/credrequests \
       ${RELEASE_IMAGE}
-    when: not sts_dir_check.stat.exists
+    when: not install_dir_check.stat.exists
 
   - name: Create All STS Files
     shell: |
@@ -325,7 +325,7 @@
       --name {{ sts_suffix }} \
       --region {{ aws_region }} \
       --create-private-s3-bucket
-    when: not sts_dir_check.stat.exists
+    when: not install_dir_check.stat.exists
 
   - name: Copy install-config.yaml
     template:
@@ -363,19 +363,19 @@
       /home/ec2-user/openshift-install create manifests --dir /home/ec2-user/install-dir
     when: not install_dir_check.stat.exists
 
-  - name: Remove DNS related records
-    lineinfile:
-      path: /home/ec2-user/install-dir/manifests/cluster-dns-02-config.yml
-      state: absent
-      regexp: '^  privateZone:'
-    when: not install_dir_check.stat.exists
+ # - name: Remove DNS related records
+ #   lineinfile:
+ #     path: /home/ec2-user/install-dir/manifests/cluster-dns-02-config.yml
+ #     state: absent
+ #     regexp: '^  privateZone:'
+ #   when: not install_dir_check.stat.exists
 
-  - name: Remove DNS related records
-    lineinfile:
-      path: /home/ec2-user/install-dir/manifests/cluster-dns-02-config.yml
-      state: absent
-      regexp: '^    id:'
-    when: not install_dir_check.stat.exists
+ # - name: Remove DNS related records
+ #   lineinfile:
+ #     path: /home/ec2-user/install-dir/manifests/cluster-dns-02-config.yml
+ #     state: absent
+ #     regexp: '^    id:'
+ #   when: not install_dir_check.stat.exists
 
   - name: Copy STS credentials to install-dir/manifests
     copy:
