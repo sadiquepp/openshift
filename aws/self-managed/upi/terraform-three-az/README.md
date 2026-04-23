@@ -333,18 +333,22 @@ done
 
 **Move the default IngressController to infra nodes:**
 ```bash
-oc edit ingresscontroller default -n openshift-ingress-operator
-```
-Add to `spec`:
-```yaml
-nodePlacement:
-  nodeSelector:
-    matchLabels:
-      node-role.kubernetes.io/infra: ""
-  tolerations:
-  - effect: NoSchedule
-    key: node-role.kubernetes.io/infra
-    value: reserved
+oc patch ingresscontroller default -n openshift-ingress-operator --type=merge -p '{
+  "spec": {
+    "nodePlacement": {
+      "nodeSelector": {
+        "matchLabels": {
+          "node-role.kubernetes.io/infra": ""
+        }
+      },
+      "tolerations": [{
+        "effect": "NoSchedule",
+        "key": "node-role.kubernetes.io/infra",
+        "value": "reserved"
+      }]
+    }
+  }
+}'
 ```
 
 **Confirm ingress pods moved:**
