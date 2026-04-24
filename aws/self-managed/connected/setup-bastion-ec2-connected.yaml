@@ -1,3 +1,4 @@
+
 - name: Setup Bastion Node
   hosts: aws_ec2
   gather_facts: false

@@ -194,7 +194,7 @@
         infra3_private_ip    = "{{ disconnected_subnet_id_c_cidr | regex_replace('\.[0-9]+/.*$', '.X') }}"
 
         # Set to false if you don't need dedicated infra nodes
-        create_infra_nodes = true
+        create_infra_nodes = false
 
   - name: Display next steps
     debug:

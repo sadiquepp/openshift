@@ -1,0 +1,21 @@
+# ── Required ──────────────────────────────────────────────────────────────────
+ssh_public_key = "ssh-rsa AAAAB3Nza..."
+
+# ── Naming ────────────────────────────────────────────────────────────────────
+prefix_for_name               = "myproject"
+openshift_base_domain         = "example.com"
+openshift_cluster_name_suffix = "xx1"
+
+# ── Region ────────────────────────────────────────────────────────────────────
+aws_region = "ap-southeast-1"
+
+# ── Network CIDRs ────────────────────────────────────────────────────────────
+# connected_vpc_cidr             = "172.16.0.0/16"
+# connected_private_subnet_cidrs = ["172.16.1.0/24", "172.16.2.0/24", "172.16.3.0/24"]
+# connected_public_subnet_cidrs  = ["172.16.4.0/24", "172.16.5.0/24", "172.16.6.0/24"]
+
+# ── Bastion EC2 ──────────────────────────────────────────────────────────────
+ssh_private_key_path    = "~/.ssh/id_rsa"
+installer_ami           = "ami-04698733964af06d5"
+# installer_instance_type = "t2.medium"
+# installer_disk_size     = 50
