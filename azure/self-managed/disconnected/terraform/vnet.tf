@@ -63,6 +63,12 @@ resource "azurerm_virtual_network_peering" "disconnected_to_egress" {
   remote_virtual_network_id = azurerm_virtual_network.egress.id
   allow_forwarded_traffic   = true
   allow_gateway_transit     = false
+
+  depends_on = [
+    azurerm_subnet.disconnected,
+    azurerm_subnet.private_endpoints,
+    azurerm_subnet.egress_public,
+  ]
 }
 
 resource "azurerm_virtual_network_peering" "egress_to_disconnected" {
@@ -72,6 +78,12 @@ resource "azurerm_virtual_network_peering" "egress_to_disconnected" {
   remote_virtual_network_id = azurerm_virtual_network.disconnected.id
   allow_forwarded_traffic   = true
   allow_gateway_transit     = false
+
+  depends_on = [
+    azurerm_subnet.disconnected,
+    azurerm_subnet.private_endpoints,
+    azurerm_subnet.egress_public,
+  ]
 }
 
 # ── Route Table for Disconnected Subnets ─────────────────────────────────────
