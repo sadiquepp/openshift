@@ -93,6 +93,59 @@
       state: present
     become: true
 
+  - name: Login to Azure using VM managed identity
+    shell: |
+      az login --identity --username {{ managed_identity_client_id }}
+    register: az_login_result
+    changed_when: false
+
+  - name: Set default Azure subscription
+    shell: |
+      az account set --subscription {{ azure_subscription_id }}
+    changed_when: false
+
+  - name: Check if osServicePrincipal.json already exists
+    stat:
+      path: /home/azureuser/.azure/osServicePrincipal.json
+    register: sp_check
+
+  - name: Create service principal for openshift-install
+    shell: |
+      az ad sp create-for-rbac --name "{{ openshift_cluster_name }}-installer" \
+        --role Contributor \
+        --scopes /subscriptions/{{ azure_subscription_id }} \
+        --output json
+    register: sp_result
+    when: not sp_check.stat.exists
+
+  - name: Grant User Access Administrator to service principal
+    shell: |
+      SP_ID=$(echo '{{ sp_result.stdout }}' | jq -r '.appId')
+      az role assignment create \
+        --assignee "$SP_ID" \
+        --role "User Access Administrator" \
+        --scope /subscriptions/{{ azure_subscription_id }}
+    when: not sp_check.stat.exists
+
+  - name: Create .azure directory
+    file:
+      path: /home/azureuser/.azure
+      state: directory
+    when: not sp_check.stat.exists
+
+  - name: Write osServicePrincipal.json for openshift-install
+    copy:
+      dest: /home/azureuser/.azure/osServicePrincipal.json
+      mode: "0600"
+      content: |
+        {
+          "subscriptionId": "{{ azure_subscription_id }}",
+          "clientId": {{ sp_result.stdout | from_json | json_query('appId') | to_json }},
+          "clientSecret": {{ sp_result.stdout | from_json | json_query('password') | to_json }},
+          "tenantId": "{{ azure_tenant_id }}"
+        }
+    when: not sp_check.stat.exists
+
   - name: Enable mouse scrolling for tmux
     lineinfile:
       path: /home/azureuser/.tmux.conf
