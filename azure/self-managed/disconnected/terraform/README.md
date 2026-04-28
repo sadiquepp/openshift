@@ -48,33 +48,43 @@ registry and mirrored OCP images, and leaves you ready to deploy a cluster using
 - Ansible (with `community.general` collection)
 - Azure CLI (`az`) authenticated with permissions for VNets, VMs, DNS, Storage,
   Managed Identity, and role assignments
-- A **service principal** for `openshift-install` (see below)
 - An SSH key pair
 - An OpenShift pull secret ([console.redhat.com](https://console.redhat.com/openshift/install/pull-secret))
 
-### Create the Service Principal
+### Service Principal for openshift-install
 
-`openshift-install` on Azure requires a service principal with a client secret --
-it does not support managed identities. Create one before running `deploy.sh`
-(or let `deploy.sh` create it automatically):
+`openshift-install` on Azure requires a service principal with a client secret
+stored in `~/.azure/osServicePrincipal.json` on the bastion. It does not support
+managed identities. After the bastion is provisioned, SSH in and create the SP
+manually (requires Entra ID permissions):
 
 ```bash
-# Replace <subscription-id> and <name> with your values
-az ad sp create-for-rbac --name "<name>-installer" \
+az login
+az ad sp create-for-rbac --name "<cluster>-installer" \
   --role Contributor \
-  --scopes /subscriptions/<subscription-id>
+  --scopes /subscriptions/<subscription-id> \
+  --output json
 
-# Note the appId and password from the output, then grant the additional role:
+# Note the appId and password, then grant the additional role:
 az role assignment create \
   --assignee <appId> \
   --role "User Access Administrator" \
   --scope /subscriptions/<subscription-id>
+
+# Write the credentials file:
+mkdir -p ~/.azure
+cat > ~/.azure/osServicePrincipal.json <<EOF
+{
+  "subscriptionId": "<subscription-id>",
+  "clientId": "<appId>",
+  "clientSecret": "<password>",
+  "tenantId": "<tenant-id>"
+}
+EOF
 ```
 
-Add the `appId` and `password` to your `terraform.tfvars` as
-`installer_sp_client_id` and `installer_sp_client_secret`.
-Terraform passes these to the bastion where they are written to
-`~/.azure/osServicePrincipal.json` for `openshift-install`.
+This must be done before running `openshift-install create manifests` or
+`openshift-install create cluster`.
 
 ## Directory Structure
 

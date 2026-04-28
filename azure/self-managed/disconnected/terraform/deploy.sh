@@ -70,46 +70,6 @@ if [[ -n "$OPERATORS" ]]; then
   ANSIBLE_EXTRA+=(-e "{\"mirror_operators\": $OPS_JSON}")
 fi
 
-# ── Step 0: Create service principal for openshift-install ───────────────────
-# openshift-install requires an SP with a client secret (it cannot use
-# managed identities). We create it here with az CLI (which has the
-# Entra ID permissions) and pass the credentials into Terraform as variables.
-
-cd "$SCRIPT_DIR"
-
-SP_CLIENT_ID=""
-SP_CLIENT_SECRET=""
-
-if terraform state show azurerm_resource_group.main &>/dev/null; then
-  SP_CLIENT_ID="$(terraform output -raw installer_sp_client_id 2>/dev/null || true)"
-fi
-
-if [[ -z "$SP_CLIENT_ID" ]]; then
-  SUB_ID="$(terraform -chdir="$SCRIPT_DIR" console -no-color <<< 'var.azure_subscription_id' 2>/dev/null | tr -d '"')"
-  CLUSTER_NAME="$(terraform -chdir="$SCRIPT_DIR" console -no-color <<< '"${var.prefix_for_name}-${var.openshift_cluster_name_suffix}"' 2>/dev/null | tr -d '"')"
-
-  echo "================================================================"
-  echo "  Creating service principal: ${CLUSTER_NAME}-installer"
-  echo "================================================================"
-
-  SP_JSON=$(az ad sp create-for-rbac \
-    --name "${CLUSTER_NAME}-installer" \
-    --role Contributor \
-    --scopes "/subscriptions/${SUB_ID}" \
-    --output json)
-
-  SP_CLIENT_ID=$(echo "$SP_JSON" | jq -r '.appId')
-  SP_CLIENT_SECRET=$(echo "$SP_JSON" | jq -r '.password')
-
-  az role assignment create \
-    --assignee "$SP_CLIENT_ID" \
-    --role "User Access Administrator" \
-    --scope "/subscriptions/${SUB_ID}" \
-    --output none
-
-  echo "  Service principal created: $SP_CLIENT_ID"
-fi
-
 # ── Step 1: Terraform (infra + bastion VM) ───────────────────────────────────
 
 echo "================================================================"
@@ -117,16 +77,7 @@ echo "  Step 1/2 — Terraform: VNets, peering, private endpoints, bastion VM"
 echo "================================================================"
 cd "$SCRIPT_DIR"
 terraform init -upgrade
-
-TF_ARGS=()
-if [[ -n "$SP_CLIENT_ID" ]]; then
-  TF_ARGS+=(-var "installer_sp_client_id=$SP_CLIENT_ID")
-fi
-if [[ -n "$SP_CLIENT_SECRET" ]]; then
-  TF_ARGS+=(-var "installer_sp_client_secret=$SP_CLIENT_SECRET")
-fi
-
-terraform apply "${TF_ARGS[@]}" --auto-approve
+terraform apply --auto-approve
 
 BASTION_IP="$(terraform output -raw bastion_public_ip)"
 echo ""

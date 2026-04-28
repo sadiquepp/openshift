@@ -15,25 +15,6 @@ variable "azure_subscription_id" {
   type        = string
 }
 
-# ── Service Principal for openshift-install ──────────────────────────────────
-# openshift-install requires a service principal with Contributor + User Access
-# Administrator roles. Create one before running terraform:
-#   az ad sp create-for-rbac --name "<cluster>-installer" --role Contributor \
-#     --scopes /subscriptions/<sub-id>
-#   az role assignment create --assignee <appId> \
-#     --role "User Access Administrator" --scope /subscriptions/<sub-id>
-
-variable "installer_sp_client_id" {
-  description = "Client (app) ID of the service principal for openshift-install"
-  type        = string
-}
-
-variable "installer_sp_client_secret" {
-  description = "Client secret of the service principal for openshift-install"
-  type        = string
-  sensitive   = true
-}
-
 # ── Disconnected VNet ────────────────────────────────────────────────────────
 
 variable "disconnected_vnet_cidr" {

@@ -51,10 +51,7 @@ output "managed_identity_client_id" {
   value       = azurerm_user_assigned_identity.ocp_install.client_id
 }
 
-output "installer_sp_client_id" {
-  description = "Client ID of the service principal for openshift-install"
-  value       = var.installer_sp_client_id
-}
+
 
 output "managed_identity_principal_id" {
   description = "Principal ID of the managed identity"

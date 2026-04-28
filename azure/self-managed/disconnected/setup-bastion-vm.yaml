@@ -93,34 +93,6 @@
       state: present
     become: true
 
-  - name: Login to Azure using VM managed identity
-    shell: |
-      az login --identity --username {{ managed_identity_client_id }}
-    register: az_login_result
-    changed_when: false
-
-  - name: Set default Azure subscription
-    shell: |
-      az account set --subscription {{ azure_subscription_id }}
-    changed_when: false
-
-  - name: Create .azure directory
-    file:
-      path: /home/azureuser/.azure
-      state: directory
-
-  - name: Write osServicePrincipal.json for openshift-install
-    copy:
-      dest: /home/azureuser/.azure/osServicePrincipal.json
-      mode: "0600"
-      content: |
-        {
-          "subscriptionId": "{{ azure_subscription_id }}",
-          "clientId": "{{ installer_sp_client_id }}",
-          "clientSecret": "{{ installer_sp_client_secret }}",
-          "tenantId": "{{ azure_tenant_id }}"
-        }
-
   - name: Enable mouse scrolling for tmux
     lineinfile:
       path: /home/azureuser/.tmux.conf

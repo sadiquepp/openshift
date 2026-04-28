@@ -2,11 +2,6 @@
 ssh_public_key        = "ssh-rsa AAAAB3Nza..."
 azure_subscription_id = "00000000-0000-0000-0000-000000000000"
 
-# Service principal for openshift-install (created automatically by deploy.sh,
-# or pre-create with: az ad sp create-for-rbac --name "<name>-installer" ...)
-installer_sp_client_id     = "00000000-0000-0000-0000-000000000000"
-installer_sp_client_secret = "xxxxxxxxxxxxxxxxxxxx"
-
 # ── Naming ────────────────────────────────────────────────────────
 prefix_for_name               = "myproject"
 openshift_base_domain         = "example.com"
