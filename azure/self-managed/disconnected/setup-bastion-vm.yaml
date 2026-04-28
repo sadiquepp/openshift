@@ -24,6 +24,18 @@
       delay: 5
       timeout: 300
 
+  - name: Expand root filesystem to use full OS disk
+    shell: |
+      # Azure RHEL images use LVM with a small root LV; grow it to fill the disk
+      PV=$(pvs --noheadings -o pv_name | head -1 | tr -d ' ')
+      PART_NUM=$(echo "$PV" | grep -oE '[0-9]+$')
+      DISK=$(echo "$PV" | sed "s/${PART_NUM}$//")
+      growpart "$DISK" "$PART_NUM" || true
+      pvresize "$PV"
+      lvextend -r -l +100%FREE /dev/rootvg/rootlv
+    become: true
+    changed_when: false
+
   - name: Store Hostname Into a Variable
     shell: |
       echo $HOSTNAME

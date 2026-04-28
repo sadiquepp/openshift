@@ -253,7 +253,7 @@ vi ~/upi-terraform/terraform.tfvars
 # Deploy
 cd ~/upi-terraform
 terraform init
-terraform apply
+terraform apply --auto-approve
 ```
 
 See [`upi/terraform-three-az/README.md`](../../upi/terraform-three-az/README.md)
