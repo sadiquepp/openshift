@@ -77,7 +77,7 @@ echo "  Step 1/2 — Terraform: VNets, peering, private endpoints, bastion VM"
 echo "================================================================"
 cd "$SCRIPT_DIR"
 terraform init -upgrade
-terraform apply
+terraform apply --auto-approve
 
 BASTION_IP="$(terraform output -raw bastion_public_ip)"
 echo ""

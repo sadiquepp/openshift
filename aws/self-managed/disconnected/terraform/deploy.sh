@@ -87,7 +87,7 @@ echo "  Step 1/3 — Terraform: VPCs, transit GW, endpoints, bastion EC2"
 echo "================================================================"
 cd "$SCRIPT_DIR"
 terraform init -upgrade
-terraform apply
+terraform apply --auto-approve
 
 BASTION_IP="$(terraform output -raw installer_public_ip)"
 echo ""
