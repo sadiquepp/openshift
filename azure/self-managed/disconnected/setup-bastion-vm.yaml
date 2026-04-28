@@ -40,7 +40,9 @@
       DISK=$(echo "$PV" | sed "s/${PART_NUM}$//")
       growpart "$DISK" "$PART_NUM" || true
       pvresize "$PV"
-      lvextend -r -L +20G /dev/rootvg/rootlv || true
+      lvextend -r -L +5G  /dev/rootvg/rootlv || true
+      lvextend -r -L +3G  /dev/rootvg/tmplv  || true
+      lvextend -r -L +20G /dev/rootvg/varlv  || true
       lvextend -r -l +100%FREE /dev/rootvg/homelv || true
     become: true
     when: lv_grow_check.stdout == "grow"
