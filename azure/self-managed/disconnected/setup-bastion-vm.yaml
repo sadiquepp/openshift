@@ -51,11 +51,22 @@
       state: present
     become: true
 
+  - name: Add Azure CLI Yum Repo
+    copy:
+      dest: /etc/yum.repos.d/azure-cli.repo
+      content: |
+        [azure-cli]
+        name=Azure CLI
+        baseurl=https://packages.microsoft.com/yumrepos/azure-cli
+        enabled=1
+        gpgcheck=1
+        gpgkey=https://packages.microsoft.com/keys/microsoft.asc
+    become: true
+
   - name: Install Azure CLI
-    shell: |
-      rpm --import https://packages.microsoft.com/keys/microsoft.asc
-      dnf install -y https://packages.microsoft.com/config/rhel/9.0/packages-microsoft-prod.rpm
-      dnf install -y azure-cli
+    dnf:
+      name: azure-cli
+      state: present
     become: true
 
   - name: Enable mouse scrolling for tmux
@@ -66,12 +77,19 @@
       state: present
 
   - name: Add Terraform Yum Repo
-    shell: |
-      yum-config-manager --add-repo https://rpm.releases.hashicorp.com/RHEL/hashicorp.repo
+    copy:
+      dest: /etc/yum.repos.d/hashicorp.repo
+      content: |
+        [hashicorp]
+        name=HashiCorp Stable - RHEL
+        baseurl=https://rpm.releases.hashicorp.com/RHEL/9/$basearch/stable
+        enabled=1
+        gpgcheck=1
+        gpgkey=https://rpm.releases.hashicorp.com/gpg
     become: true
 
   - name: Install Terraform
-    yum:
+    dnf:
       name:
         - terraform
       state: present
