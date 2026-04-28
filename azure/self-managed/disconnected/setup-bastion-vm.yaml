@@ -24,9 +24,16 @@
       delay: 5
       timeout: 300
 
+  - name: Check if root LV has free space to grow
+    shell: |
+      FREE=$(vgs --noheadings -o vg_free --units m rootvg | tr -d ' mM.')
+      [ "${FREE%%,*}" -gt 0 ] 2>/dev/null && echo "grow" || echo "skip"
+    register: lv_grow_check
+    become: true
+    changed_when: false
+
   - name: Expand root filesystem to use full OS disk
     shell: |
-      # Azure RHEL images use LVM with a small root LV; grow it to fill the disk
       PV=$(pvs --noheadings -o pv_name | head -1 | tr -d ' ')
       PART_NUM=$(echo "$PV" | grep -oE '[0-9]+$')
       DISK=$(echo "$PV" | sed "s/${PART_NUM}$//")
@@ -34,7 +41,7 @@
       pvresize "$PV"
       lvextend -r -l +100%FREE /dev/rootvg/rootlv
     become: true
-    changed_when: false
+    when: lv_grow_check.stdout == "grow"
 
   - name: Store Hostname Into a Variable
     shell: |
