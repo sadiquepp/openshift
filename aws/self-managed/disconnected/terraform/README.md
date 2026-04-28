@@ -1,5 +1,8 @@
 # Disconnected OpenShift Environment on AWS
 
+> **Also available for Azure:** See [`azure/self-managed/disconnected/`](../../../../azure/self-managed/disconnected/terraform/README.md)
+> for the equivalent setup on Microsoft Azure.
+
 Set up a disconnected (air-gapped) environment on AWS for deploying OpenShift
 clusters. This creates the network infrastructure, a bastion host with a mirror
 registry and mirrored OCP images, and leaves you ready to deploy a cluster using

@@ -1,5 +1,8 @@
 # Disconnected OpenShift Environment on Azure
 
+> **Also available for AWS:** See [`aws/self-managed/disconnected/`](../../../../aws/self-managed/disconnected/terraform/README.md)
+> for the equivalent setup on Amazon Web Services (includes IPI, UPI, and ROSA).
+
 Set up a disconnected (air-gapped) environment on Azure for deploying OpenShift
 clusters. This creates the network infrastructure, a bastion host with a mirror
 registry and mirrored OCP images, and leaves you ready to deploy a cluster using
@@ -45,8 +48,33 @@ registry and mirrored OCP images, and leaves you ready to deploy a cluster using
 - Ansible (with `community.general` collection)
 - Azure CLI (`az`) authenticated with permissions for VNets, VMs, DNS, Storage,
   Managed Identity, and role assignments
+- A **service principal** for `openshift-install` (see below)
 - An SSH key pair
 - An OpenShift pull secret ([console.redhat.com](https://console.redhat.com/openshift/install/pull-secret))
+
+### Create the Service Principal
+
+`openshift-install` on Azure requires a service principal with a client secret --
+it does not support managed identities. Create one before running `deploy.sh`
+(or let `deploy.sh` create it automatically):
+
+```bash
+# Replace <subscription-id> and <name> with your values
+az ad sp create-for-rbac --name "<name>-installer" \
+  --role Contributor \
+  --scopes /subscriptions/<subscription-id>
+
+# Note the appId and password from the output, then grant the additional role:
+az role assignment create \
+  --assignee <appId> \
+  --role "User Access Administrator" \
+  --scope /subscriptions/<subscription-id>
+```
+
+Add the `appId` and `password` to your `terraform.tfvars` as
+`installer_sp_client_id` and `installer_sp_client_secret`.
+Terraform passes these to the bastion where they are written to
+`~/.azure/osServicePrincipal.json` for `openshift-install`.
 
 ## Directory Structure
 
