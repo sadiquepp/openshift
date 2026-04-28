@@ -14,9 +14,10 @@
     cco_suffix: "{{ openshift_cluster_name }}-cco"
     pull_secret_location: /home/azureuser/pull-secret.txt
     mirror_registry_password: SedUam1879yz
-    quay_root_mount: /registry
+    quay_root_mount: /home/azureuser/registry
     openshift_local_repository: openshift/release-images
     mirror_operators: []
+    ansible_remote_tmp: /home/azureuser/.ansible/tmp
   tasks:
 
   - name: Wait for SSH banners
@@ -24,7 +25,7 @@
       delay: 5
       timeout: 300
 
-  - name: Check if root LV has free space to grow
+  - name: Check if VG has free space to grow
     shell: |
       FREE=$(vgs --noheadings -o vg_free --units m rootvg | tr -d ' mM.')
       [ "${FREE%%,*}" -gt 0 ] 2>/dev/null && echo "grow" || echo "skip"
@@ -32,14 +33,15 @@
     become: true
     changed_when: false
 
-  - name: Expand root filesystem to use full OS disk
+  - name: Expand partition and LVs to use full OS disk
     shell: |
       PV=$(pvs --noheadings -o pv_name | head -1 | tr -d ' ')
       PART_NUM=$(echo "$PV" | grep -oE '[0-9]+$')
       DISK=$(echo "$PV" | sed "s/${PART_NUM}$//")
       growpart "$DISK" "$PART_NUM" || true
       pvresize "$PV"
-      lvextend -r -l +100%FREE /dev/rootvg/rootlv
+      lvextend -r -L +20G /dev/rootvg/rootlv || true
+      lvextend -r -l +100%FREE /dev/rootvg/homelv || true
     become: true
     when: lv_grow_check.stdout == "grow"
 
