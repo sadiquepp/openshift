@@ -12,6 +12,7 @@
     openshift_cluster_name_suffix: xt1
     openshift_cluster_name: "{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}"
     cco_suffix: "{{ openshift_cluster_name }}-cco"
+    cco_storage_account: "{{ cco_suffix | regex_replace('[^a-z0-9]', '') | truncate(24, True, '') }}"
     pull_secret_location: /home/azureuser/pull-secret.txt
     mirror_registry_password: SedUam1879yz
     quay_root_mount: /home/azureuser/registry
@@ -323,6 +324,7 @@
       --region {{ azure_region }} \
       --subscription-id {{ azure_subscription_id }} \
       --tenant-id {{ azure_tenant_id }} \
+      --storage-account-name {{ cco_storage_account }} \
       --output-dir /home/azureuser/cco
     when: not install_dir_check.stat.exists
 
