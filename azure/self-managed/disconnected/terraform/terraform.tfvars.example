@@ -1,0 +1,34 @@
+# ── Required ──────────────────────────────────────────────────────
+ssh_public_key        = "ssh-rsa AAAAB3Nza..."
+azure_subscription_id = "00000000-0000-0000-0000-000000000000"
+
+# ── Naming ────────────────────────────────────────────────────────
+prefix_for_name               = "myproject"
+openshift_base_domain         = "example.com"
+openshift_cluster_name_suffix = "xt1"
+
+# ── Region ────────────────────────────────────────────────────────
+azure_region = "southeastasia"
+
+# ── Disconnected VNet ─────────────────────────────────────────────
+disconnected_vnet_cidr    = "172.16.0.0/16"
+disconnected_subnet_cidrs = ["172.16.1.0/24", "172.16.2.0/24", "172.16.3.0/24"]
+
+# ── Egress VNet ──────────────────────────────────────────────────
+egress_vnet_cidr          = "172.17.0.0/16"
+egress_public_subnet_cidr = "172.17.1.0/24"
+
+# ── Private Endpoints ────────────────────────────────────────────
+private_endpoint_subnet_cidr = "172.16.10.0/24"
+
+# ── Bastion VM ───────────────────────────────────────────────────
+ssh_private_key_path = "~/.ssh/id_rsa"
+admin_username       = "azureuser"
+installer_vm_size    = "Standard_D2s_v3"
+installer_disk_size  = 100
+installer_image = {
+  publisher = "RedHat"
+  offer     = "RHEL"
+  sku       = "9_4"
+  version   = "latest"
+}

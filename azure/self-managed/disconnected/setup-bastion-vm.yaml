@@ -1,0 +1,351 @@
+- name: Setup Bastion Node (Azure)
+  hosts: azure_vm
+  gather_facts: false
+  remote_user: azureuser
+  vars:
+    prefix_for_name: project_name
+    openshift_major_version: "4.20"
+    openshift_minor_version: 0
+    openshift_version: "{{ openshift_major_version }}.{{ openshift_minor_version }}"
+    azure_region: southeastasia
+    openshift_base_domain: example.com
+    openshift_cluster_name_suffix: xt1
+    openshift_cluster_name: "{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}"
+    cco_suffix: "{{ openshift_cluster_name }}-cco"
+    pull_secret_location: /home/azureuser/pull-secret.txt
+    mirror_registry_password: SedUam1879yz
+    quay_root_mount: /registry
+    openshift_local_repository: openshift/release-images
+    mirror_operators: []
+  tasks:
+
+  - name: Wait for SSH banners
+    wait_for_connection:
+      delay: 5
+      timeout: 300
+
+  - name: Store Hostname Into a Variable
+    shell: |
+      echo $HOSTNAME
+    register: installer_quay_hostname
+
+  - name: Install Required RPM Packages
+    dnf:
+      name:
+        - tmux
+        - tigervnc
+        - tigervnc-server
+        - wget
+        - podman
+        - jq
+        - golang
+        - unzip
+        - bind-utils
+        - squid
+        - openssl-devel
+        - git
+        - yum-utils
+        - ansible-core
+        - python3-pip
+        - '@Server with GUI'
+      state: present
+    become: true
+
+  - name: Install Azure CLI
+    shell: |
+      rpm --import https://packages.microsoft.com/keys/microsoft.asc
+      dnf install -y https://packages.microsoft.com/config/rhel/9.0/packages-microsoft-prod.rpm
+      dnf install -y azure-cli
+    become: true
+
+  - name: Enable mouse scrolling for tmux
+    lineinfile:
+      path: /home/azureuser/.tmux.conf
+      line: "set -g mouse on"
+      create: yes
+      state: present
+
+  - name: Add Terraform Yum Repo
+    shell: |
+      yum-config-manager --add-repo https://rpm.releases.hashicorp.com/RHEL/hashicorp.repo
+    become: true
+
+  - name: Install Terraform
+    yum:
+      name:
+        - terraform
+      state: present
+    become: true
+
+  - name: Create VNC User
+    ansible.builtin.user:
+      name: vncuser
+    become: true
+
+  - name: Listen for vnc server on port 5999
+    ansible.builtin.lineinfile:
+      path: /etc/tigervnc/vncserver.users
+      insertafter: EOF
+      line: ":99=vncuser"
+    become: true
+
+  - name: Copy squid Configuration file
+    copy:
+      src: squid.conf
+      dest: /etc/squid/
+    become: true
+
+  - name: Copy squid allow list
+    template:
+      src: squid-allow-list.txt.j2
+      dest: /etc/squid/squid-allow-list.txt
+    become: true
+
+  - name: Start and enable Squid
+    systemd:
+      state: started
+      name: "{{ item }}"
+      enabled: yes
+    loop:
+      - squid
+    become: yes
+
+  - name: Get the Mirror Registry, OC and OPM Tarball
+    get_url:
+      url: "{{ item }}"
+      dest: /home/azureuser/
+    loop:
+      - https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/{{ openshift_major_version }}.{{ openshift_minor_version }}/openshift-client-linux.tar.gz
+      - https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/latest/oc-mirror.tar.gz
+      - https://mirror.openshift.com/pub/cgw/mirror-registry/latest/mirror-registry-amd64.tar.gz
+
+  - name: Unarchive Downloaded Tarballs
+    unarchive:
+      src: "/home/azureuser/{{ item }}"
+      dest: /home/azureuser/
+      remote_src: yes
+    loop:
+      - openshift-client-linux.tar.gz
+      - oc-mirror.tar.gz
+      - mirror-registry-amd64.tar.gz
+
+  - name: Copy OC CLI to /usr/bin
+    copy:
+      src: "/home/azureuser/{{ item }}"
+      dest: "/usr/bin/{{ item }}"
+      remote_src: yes
+      mode: 0755
+    loop:
+      - oc
+      - kubectl
+      - oc-mirror
+    become: yes
+
+  - name: Creates directory quay_root_mount
+    file:
+      path: "{{ quay_root_mount }}"
+      state: directory
+    become: true
+
+  - name: Check if mirror registry is already running
+    shell: |
+      podman login -u init -p {{ mirror_registry_password }} $(hostname):8443 2>/dev/null
+    register: registry_check
+    ignore_errors: true
+    changed_when: false
+
+  - name: Install Mirror Registry
+    shell: |
+      /home/azureuser/mirror-registry install \
+      --quayHostname $HOSTNAME \
+      --quayRoot {{ quay_root_mount }} \
+      --quayStorage {{ quay_root_mount }} \
+      --initPassword {{ mirror_registry_password }}
+    register: mirror_registry_install_output
+    become: true
+    when: registry_check.rc != 0
+
+  - name: Copy Quay Root CA
+    copy:
+      src: "{{ quay_root_mount }}/quay-rootCA/rootCA.pem"
+      dest: /etc/pki/ca-trust/source/anchors/
+      remote_src: yes
+      mode: 0644
+    become: yes
+
+  - name: Update CA trust Bundle
+    shell: |
+      update-ca-trust extract
+    become: yes
+
+  - name: Copy pull secret
+    copy:
+      dest: /home/azureuser/pull-secret.txt
+      content: "{{ pull_secret }}"
+
+  - name: Login to the registry and generate password
+    shell: |
+      podman login --authfile /home/azureuser/pull-secret.txt \
+      -u init \
+      -p {{ mirror_registry_password }} \
+      $HOSTNAME:8443
+
+  - name: Create .docker Directory
+    file:
+      path: "/home/azureuser/.docker"
+      state: directory
+
+  - name: Copy pull secret to .docker directory
+    copy:
+      src: /home/azureuser/pull-secret.txt
+      dest: "/home/azureuser/.docker/config.json"
+      remote_src: yes
+
+  - name: Store the mirror registry credentials to a variable
+    shell: |
+      CREDENTIAL=$(grep -A1 {{ installer_quay_hostname.stdout }} /home/azureuser/pull-secret.txt | grep -v {{ installer_quay_hostname.stdout }} | awk {'print $2'})
+      echo $CREDENTIAL
+    register: quay_credential
+
+  - name: Copy ImageSet Configuration file
+    template:
+      src: "imageset-config.yaml.j2"
+      dest: "/home/azureuser/imageset-config.yaml"
+    when: registry_check.rc != 0
+
+  - name: Create oc-mirror-output Directory
+    file:
+      path: "/home/azureuser/oc-mirror-output"
+      state: directory
+    when: registry_check.rc != 0
+
+  - name: Mirror Images to the local registry
+    shell: |
+      oc mirror -c imageset-config.yaml --workspace file://oc-mirror-output/ docker://$HOSTNAME:8443 --v2
+    when: registry_check.rc != 0
+
+  - name: Check if install-dir already exists
+    stat:
+      path: /home/azureuser/install-dir/manifests
+    register: install_dir_check
+
+  - name: Check if cco-dir already exists
+    stat:
+      path: /home/azureuser/cco/manifests
+    register: cco_dir_check
+
+  - name: Extract Openshift Install Binary from mirror registry
+    shell: |
+      oc adm release extract -a {{ pull_secret_location }} \
+       --command=openshift-install "$HOSTNAME:8443/{{ openshift_local_repository }}:{{ openshift_version }}-x86_64"
+    when: not install_dir_check.stat.exists
+
+  - name: Create credentials/Install directory
+    file:
+      path: "/home/azureuser/{{ item }}"
+      state: directory
+    loop:
+      - install-dir
+      - cco
+    when: not install_dir_check.stat.exists
+
+  - name: Extract ccoutils
+    shell: |
+      cd /home/azureuser/cco
+      RELEASE_IMAGE=$(/home/azureuser/openshift-install version | awk '/release image/ {print $3}')
+      CCO_IMAGE=$(oc adm release info -a /home/azureuser/pull-secret.txt --image-for='cloud-credential-operator' $RELEASE_IMAGE)
+      oc image extract $CCO_IMAGE --file="/usr/bin/ccoctl" -a /home/azureuser/pull-secret.txt
+    when: not cco_dir_check.stat.exists
+
+  - name: Changing permission of ccoutil to 755
+    file:
+      path: /home/azureuser/cco/ccoctl
+      mode: 0755
+    when: not cco_dir_check.stat.exists
+
+  - name: Extract the list of CredentialsRequest objects from the OpenShift Container Platform release image
+    shell: |
+      cd /home/azureuser/cco
+      RELEASE_IMAGE=$(/home/azureuser/openshift-install version | awk '/release image/ {print $3}')
+      oc adm release extract --credentials-requests \
+      --cloud=azure \
+      --to=/home/azureuser/cco/credrequests \
+      ${RELEASE_IMAGE}
+    when: not install_dir_check.stat.exists
+
+  - name: Create All CCO Files for Azure
+    shell: |
+      cd /home/azureuser/cco
+      /home/azureuser/cco/ccoctl azure create-all \
+      --credentials-requests-dir /home/azureuser/cco/credrequests/ \
+      --name {{ cco_suffix }} \
+      --region {{ azure_region }} \
+      --subscription-id {{ azure_subscription_id }} \
+      --tenant-id {{ azure_tenant_id }} \
+      --output-dir /home/azureuser/cco
+    when: not install_dir_check.stat.exists
+
+  - name: Copy install-config.yaml
+    template:
+      src: "{{ item }}.j2"
+      dest: "{{ item }}"
+    loop:
+      - install-config.yaml
+    when: not install_dir_check.stat.exists
+
+  - name: Read Quay Root CA
+    slurp:
+      src: "{{ quay_root_mount }}/quay-rootCA/rootCA.pem"
+    register: quay_root_ca
+    become: true
+    when: not install_dir_check.stat.exists
+
+  - name: Append Quay Root CA to install-config.yaml
+    blockinfile:
+      path: /home/azureuser/install-config.yaml
+      marker: ""
+      insertafter: EOF
+      block: "{{ quay_root_ca.content | b64decode | regex_replace('(?m)^', '    ') }}"
+    when: not install_dir_check.stat.exists
+
+  - name: Copy Install-config.yaml to install-dir
+    copy:
+      src: "/home/azureuser/install-config.yaml"
+      dest: "/home/azureuser/install-dir/install-config.yaml"
+      remote_src: yes
+      mode: 0644
+    when: not install_dir_check.stat.exists
+
+  - name: Generate Manifests
+    shell: |
+      /home/azureuser/openshift-install create manifests --dir /home/azureuser/install-dir
+    when: not install_dir_check.stat.exists
+
+  - name: Copy CCO credentials to install-dir/manifests
+    copy:
+      src: "/home/azureuser/cco/manifests/"
+      dest: "/home/azureuser/install-dir/manifests/"
+      remote_src: yes
+    when: not install_dir_check.stat.exists
+
+  - name: Copy CCO tls files to install-dir/
+    copy:
+      src: /home/azureuser/cco/tls
+      dest: /home/azureuser/install-dir/
+      remote_src: yes
+    when: not install_dir_check.stat.exists
+
+  - name: Take a backup of the install-dir
+    community.general.archive:
+      path: /home/azureuser/install-dir
+      dest: /home/azureuser/install-dir-backup.bz2
+      format: bz2
+    when: not install_dir_check.stat.exists
+
+#  - name: Install the cluster
+#    shell: |
+#      openshift-install create cluster --dir /home/azureuser/install-dir --log-level=debug
+#
+#  - name: Destroy the cluster
+#    shell: |
+#      openshift-install destroy cluster --dir /home/azureuser/install-dir --log-level=debug

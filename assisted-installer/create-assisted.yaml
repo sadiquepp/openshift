@@ -1,0 +1,68 @@
+# run this on the hypervisor using command: "ansible-playbook -i localhost create-assisted.yaml"
+- name:  Create OCP 4.21 with assisted Installer
+  hosts: localhost
+  vars:
+    cluster_name: hub
+    cluster_version: 4.21
+    master_memory: 24576
+    master_cpu: 8
+    worker_memory: 64512
+    worker_cpu: 16
+    image_dir: /var/lib/libvirt/images
+    ocp4_assisted_nodes:
+      - master-1
+      - master-2
+      - master-3
+      - worker-1
+      - worker-2
+      - worker-3
+
+  tasks:
+
+# - name: Delete existing discovery ISO
+#    file:
+#      name: "{{ image_dir }}/discovery_image_{{ cluster_name }}.iso"
+#      state: absent
+
+#  - name: Dowload Discovery ISO image
+#    get_url:
+#      url: "{{ assisted_iso_url }}"
+#      dest: "{{ image_dir }}/discovery_image_{{ cluster_name }}.iso"
+
+  - name: Changing ownership and permission of assisted installer ISO
+    file:
+      path: "{{ image_dir }}/discovery_image_{{ cluster_name }}.iso"
+      owner: qemu
+      group: qemu
+      mode: 0644
+
+  - name: Creating the OS disk
+    shell: |
+      qemu-img create -f qcow2 -o preallocation=metadata {{ image_dir }}/{{ item }}.qcow2 128G
+    with_items: "{{ ocp4_assisted_nodes }}"
+
+  - name: Create 200 GB OSD and Journal disks and 100GB OS Disk
+    shell: |
+      qemu-img create -f qcow2 -o preallocation=metadata {{ image_dir }}/{{ item.0 }}-{{ item.1 }}.qcow2 500G
+    with_nested:
+      - [ 'worker-1', 'worker-2', 'worker-3' ]
+      - [ 'disk-1']
+
+  - name: Defining the OCP Master nodes
+    shell: |
+      virt-install --ram {{ master_memory }} --vcpus 4 --os-variant rhel7 --cdrom {{ image_dir }}/discovery_image_{{ cluster_name }}.iso --disk path={{ image_dir }}/{{ item.0 }}.qcow2,device=disk,bus=virtio,format=qcow2 --noautoconsole --vnc --network network:default,mac=52:54:00:e2:54:{{ item.1 }} --name {{ item.0 }} --cpu host-passthrough
+    with_together:
+      - [ 'master-1', 'master-2', 'master-3' ]
+      - [ '31', '32', '33' ]
+
+  - name: Defining the OCP Worker Nodes
+    shell: |
+      virt-install --ram {{ worker_memory }} --vcpus {{ worker_cpu }} --os-variant rhel7 --cdrom {{ image_dir }}/discovery_image_{{ cluster_name }}.iso --disk path={{ image_dir }}/{{ item.0 }}.qcow2,device=disk,bus=virtio,format=qcow2 --disk path={{ image_dir }}/{{ item.0 }}-disk-1.qcow2,device=disk,bus=virtio,format=qcow2 --noautoconsole --vnc --network network:default,mac=52:54:00:e2:54:{{ item.1 }} --name {{ item.0 }} --cpu host-passthrough
+    with_together:
+      - [ 'worker-1', 'worker-2', 'worker-3' ]
+      - [ '34', '35', '36' ]
+
+ # - name: Delete .ssh/known_hosts file
+ #   file:
+ #     name: /root/.ssh/known_hosts
+ #     state: absent
