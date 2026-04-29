@@ -1,6 +1,8 @@
 # ── Required ──────────────────────────────────────────────────────
-ssh_public_key        = "ssh-rsa AAAAB3Nza..."
-azure_subscription_id = "00000000-0000-0000-0000-000000000000"
+ssh_public_key             = "ssh-rsa AAAAB3Nza..."
+azure_subscription_id      = "00000000-0000-0000-0000-000000000000"
+installer_sp_client_id     = "00000000-0000-0000-0000-000000000000"
+installer_sp_client_secret = "xxxxxxxxxxxxxxxxxxxx"
 
 # ── Naming ────────────────────────────────────────────────────────
 prefix_for_name               = "myproject"

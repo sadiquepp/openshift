@@ -15,6 +15,19 @@ variable "azure_subscription_id" {
   type        = string
 }
 
+# ── Service Principal for openshift-install ──────────────────────────────────
+
+variable "installer_sp_client_id" {
+  description = "Client (app) ID of the pre-created service principal for openshift-install"
+  type        = string
+}
+
+variable "installer_sp_client_secret" {
+  description = "Client secret of the pre-created service principal for openshift-install"
+  type        = string
+  sensitive   = true
+}
+
 # ── Disconnected VNet ────────────────────────────────────────────────────────
 
 variable "disconnected_vnet_cidr" {
