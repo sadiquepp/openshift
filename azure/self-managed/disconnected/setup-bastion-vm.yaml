@@ -15,6 +15,7 @@
     cco_storage_account: "{{ cco_suffix | regex_replace('[^a-z0-9]', '') | truncate(24, True, '') }}"
     pull_secret_location: /home/azureuser/pull-secret.txt
     mirror_registry_password: SedUam1879yz
+    mirror_registry_port: 8444
     quay_root_mount: /home/azureuser/registry
     openshift_local_repository: openshift/release-images
     mirror_operators: []
@@ -208,7 +209,7 @@
 
   - name: Check if mirror registry is already running
     shell: |
-      podman login -u init -p {{ mirror_registry_password }} $(hostname):8443 2>/dev/null
+      podman login -u init -p {{ mirror_registry_password }} $(hostname):{{ mirror_registry_port }} 2>/dev/null
     register: registry_check
     ignore_errors: true
     changed_when: false
@@ -216,7 +217,7 @@
   - name: Install Mirror Registry
     shell: |
       /home/azureuser/mirror-registry install \
-      --quayHostname $HOSTNAME \
+      --quayHostname $HOSTNAME:{{ mirror_registry_port }} \
       --quayRoot {{ quay_root_mount }} \
       --quayStorage {{ quay_root_mount }} \
       --initPassword {{ mirror_registry_password }}
@@ -247,7 +248,7 @@
       podman login --authfile /home/azureuser/pull-secret.txt \
       -u init \
       -p {{ mirror_registry_password }} \
-      $HOSTNAME:8443
+      $HOSTNAME:{{ mirror_registry_port }}
 
   - name: Create .docker Directory
     file:
@@ -280,7 +281,7 @@
 
   - name: Mirror Images to the local registry
     shell: |
-      oc mirror -c imageset-config.yaml --workspace file://oc-mirror-output/ docker://$HOSTNAME:8443 --v2
+      oc mirror -c imageset-config.yaml --workspace file://oc-mirror-output/ docker://$HOSTNAME:{{ mirror_registry_port }} --v2
     when: registry_check.rc != 0
 
   - name: Check if install-dir already exists
@@ -296,7 +297,7 @@
   - name: Extract Openshift Install Binary from mirror registry
     shell: |
       oc adm release extract -a {{ pull_secret_location }} \
-       --command=openshift-install "$HOSTNAME:8443/{{ openshift_local_repository }}:{{ openshift_version }}-x86_64"
+       --command=openshift-install "$HOSTNAME:{{ mirror_registry_port }}/{{ openshift_local_repository }}:{{ openshift_version }}-x86_64"
     when: not install_dir_check.stat.exists
 
   - name: Create credentials/Install directory
@@ -404,8 +405,10 @@
 
 #  - name: Install the cluster
 #    shell: |
+#      export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE=$HOSTNAME:{{ mirror_registry_port }}/{{ openshift_local_repository }}:{{ openshift_version }}-x86_64
 #      openshift-install create cluster --dir /home/azureuser/install-dir --log-level=debug
 #
 #  - name: Destroy the cluster
 #    shell: |
+#      export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE=$HOSTNAME:{{ mirror_registry_port }}/{{ openshift_local_repository }}:{{ openshift_version }}-x86_64
 #      openshift-install destroy cluster --dir /home/azureuser/install-dir --log-level=debug

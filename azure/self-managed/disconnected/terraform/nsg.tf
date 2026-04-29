@@ -67,7 +67,7 @@ resource "azurerm_network_security_group" "bastion" {
     access                     = "Allow"
     protocol                   = "Tcp"
     source_port_range          = "*"
-    destination_port_range     = "8443"
+    destination_port_range     = "8444"
     source_address_prefixes    = [var.disconnected_vnet_cidr, var.egress_vnet_cidr]
     destination_address_prefix = "*"
   }

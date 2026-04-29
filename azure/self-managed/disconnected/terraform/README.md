@@ -1,6 +1,6 @@
 # Disconnected OpenShift Environment on Azure
 
-> **Also available for AWS:** See [`aws/self-managed/disconnected/`](../../../../aws/self-managed/disconnected/terraform/README.md)
+> **Also available for AWS:** See `[aws/self-managed/disconnected/](../../../../aws/self-managed/disconnected/terraform/README.md)`
 > for the equivalent setup on Amazon Web Services (includes IPI, UPI, and ROSA).
 
 Set up a disconnected (air-gapped) environment on Azure for deploying OpenShift
@@ -59,16 +59,18 @@ registry and mirrored OCP images, and leaves you ready to deploy a cluster using
 OpenShift nodes in the disconnected VNet have **no proxy configuration**.
 All egress is handled transparently:
 
-| Destination | Path | Notes |
-|------------|------|-------|
-| `*.blob.core.windows.net` (our storage) | Private Endpoint | Stays in-VNet |
-| `*.table.core.windows.net` (our storage) | Private Endpoint | Boot diagnostics |
-| `management.azure.com` | Azure Firewall | ARM API (no Private Link) |
-| `login.microsoftonline.com` | Azure Firewall | Entra ID (no Private Link) |
-| `*.blob.core.windows.net` (other accounts) | Azure Firewall | Ignition files |
-| Everything else | Blocked | Dropped by firewall |
 
-> **Cost note:** Azure Firewall Basic costs ~$0.395/hr (~$288/month) plus
+| Destination                                | Path             | Notes                      |
+| ------------------------------------------ | ---------------- | -------------------------- |
+| `*.blob.core.windows.net` (our storage)    | Private Endpoint | Stays in-VNet              |
+| `*.table.core.windows.net` (our storage)   | Private Endpoint | Boot diagnostics           |
+| `management.azure.com`                     | Azure Firewall   | ARM API (no Private Link)  |
+| `login.microsoftonline.com`                | Azure Firewall   | Entra ID (no Private Link) |
+| `*.blob.core.windows.net` (other accounts) | Azure Firewall   | Ignition files             |
+| Everything else                            | Blocked          | Dropped by firewall        |
+
+
+> **Cost note:** Azure Firewall Basic costs ~~$0.395/hr (~~$288/month) plus
 > data processing charges. Set `firewall_sku = "Standard"` if you need
 > features like DNS proxy or threat intelligence (~$1.25/hr). See the
 > [Azure Firewall pricing page](https://azure.microsoft.com/en-us/pricing/details/azure-firewall/).
@@ -78,7 +80,7 @@ All egress is handled transparently:
 - Terraform >= 1.5
 - Ansible (with `community.general` collection)
 - Azure CLI (`az`) authenticated with permissions for VNets, VMs, DNS, Storage,
-  Managed Identity, and role assignments
+Managed Identity, and role assignments
 - An SSH key pair
 - An OpenShift pull secret ([console.redhat.com](https://console.redhat.com/openshift/install/pull-secret))
 
@@ -186,12 +188,14 @@ cd openshift/azure/self-managed/disconnected/terraform
   --operators 'cluster-logging,elasticsearch-operator'
 ```
 
-| Flag | Required | Description |
-|------|----------|-------------|
-| `--pull-secret-file` | Yes | Path to the OpenShift pull secret JSON file |
-| `--mirror-registry-password` | No | Password for the Quay mirror registry (default: playbook value) |
-| `--openshift-version` | No | Full version string, e.g. `4.20.0` (default: `4.20.0`) |
-| `--operators` | No | Comma-separated list of operators to mirror (default: none) |
+
+| Flag                         | Required | Description                                                     |
+| ---------------------------- | -------- | --------------------------------------------------------------- |
+| `--pull-secret-file`         | Yes      | Path to the OpenShift pull secret JSON file                     |
+| `--mirror-registry-password` | No       | Password for the Quay mirror registry (default: playbook value) |
+| `--openshift-version`        | No       | Full version string, e.g. `4.20.0` (default: `4.20.0`)          |
+| `--operators`                | No       | Comma-separated list of operators to mirror (default: none)     |
+
 
 > **Disk sizing:** Each mirrored operator adds several GB of images to the bastion's
 > mirror registry. If you include more than a handful of operators, increase
@@ -202,14 +206,17 @@ Any extra arguments are forwarded to the Ansible playbook (e.g. `-e "key=value"`
 
 This runs two steps:
 
-| Step | Tool | What it does |
-|------|------|--------------|
-| 1 | Terraform | Creates resource group, VNets, VNet peering, NSGs, private endpoints, DNS zone, managed identity, bastion VM |
-| 2 | Ansible (`setup-bastion-vm.yaml`) | Installs packages, sets up mirror registry, mirrors OCP images, extracts tools, creates CCO credentials, prepares IPI `install-dir` |
+
+| Step | Tool                              | What it does                                                                                                                        |
+| ---- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| 1    | Terraform                         | Creates resource group, VNets, VNet peering, NSGs, private endpoints, DNS zone, managed identity, bastion VM                        |
+| 2    | Ansible (`setup-bastion-vm.yaml`) | Installs packages, sets up mirror registry, mirrors OCP images, extracts tools, creates CCO credentials, prepares IPI `install-dir` |
+
 
 When complete, the bastion has:
+
 - `openshift-install`, `oc`, `terraform`, `ccoctl`
-- Mirror registry on port 8443 with mirrored OCP images
+- Mirror registry on port 8444 with mirrored OCP images
 - Squid proxy on port 3128
 - IPI `~/install-dir/` with manifests ready for `create cluster`
 - CCO credentials in `~/cco/`
@@ -233,15 +240,26 @@ load balancers, DNS) automatically.
 ```bash
 ssh azureuser@$BASTION_IP
 
+# Point the installer at the mirrored release image so all CAPI/CAPZ
+# controller images are pulled from the local mirror registry.
+export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE=$(hostname):8444/openshift/release-images:<openshift-version>-x86_64
+
 # install-dir is already prepared with manifests and CCO credentials
 ./openshift-install create cluster \
   --dir ~/install-dir \
   --log-level=debug
 ```
 
+> **Important:** The `OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE` variable is
+> required in disconnected environments. Without it the installer's local
+> Cluster API management cluster will try to pull images from upstream
+> `quay.io`, causing CAPZ webhook failures such as
+> `dial tcp 127.0.0.1:41267: connect: connection refused`.
+
 To destroy:
 
 ```bash
+export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE=$(hostname):8444/openshift/release-images:<openshift-version>-x86_64
 ./openshift-install destroy cluster \
   --dir ~/install-dir \
   --log-level=debug
@@ -253,49 +271,59 @@ To destroy:
 
 ### Required
 
-| Variable | Description |
-|----------|-------------|
-| `ssh_public_key` | SSH public key material for the bastion VM |
-| `azure_subscription_id` | Azure subscription ID |
-| `installer_sp_client_id` | Service principal application (client) ID |
-| `installer_sp_client_secret` | Service principal client secret |
+
+| Variable                     | Description                                |
+| ---------------------------- | ------------------------------------------ |
+| `ssh_public_key`             | SSH public key material for the bastion VM |
+| `azure_subscription_id`      | Azure subscription ID                      |
+| `installer_sp_client_id`     | Service principal application (client) ID  |
+| `installer_sp_client_secret` | Service principal client secret            |
+
 
 ### Naming and Region
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `prefix_for_name` | `project_name` | Prefix for all resource names |
-| `azure_region` | `southeastasia` | Azure region |
-| `openshift_base_domain` | `example.com` | Cluster base domain |
-| `openshift_cluster_name_suffix` | `xt1` | Suffix for cluster name (`<prefix>-<suffix>`) |
+
+| Variable                        | Default         | Description                                   |
+| ------------------------------- | --------------- | --------------------------------------------- |
+| `prefix_for_name`               | `project_name`  | Prefix for all resource names                 |
+| `azure_region`                  | `southeastasia` | Azure region                                  |
+| `openshift_base_domain`         | `example.com`   | Cluster base domain                           |
+| `openshift_cluster_name_suffix` | `xt1`           | Suffix for cluster name (`<prefix>-<suffix>`) |
+
 
 ### Network CIDRs
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `disconnected_vnet_cidr` | `172.16.0.0/16` | Disconnected VNet address space |
-| `disconnected_subnet_cidrs` | `[172.16.1-3.0/24]` | Private subnet CIDRs (one per AZ) |
-| `egress_vnet_cidr` | `172.17.0.0/16` | Egress VNet address space |
-| `egress_public_subnet_cidr` | `172.17.1.0/24` | Egress public subnet CIDR |
-| `private_endpoint_subnet_cidr` | `172.16.10.0/24` | Subnet for private endpoints |
-| `firewall_subnet_cidr` | `172.17.100.0/26` | AzureFirewallSubnet CIDR (min /26) |
-| `firewall_management_subnet_cidr` | `172.17.100.64/26` | AzureFirewallManagementSubnet CIDR (min /26) |
+
+| Variable                          | Default             | Description                                  |
+| --------------------------------- | ------------------- | -------------------------------------------- |
+| `disconnected_vnet_cidr`          | `172.16.0.0/16`     | Disconnected VNet address space              |
+| `disconnected_subnet_cidrs`       | `[172.16.1-3.0/24]` | Private subnet CIDRs (one per AZ)            |
+| `egress_vnet_cidr`                | `172.17.0.0/16`     | Egress VNet address space                    |
+| `egress_public_subnet_cidr`       | `172.17.1.0/24`     | Egress public subnet CIDR                    |
+| `private_endpoint_subnet_cidr`    | `172.16.10.0/24`    | Subnet for private endpoints                 |
+| `firewall_subnet_cidr`            | `172.17.100.0/26`   | AzureFirewallSubnet CIDR (min /26)           |
+| `firewall_management_subnet_cidr` | `172.17.100.64/26`  | AzureFirewallManagementSubnet CIDR (min /26) |
+
 
 ### Azure Firewall
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+
+| Variable       | Default | Description                                           |
+| -------------- | ------- | ----------------------------------------------------- |
 | `firewall_sku` | `Basic` | Firewall SKU tier (`Basic`, `Standard`, or `Premium`) |
+
 
 ### Bastion VM
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `installer_vm_size` | `Standard_D2s_v3` | Bastion VM size |
-| `installer_disk_size` | `100` | OS disk size in GB |
-| `installer_image` | RHEL 9.4 | Source image reference |
-| `admin_username` | `azureuser` | Admin username for the VM |
-| `ssh_private_key_path` | `~/.ssh/id_rsa` | Path to SSH private key |
+
+| Variable               | Default           | Description               |
+| ---------------------- | ----------------- | ------------------------- |
+| `installer_vm_size`    | `Standard_D2s_v3` | Bastion VM size           |
+| `installer_disk_size`  | `100`             | OS disk size in GB        |
+| `installer_image`      | RHEL 9.4          | Source image reference    |
+| `admin_username`       | `azureuser`       | Admin username for the VM |
+| `ssh_private_key_path` | `~/.ssh/id_rsa`   | Path to SSH private key   |
+
 
 ---
 
@@ -303,21 +331,23 @@ To destroy:
 
 After `terraform apply`, these outputs are available:
 
-| Output | Description |
-|--------|-------------|
-| `bastion_public_ip` | Bastion public IP for SSH |
-| `bastion_private_ip` | Bastion private IP |
-| `firewall_private_ip` | Azure Firewall private IP (UDR next hop) |
-| `firewall_public_ip` | Azure Firewall public IP |
-| `resource_group_name` | Resource group name |
-| `disconnected_vnet_id` | Disconnected VNet ID |
-| `disconnected_subnet_ids` | Disconnected subnet IDs |
-| `egress_vnet_id` | Egress VNet ID |
-| `private_dns_zone_id` | Private DNS zone ID |
-| `managed_identity_client_id` | Managed identity client ID |
-| `storage_account_name` | Storage account name |
-| `azure_subscription_id` | Azure subscription ID |
-| `azure_tenant_id` | Azure tenant ID |
+
+| Output                       | Description                              |
+| ---------------------------- | ---------------------------------------- |
+| `bastion_public_ip`          | Bastion public IP for SSH                |
+| `bastion_private_ip`         | Bastion private IP                       |
+| `firewall_private_ip`        | Azure Firewall private IP (UDR next hop) |
+| `firewall_public_ip`         | Azure Firewall public IP                 |
+| `resource_group_name`        | Resource group name                      |
+| `disconnected_vnet_id`       | Disconnected VNet ID                     |
+| `disconnected_subnet_ids`    | Disconnected subnet IDs                  |
+| `egress_vnet_id`             | Egress VNet ID                           |
+| `private_dns_zone_id`        | Private DNS zone ID                      |
+| `managed_identity_client_id` | Managed identity client ID               |
+| `storage_account_name`       | Storage account name                     |
+| `azure_subscription_id`      | Azure subscription ID                    |
+| `azure_tenant_id`            | Azure tenant ID                          |
+
 
 These values are also automatically written to `ansible-vars.json` for use
 by the Ansible playbook.
@@ -349,16 +379,19 @@ terraform destroy
 
 ## AWS ↔ Azure Resource Mapping
 
-| AWS Resource | Azure Equivalent |
-|-------------|-----------------|
-| VPC | Virtual Network (VNet) |
-| Subnet | Subnet |
-| Transit Gateway | VNet Peering |
-| Internet Gateway | Public IP (on bastion NIC) |
-| VPC Endpoints (Interface) | Private Endpoints |
-| VPC Endpoints (Gateway/S3) | Private Endpoint for Storage |
-| Route53 Private Zone | Azure Private DNS Zone |
+
+| AWS Resource                | Azure Equivalent               |
+| --------------------------- | ------------------------------ |
+| VPC                         | Virtual Network (VNet)         |
+| Subnet                      | Subnet                         |
+| Transit Gateway             | VNet Peering                   |
+| Internet Gateway            | Public IP (on bastion NIC)     |
+| VPC Endpoints (Interface)   | Private Endpoints              |
+| VPC Endpoints (Gateway/S3)  | Private Endpoint for Storage   |
+| Route53 Private Zone        | Azure Private DNS Zone         |
 | IAM Role + Instance Profile | User-Assigned Managed Identity |
-| EC2 Instance | Linux Virtual Machine |
-| Security Group | Network Security Group (NSG) |
-| Key Pair | SSH key on VM |
+| EC2 Instance                | Linux Virtual Machine          |
+| Security Group              | Network Security Group (NSG)   |
+| Key Pair                    | SSH key on VM                  |
+
+
