@@ -64,3 +64,48 @@ resource "azurerm_private_dns_zone_virtual_network_link" "storage_blob_egress" {
   private_dns_zone_name = azurerm_private_dns_zone.storage_blob.name
   virtual_network_id    = azurerm_virtual_network.egress.id
 }
+
+# ── Private Endpoint for Storage (table) ─────────────────────────────────────
+# Used by Azure for boot diagnostics
+
+resource "azurerm_private_endpoint" "storage_table" {
+  name                = "${var.prefix_for_name}-storage-table-pe"
+  location            = azurerm_resource_group.main.location
+  resource_group_name = azurerm_resource_group.main.name
+  subnet_id           = azurerm_subnet.private_endpoints.id
+
+  private_service_connection {
+    name                           = "${var.prefix_for_name}-storage-table-psc"
+    private_connection_resource_id = azurerm_storage_account.mirror.id
+    is_manual_connection           = false
+    subresource_names              = ["table"]
+  }
+
+  private_dns_zone_group {
+    name                 = "storage-table-dns"
+    private_dns_zone_ids = [azurerm_private_dns_zone.storage_table.id]
+  }
+
+  tags = {
+    Name = "${var.prefix_for_name}-storage-table-pe"
+  }
+}
+
+resource "azurerm_private_dns_zone" "storage_table" {
+  name                = "privatelink.table.core.windows.net"
+  resource_group_name = azurerm_resource_group.main.name
+}
+
+resource "azurerm_private_dns_zone_virtual_network_link" "storage_table_disconnected" {
+  name                  = "${var.prefix_for_name}-storage-table-disconnected"
+  resource_group_name   = azurerm_resource_group.main.name
+  private_dns_zone_name = azurerm_private_dns_zone.storage_table.name
+  virtual_network_id    = azurerm_virtual_network.disconnected.id
+}
+
+resource "azurerm_private_dns_zone_virtual_network_link" "storage_table_egress" {
+  name                  = "${var.prefix_for_name}-storage-table-egress"
+  resource_group_name   = azurerm_resource_group.main.name
+  private_dns_zone_name = azurerm_private_dns_zone.storage_table.name
+  virtual_network_id    = azurerm_virtual_network.egress.id
+}

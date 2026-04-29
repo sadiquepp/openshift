@@ -44,6 +44,18 @@ output "egress_vnet_id" {
   value       = azurerm_virtual_network.egress.id
 }
 
+# ── Firewall ─────────────────────────────────────────────────────────────────
+
+output "firewall_private_ip" {
+  description = "Private IP of the Azure Firewall (used as UDR next hop)"
+  value       = azurerm_firewall.main.ip_configuration[0].private_ip_address
+}
+
+output "firewall_public_ip" {
+  description = "Public IP of the Azure Firewall"
+  value       = azurerm_public_ip.firewall.ip_address
+}
+
 # ── Identity ─────────────────────────────────────────────────────────────────
 
 output "managed_identity_client_id" {

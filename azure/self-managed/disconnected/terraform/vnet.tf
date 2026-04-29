@@ -68,6 +68,8 @@ resource "azurerm_virtual_network_peering" "disconnected_to_egress" {
     azurerm_subnet.disconnected,
     azurerm_subnet.private_endpoints,
     azurerm_subnet.egress_public,
+    azurerm_subnet.firewall,
+    azurerm_subnet.firewall_management,
   ]
 }
 
@@ -83,15 +85,25 @@ resource "azurerm_virtual_network_peering" "egress_to_disconnected" {
     azurerm_subnet.disconnected,
     azurerm_subnet.private_endpoints,
     azurerm_subnet.egress_public,
+    azurerm_subnet.firewall,
+    azurerm_subnet.firewall_management,
   ]
 }
 
 # ── Route Table for Disconnected Subnets ─────────────────────────────────────
 
 resource "azurerm_route_table" "disconnected" {
-  name                = "${var.prefix_for_name}-disconnected-rt"
-  location            = azurerm_resource_group.main.location
-  resource_group_name = azurerm_resource_group.main.name
+  name                          = "${var.prefix_for_name}-disconnected-rt"
+  location                      = azurerm_resource_group.main.location
+  resource_group_name           = azurerm_resource_group.main.name
+  bgp_route_propagation_enabled = false
+
+  route {
+    name                   = "default-to-firewall"
+    address_prefix         = "0.0.0.0/0"
+    next_hop_type          = "VirtualAppliance"
+    next_hop_in_ip_address = azurerm_firewall.main.ip_configuration[0].private_ip_address
+  }
 
   tags = {
     Name = "${var.prefix_for_name}-disconnected-rt"

@@ -330,7 +330,7 @@
       --cloud=azure \
       --to=/home/azureuser/cco/credrequests \
       ${RELEASE_IMAGE}
-    when: not install_dir_check.stat.exists
+    when: not cco_dir_check.stat.exists
 
   - name: Create All CCO Files for Azure
     shell: |
@@ -343,7 +343,7 @@
       --tenant-id {{ azure_tenant_id }} \
       --storage-account-name {{ cco_storage_account }} \
       --output-dir /home/azureuser/cco
-    when: not install_dir_check.stat.exists
+    when: not cco_dir_check.stat.exists
 
   - name: Copy install-config.yaml
     template:

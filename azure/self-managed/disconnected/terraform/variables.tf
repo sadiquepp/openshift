@@ -56,6 +56,26 @@ variable "egress_public_subnet_cidr" {
   default     = "172.17.1.0/24"
 }
 
+# ── Azure Firewall ───────────────────────────────────────────────────────────
+
+variable "firewall_subnet_cidr" {
+  description = "CIDR block for AzureFirewallSubnet in the egress VNet (minimum /26)"
+  type        = string
+  default     = "172.17.100.0/26"
+}
+
+variable "firewall_management_subnet_cidr" {
+  description = "CIDR block for AzureFirewallManagementSubnet (required by Basic SKU, minimum /26)"
+  type        = string
+  default     = "172.17.100.64/26"
+}
+
+variable "firewall_sku" {
+  description = "SKU tier for Azure Firewall (Basic, Standard, or Premium)"
+  type        = string
+  default     = "Basic"
+}
+
 # ── Private Endpoints ────────────────────────────────────────────────────────
 
 variable "private_endpoint_subnet_cidr" {

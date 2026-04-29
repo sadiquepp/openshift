@@ -23,6 +23,11 @@ egress_public_subnet_cidr = "172.17.1.0/24"
 # ── Private Endpoints ────────────────────────────────────────────
 private_endpoint_subnet_cidr = "172.16.10.0/24"
 
+# ── Azure Firewall ──────────────────────────────────────────────
+firewall_subnet_cidr            = "172.17.100.0/26"
+firewall_management_subnet_cidr = "172.17.100.64/26"
+firewall_sku                    = "Basic"
+
 # ── Bastion VM ───────────────────────────────────────────────────
 ssh_private_key_path = "~/.ssh/id_rsa"
 admin_username       = "azureuser"

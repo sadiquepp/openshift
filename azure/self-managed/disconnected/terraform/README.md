@@ -20,6 +20,16 @@ registry and mirrored OCP images, and leaves you ready to deploy a cluster using
                         │   │  - squid     │    │           │      │
                         │   │  - terraform │    │           │      │
                         │   └──────────────┘    └───────────┘      │
+                        │                                          │
+                        │   ┌──────────────────────────────────┐   │
+                        │   │ Azure Firewall (Basic SKU)       │   │
+                        │   │  AzureFirewallSubnet             │   │
+                        │   │  AzureFirewallManagementSubnet   │   │
+  Internet ◄── PIP ◄───┤   │  3 FQDN rules:                   │   │
+                        │   │   - management.azure.com         │   │
+                        │   │   - login.microsoftonline.com    │   │
+                        │   │   - *.blob.core.windows.net      │   │
+                        │   └──────────────────────────────────┘   │
                         └────────────┬─────────────────────────────┘
                                      │
                               VNet Peering
@@ -31,16 +41,37 @@ registry and mirrored OCP images, and leaves you ready to deploy a cluster using
                         │  │ Subnet    │ │Subnet │ │ Subnet    │   │
                         │  │ AZ1       │ │ AZ2   │ │ AZ3       │   │
                         │  └───────────┘ └───────┘ └───────────┘   │
+                        │  UDR: 0.0.0.0/0 → Azure Firewall        │
                         │                                          │
                         │  ┌───────────────────────────────────┐    │
                         │  │ Private Endpoint Subnet           │    │
                         │  │  - Storage (blob)                 │    │
+                        │  │  - Storage (table)                │    │
                         │  └───────────────────────────────────┘    │
                         │                                          │
                         │  Private DNS Zone:                       │
                         │    <cluster>.<domain>                    │
                         └──────────────────────────────────────────┘
 ```
+
+### Egress Traffic Flow
+
+OpenShift nodes in the disconnected VNet have **no proxy configuration**.
+All egress is handled transparently:
+
+| Destination | Path | Notes |
+|------------|------|-------|
+| `*.blob.core.windows.net` (our storage) | Private Endpoint | Stays in-VNet |
+| `*.table.core.windows.net` (our storage) | Private Endpoint | Boot diagnostics |
+| `management.azure.com` | Azure Firewall | ARM API (no Private Link) |
+| `login.microsoftonline.com` | Azure Firewall | Entra ID (no Private Link) |
+| `*.blob.core.windows.net` (other accounts) | Azure Firewall | Ignition files |
+| Everything else | Blocked | Dropped by firewall |
+
+> **Cost note:** Azure Firewall Basic costs ~$0.395/hr (~$288/month) plus
+> data processing charges. Set `firewall_sku = "Standard"` if you need
+> features like DNS proxy or threat intelligence (~$1.25/hr). See the
+> [Azure Firewall pricing page](https://azure.microsoft.com/en-us/pricing/details/azure-firewall/).
 
 ## Prerequisites
 
@@ -88,9 +119,10 @@ disconnected/
 │   ├── main.tf                      # Provider configuration
 │   ├── variables.tf                 # All input variables
 │   ├── resource_group.tf            # Resource group
-│   ├── vnet.tf                      # Disconnected + Egress VNets, subnets, peering, route tables
+│   ├── vnet.tf                      # VNets, subnets, peering, route tables (UDR → firewall)
+│   ├── firewall.tf                  # Azure Firewall, policy, FQDN rules
 │   ├── nsg.tf                       # Network security groups
-│   ├── private_endpoints.tf         # Storage account + private endpoint
+│   ├── private_endpoints.tf         # Storage private endpoints (blob + table)
 │   ├── dns.tf                       # Private DNS zone + VNet links
 │   ├── identity.tf                  # User-assigned managed identity + role assignments
 │   ├── vm.tf                        # Public IP, NIC, bastion VM
@@ -225,6 +257,8 @@ To destroy:
 |----------|-------------|
 | `ssh_public_key` | SSH public key material for the bastion VM |
 | `azure_subscription_id` | Azure subscription ID |
+| `installer_sp_client_id` | Service principal application (client) ID |
+| `installer_sp_client_secret` | Service principal client secret |
 
 ### Naming and Region
 
@@ -244,6 +278,14 @@ To destroy:
 | `egress_vnet_cidr` | `172.17.0.0/16` | Egress VNet address space |
 | `egress_public_subnet_cidr` | `172.17.1.0/24` | Egress public subnet CIDR |
 | `private_endpoint_subnet_cidr` | `172.16.10.0/24` | Subnet for private endpoints |
+| `firewall_subnet_cidr` | `172.17.100.0/26` | AzureFirewallSubnet CIDR (min /26) |
+| `firewall_management_subnet_cidr` | `172.17.100.64/26` | AzureFirewallManagementSubnet CIDR (min /26) |
+
+### Azure Firewall
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `firewall_sku` | `Basic` | Firewall SKU tier (`Basic`, `Standard`, or `Premium`) |
 
 ### Bastion VM
 
@@ -265,6 +307,8 @@ After `terraform apply`, these outputs are available:
 |--------|-------------|
 | `bastion_public_ip` | Bastion public IP for SSH |
 | `bastion_private_ip` | Bastion private IP |
+| `firewall_private_ip` | Azure Firewall private IP (UDR next hop) |
+| `firewall_public_ip` | Azure Firewall public IP |
 | `resource_group_name` | Resource group name |
 | `disconnected_vnet_id` | Disconnected VNet ID |
 | `disconnected_subnet_ids` | Disconnected subnet IDs |
