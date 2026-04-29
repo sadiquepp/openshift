@@ -53,13 +53,11 @@ registry and mirrored OCP images, and leaves you ready to deploy a cluster using
 
 ### Service Principal for openshift-install
 
-`openshift-install` on Azure requires a service principal with a client secret
-stored in `~/.azure/osServicePrincipal.json` on the bastion. It does not support
-managed identities. After the bastion is provisioned, SSH in and create the SP
-manually (requires Entra ID permissions):
+`openshift-install` on Azure requires a service principal with a client secret.
+It does not support managed identities. Create the SP before running `deploy.sh`
+(requires Entra ID permissions):
 
 ```bash
-az login
 az ad sp create-for-rbac --name "<cluster>-installer" \
   --role Contributor \
   --scopes /subscriptions/<subscription-id> \
@@ -70,21 +68,17 @@ az role assignment create \
   --assignee <appId> \
   --role "User Access Administrator" \
   --scope /subscriptions/<subscription-id>
-
-# Write the credentials file:
-mkdir -p ~/.azure
-cat > ~/.azure/osServicePrincipal.json <<EOF
-{
-  "subscriptionId": "<subscription-id>",
-  "clientId": "<appId>",
-  "clientSecret": "<password>",
-  "tenantId": "<tenant-id>"
-}
-EOF
 ```
 
-This must be done before running `openshift-install create manifests` or
-`openshift-install create cluster`.
+Add the `appId` and `password` to your `terraform.tfvars`:
+
+```hcl
+installer_sp_client_id     = "<appId>"
+installer_sp_client_secret = "<password>"
+```
+
+Terraform passes these to the bastion via Ansible, which writes
+`~/.azure/osServicePrincipal.json` automatically.
 
 ## Directory Structure
 
