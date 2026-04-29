@@ -36,8 +36,6 @@ resource "local_file" "ansible_vars" {
     disconnected_subnet_id_b                   = azurerm_subnet.disconnected[1].id
     disconnected_subnet_id_c                   = azurerm_subnet.disconnected[2].id
     egress_vnet_id                             = azurerm_virtual_network.egress.id
-    private_dns_zone_id                        = azurerm_private_dns_zone.cluster.id
-    private_dns_zone_name                      = azurerm_private_dns_zone.cluster.name
     storage_account_name                       = azurerm_storage_account.mirror.name
     managed_identity_client_id                 = azurerm_user_assigned_identity.ocp_install.client_id
     network_resource_group_name                = azurerm_resource_group.main.name

@@ -50,7 +50,7 @@ registry and mirrored OCP images, and leaves you ready to deploy a cluster using
                         │  └───────────────────────────────────┘    │
                         │                                          │
                         │  Private DNS Zone:                       │
-                        │    <cluster>.<domain>                    │
+                        │    (created by the installer)            │
                         └──────────────────────────────────────────┘
 ```
 
@@ -125,7 +125,7 @@ disconnected/
 │   ├── firewall.tf                  # Azure Firewall, policy, FQDN rules
 │   ├── nsg.tf                       # Network security groups
 │   ├── private_endpoints.tf         # Storage private endpoints (blob + table)
-│   ├── dns.tf                       # Private DNS zone + VNet links
+│   ├── dns.tf                       # (DNS managed by installer, see notes)
 │   ├── identity.tf                  # User-assigned managed identity + role assignments
 │   ├── vm.tf                        # Public IP, NIC, bastion VM
 │   ├── ansible.tf                   # Generated Ansible inventory + vars
@@ -342,7 +342,6 @@ After `terraform apply`, these outputs are available:
 | `disconnected_vnet_id`       | Disconnected VNet ID                     |
 | `disconnected_subnet_ids`    | Disconnected subnet IDs                  |
 | `egress_vnet_id`             | Egress VNet ID                           |
-| `private_dns_zone_id`        | Private DNS zone ID                      |
 | `managed_identity_client_id` | Managed identity client ID               |
 | `storage_account_name`       | Storage account name                     |
 | `azure_subscription_id`      | Azure subscription ID                    |

@@ -71,16 +71,7 @@ output "managed_identity_principal_id" {
 }
 
 # ── DNS ──────────────────────────────────────────────────────────────────────
-
-output "private_dns_zone_id" {
-  description = "Azure Private DNS zone ID for the cluster domain"
-  value       = azurerm_private_dns_zone.cluster.id
-}
-
-output "private_dns_zone_name" {
-  description = "Private DNS zone name"
-  value       = azurerm_private_dns_zone.cluster.name
-}
+# The installer creates the cluster private DNS zone in its own resource group.
 
 output "cluster_domain" {
   description = "Fully qualified cluster domain"
