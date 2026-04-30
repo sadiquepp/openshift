@@ -315,17 +315,53 @@ EGRESS_VNET_ID="<egress-vnet-id>"
 > The cluster resource group (`<cluster>-rg`) is pre-created by Terraform
 > so that `ccoctl` can scope role assignments to it. The installer uses it
 > via `platform.azure.resourceGroupName` in `install-config.yaml`.
-> `openshift-install destroy cluster` removes the resources inside the RG
-> but does **not** delete the RG itself (since it was pre-created).
+> `openshift-install destroy cluster` deletes the cluster RG and its
+> contents. You must recreate it before re-running the installer.
 
-### Destroy
+### Destroy and re-run
 
-To destroy:
+The installer deletes the cluster resource group on destroy. Since `ccoctl`
+role assignments are scoped to that RG, they become invalid when the RG is
+recreated. A re-run requires `ccoctl delete` then `ccoctl create-all`.
 
 ```bash
+# 1. Destroy the cluster
 ./openshift-install destroy cluster \
   --dir ~/install-dir \
   --log-level=debug
+
+# 2. Recreate the cluster RG
+az group create --name <cluster>-cluster-rg --location <region>
+
+# 3. Delete and recreate CCO resources
+cd ~/cco
+/home/azureuser/cco/ccoctl azure delete \
+  --name <cco_suffix> \
+  --region <region> \
+  --subscription-id <subscription-id> \
+  --tenant-id <tenant-id>
+
+/home/azureuser/cco/ccoctl azure create-all \
+  --credentials-requests-dir ~/cco/credrequests \
+  --name <cco_suffix> \
+  --region <region> \
+  --subscription-id <subscription-id> \
+  --tenant-id <tenant-id> \
+  --storage-account-name <cco_storage_account> \
+  --installation-resource-group-name <cluster>-cluster-rg \
+  --network-resource-group-name <cluster>-network-rg \
+  --output-dir ~/cco
+
+# 4. Recreate install-dir with fresh manifests
+rm -rf ~/install-dir
+mkdir ~/install-dir
+cp ~/install-config.yaml ~/install-dir/
+./openshift-install create manifests --dir ~/install-dir
+cp ~/cco/manifests/* ~/install-dir/manifests/
+cp -r ~/cco/tls ~/install-dir/
+
+# 5. Re-run the installer
+./openshift-install create cluster --dir ~/install-dir --log-level=debug
 ```
 
 ---

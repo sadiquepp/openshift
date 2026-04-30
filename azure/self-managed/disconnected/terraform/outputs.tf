@@ -8,6 +8,11 @@ output "azure_tenant_id" {
   value       = data.azurerm_client_config.current.tenant_id
 }
 
+output "azure_region" {
+  description = "Azure region"
+  value       = var.azure_region
+}
+
 # ── Resource Group ───────────────────────────────────────────────────────────
 
 output "resource_group_name" {
