@@ -16,28 +16,27 @@ variable "azure_subscription_id" {
 }
 
 variable "azure_tenant_id" {
-  description = "Azure tenant (directory) ID. Required when auto-creating the service principal."
+  description = "Azure tenant (directory) ID. Required when create_service_principal is true."
   type        = string
   default     = ""
-
-  validation {
-    condition     = var.azure_tenant_id != "" || var.installer_sp_client_id != ""
-    error_message = "azure_tenant_id is required when auto-creating the service principal (installer_sp_client_id is empty)."
-  }
 }
 
 # ── Service Principal for openshift-install ──────────────────────────────────
 
+variable "create_service_principal" {
+  description = "Auto-create the service principal via Terraform. Requires Entra ID app registration permissions. Recommended: false (provide a pre-created SP instead)."
+  type        = bool
+  default     = false
+}
+
 variable "installer_sp_client_id" {
-  description = "Client (app) ID of a pre-created service principal. Leave empty to auto-create."
+  description = "Client (app) ID of the pre-created service principal for openshift-install"
   type        = string
-  default     = ""
 }
 
 variable "installer_sp_client_secret" {
-  description = "Client secret of the pre-created service principal. Leave empty to auto-create."
+  description = "Client secret of the pre-created service principal for openshift-install"
   type        = string
-  default     = ""
   sensitive   = true
 }
 

@@ -87,16 +87,8 @@ Managed Identity, and role assignments
 ### Service Principal for openshift-install
 
 `openshift-install` on Azure requires a service principal with a client secret.
-It does not support managed identities. There are two options:
-
-**Option A -- Automatic (default):** Leave `installer_sp_client_id` and
-`installer_sp_client_secret` empty in `terraform.tfvars`. Terraform will
-create the app registration, service principal, password, and role
-assignments automatically via the `azuread` provider. This requires that the
-identity running `terraform apply` has Entra ID **Application Administrator**
-(or equivalent) permissions to create app registrations.
-
-**Option B -- Manual:** Pre-create the SP and provide the credentials:
+It does not support managed identities. Create the SP before running
+`deploy.sh`:
 
 ```bash
 az ad sp create-for-rbac --name "<cluster>-installer" \
@@ -111,15 +103,20 @@ az role assignment create \
   --scope /subscriptions/<subscription-id>
 ```
 
-Then add the values to `terraform.tfvars`:
+Add the values to `terraform.tfvars`:
 
 ```hcl
 installer_sp_client_id     = "<appId>"
 installer_sp_client_secret = "<password>"
 ```
 
-In both cases, Terraform passes the credentials to the bastion via Ansible,
-which writes `~/.azure/osServicePrincipal.json` automatically.
+Terraform passes these to the bastion via Ansible, which writes
+`~/.azure/osServicePrincipal.json` automatically.
+
+> **Experimental:** Set `create_service_principal = true` and provide
+> `azure_tenant_id` to let Terraform create the SP automatically via the
+> `azuread` provider. This requires Entra ID Application Administrator
+> permissions and may fail in some tenant configurations.
 
 ## Directory Structure
 
@@ -321,13 +318,15 @@ export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE=$MIRROR/openshift/release-images
 | ---------------------------- | ------------------------------------------ |
 | `ssh_public_key`             | SSH public key material for the bastion VM |
 | `azure_subscription_id`      | Azure subscription ID                      |
+| `installer_sp_client_id`     | Service principal application (client) ID  |
+| `installer_sp_client_secret` | Service principal client secret             |
 
-### Service Principal (optional)
+### Auto-create SP (experimental)
 
-| Variable                     | Default | Description                                                  |
-| ---------------------------- | ------- | ------------------------------------------------------------ |
-| `installer_sp_client_id`     | `""`    | Pre-created SP client ID. Empty = auto-create via Terraform. |
-| `installer_sp_client_secret` | `""`    | Pre-created SP client secret. Empty = auto-create.           |
+| Variable                     | Default | Description                                                           |
+| ---------------------------- | ------- | --------------------------------------------------------------------- |
+| `create_service_principal`   | `false` | Set `true` to auto-create SP (not recommended, may fail in some tenants) |
+| `azure_tenant_id`            | `""`    | Required when `create_service_principal = true`                       |
 
 
 ### Naming and Region

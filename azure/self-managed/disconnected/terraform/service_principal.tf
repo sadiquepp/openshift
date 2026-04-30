@@ -1,9 +1,9 @@
 # ── Auto-created Service Principal for openshift-install ─────────────────────
-# Only created when installer_sp_client_id is left empty.
-# When the user provides an existing SP, these resources are skipped (count=0).
+# Gated behind var.create_service_principal (default: false).
+# Recommended: pre-create the SP manually and pass the credentials instead.
 
 locals {
-  create_sp = var.installer_sp_client_id == "" ? true : false
+  create_sp = var.create_service_principal
 
   sp_client_id     = local.create_sp ? azuread_application.ocp_installer[0].client_id : var.installer_sp_client_id
   sp_client_secret = local.create_sp ? azuread_service_principal_password.ocp_installer[0].value : var.installer_sp_client_secret
