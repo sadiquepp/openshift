@@ -19,6 +19,11 @@ variable "azure_tenant_id" {
   description = "Azure tenant (directory) ID. Required when auto-creating the service principal."
   type        = string
   default     = ""
+
+  validation {
+    condition     = var.azure_tenant_id != "" || var.installer_sp_client_id != ""
+    error_message = "azure_tenant_id is required when auto-creating the service principal (installer_sp_client_id is empty)."
+  }
 }
 
 # ── Service Principal for openshift-install ──────────────────────────────────
