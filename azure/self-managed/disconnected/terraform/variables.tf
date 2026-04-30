@@ -15,6 +15,12 @@ variable "azure_subscription_id" {
   type        = string
 }
 
+variable "azure_tenant_id" {
+  description = "Azure tenant (directory) ID. Required when auto-creating the service principal."
+  type        = string
+  default     = ""
+}
+
 # ── Service Principal for openshift-install ──────────────────────────────────
 
 variable "installer_sp_client_id" {

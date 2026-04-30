@@ -15,7 +15,7 @@ registry and mirrored OCP images, and leaves you ready to deploy a cluster using
                         │       Egress VNet (172.17.0.0/16)        │
                         │                                          │
                         │   ┌──────────────┐    ┌───────────┐      │
-  Internet ◄── PIP ◄───┤   │ Bastion VM   │    │ Public    │      │
+  Internet ◄── PIP ◄─── ┤   │ Bastion NIC  │    │ Public    │      │
                         │   │  - mirror    │    │ Subnet    │      │
                         │   │  - squid     │    │           │      │
                         │   │  - terraform │    │           │      │
@@ -25,7 +25,7 @@ registry and mirrored OCP images, and leaves you ready to deploy a cluster using
                         │   │ Azure Firewall (Basic SKU)       │   │
                         │   │  AzureFirewallSubnet             │   │
                         │   │  AzureFirewallManagementSubnet   │   │
-  Internet ◄── PIP ◄───┤   │  3 FQDN rules:                   │   │
+  Internet ◄── PIP ◄─── ┤   │  3 FQDN rules:                   │   │
                         │   │   - management.azure.com         │   │
                         │   │   - login.microsoftonline.com    │   │
                         │   │   - *.blob.core.windows.net      │   │
@@ -41,13 +41,13 @@ registry and mirrored OCP images, and leaves you ready to deploy a cluster using
                         │  │ Subnet    │ │Subnet │ │ Subnet    │   │
                         │  │ AZ1       │ │ AZ2   │ │ AZ3       │   │
                         │  └───────────┘ └───────┘ └───────────┘   │
-                        │  UDR: 0.0.0.0/0 → Azure Firewall        │
+                        │  UDR: 0.0.0.0/0 → Azure Firewall         │
                         │                                          │
-                        │  ┌───────────────────────────────────┐    │
-                        │  │ Private Endpoint Subnet           │    │
-                        │  │  - Storage (blob)                 │    │
-                        │  │  - Storage (table)                │    │
-                        │  └───────────────────────────────────┘    │
+                        │  ┌───────────────────────────────────┐   │
+                        │  │ Private Endpoint Subnet           │   │
+                        │  │  - Storage (blob)                 │   │
+                        │  │  - Storage (table)                │   │
+                        │  └───────────────────────────────────┘   │
                         │                                          │
                         │  Private DNS Zone:                       │
                         │    (created by the installer)            │
@@ -171,6 +171,13 @@ ssh-keygen        # Generate SSH key pair
 # ── Required ──────────────────────────────────────────────────────
 ssh_public_key        = "ssh-rsa AAAAB3Nza..."
 azure_subscription_id = "00000000-0000-0000-0000-000000000000"
+azure_tenant_id       = "00000000-0000-0000-0000-000000000000"
+
+# ── Service Principal (optional) ─────────────────────────────────
+# Leave empty to auto-create via Terraform (requires Entra ID
+# app registration permissions). Or provide a pre-created SP:
+# installer_sp_client_id     = "00000000-0000-0000-0000-000000000000"
+# installer_sp_client_secret = "xxxxxxxxxxxxxxxxxxxx"
 
 # ── Naming ────────────────────────────────────────────────────────
 prefix_for_name               = "myproject"
@@ -180,10 +187,33 @@ openshift_cluster_name_suffix = "xt1"
 # ── Region ────────────────────────────────────────────────────────
 azure_region = "southeastasia"
 
+# ── Disconnected VNet ─────────────────────────────────────────────
+disconnected_vnet_cidr    = "172.16.0.0/16"
+disconnected_subnet_cidrs = ["172.16.1.0/24", "172.16.2.0/24", "172.16.3.0/24"]
+
+# ── Egress VNet ──────────────────────────────────────────────────
+egress_vnet_cidr          = "172.17.0.0/16"
+egress_public_subnet_cidr = "172.17.1.0/24"
+
+# ── Private Endpoints ────────────────────────────────────────────
+private_endpoint_subnet_cidr = "172.16.10.0/24"
+
+# ── Azure Firewall ──────────────────────────────────────────────
+firewall_sku = "Basic"
+firewall_subnet_cidr = "172.17.100.0/26"
+firewall_management_subnet_cidr = "172.17.100.64/26"
+
 # ── Bastion VM ───────────────────────────────────────────────────
-ssh_private_key_path = "~/.ssh/id_rsa"
-installer_vm_size    = "Standard_D2s_v3"
-installer_disk_size  = 100
+ssh_private_key_path    = "~/.ssh/id_rsa"
+installer_vm_size       = "Standard_D2s_v3"
+installer_disk_size     = 100
+installer_image         = {
+  publisher = "RedHat"
+  offer     = "RHEL"
+  sku       = "9_4"
+  version   = "latest"
+}
+admin_username          = "azureuser"
 ```
 
 ### 3. Run the setup

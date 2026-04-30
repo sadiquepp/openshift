@@ -21,6 +21,8 @@ provider "azurerm" {
   subscription_id = var.azure_subscription_id
 }
 
-provider "azuread" {}
+provider "azuread" {
+  tenant_id = var.azure_tenant_id != "" ? var.azure_tenant_id : null
+}
 
 data "azurerm_client_config" "current" {}

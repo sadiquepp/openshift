@@ -1,6 +1,7 @@
 # ── Required ──────────────────────────────────────────────────────
 ssh_public_key        = "ssh-rsa AAAAB3Nza..."
 azure_subscription_id = "00000000-0000-0000-0000-000000000000"
+azure_tenant_id       = "00000000-0000-0000-0000-000000000000"
 
 # ── Service Principal (optional) ─────────────────────────────────
 # Leave empty to auto-create via Terraform (requires Entra ID
