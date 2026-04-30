@@ -404,10 +404,8 @@
 
 #  - name: Install the cluster
 #    shell: |
-#      export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE={{ installer_quay_hostname }}:{{ mirror_registry_port }}/{{ openshift_local_repository }}:{{ openshift_version }}-x86_64
 #      openshift-install create cluster --dir /home/azureuser/install-dir --log-level=debug
 #
 #  - name: Destroy the cluster
 #    shell: |
-#      export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE={{ installer_quay_hostname }}:{{ mirror_registry_port }}/{{ openshift_local_repository }}:{{ openshift_version }}-x86_64
 #      openshift-install destroy cluster --dir /home/azureuser/install-dir --log-level=debug

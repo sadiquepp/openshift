@@ -273,35 +273,57 @@ ssh -i ~/.ssh/id_rsa azureuser@$BASTION_IP
 The simplest method. The installer manages all infrastructure (VMs,
 load balancers, DNS) automatically.
 
+The installer creates a private DNS zone for the cluster and links it only
+to the disconnected VNet. The bastion (egress VNet) must also be linked so
+that the installer can verify the API is reachable. The commands below start
+a background watcher that creates the VNet link as soon as the DNS zone
+appears, then run the installer in the foreground.
+
 ```bash
 ssh azureuser@$BASTION_IP
 
-# Point the installer at the mirrored release image so all CAPI/CAPZ
-# controller images are pulled from the local mirror registry.
-MIRROR=$(grep -oP '[^"]+:8444' ~/install-dir/install-config.yaml.bak 2>/dev/null || echo "<bastion>.mirror.internal:8444")
-export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE=$MIRROR/openshift/release-images:<openshift-version>-x86_64
+# ── Set variables ────────────────────────────────────────────────
+CLUSTER_DOMAIN="<cluster>.<domain>"
+EGRESS_VNET_ID="<egress-vnet-id>"
 
-# install-dir is already prepared with manifests and CCO credentials
+# ── Background: link cluster DNS to egress VNet mid-install ──────
+(
+  echo "[dns-linker] Waiting for metadata.json ..."
+  while [ ! -f ~/install-dir/metadata.json ]; do sleep 10; done
+
+  INFRA_ID=$(jq -r .infraID ~/install-dir/metadata.json)
+  INSTALLER_RG="${INFRA_ID}-rg"
+
+  echo "[dns-linker] Waiting for DNS zone ${CLUSTER_DOMAIN} in ${INSTALLER_RG} ..."
+  while ! az network private-dns zone show \
+    -g "$INSTALLER_RG" -n "$CLUSTER_DOMAIN" &>/dev/null; do sleep 10; done
+
+  echo "[dns-linker] Creating egress VNet link ..."
+  az network private-dns link vnet create \
+    --resource-group "$INSTALLER_RG" \
+    --zone-name "$CLUSTER_DOMAIN" \
+    --name egress-vnet-link \
+    --virtual-network "$EGRESS_VNET_ID" \
+    --registration-enabled false
+
+  echo "[dns-linker] Done. api.${CLUSTER_DOMAIN} is now resolvable from the bastion."
+) &
+
+# ── Foreground: run the installer ────────────────────────────────
 ./openshift-install create cluster \
   --dir ~/install-dir \
   --log-level=debug
 ```
 
-> **Important:** The `OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE` variable is
-> required in disconnected environments. Without it the installer's local
-> Cluster API management cluster will try to pull images from upstream
-> `quay.io`, causing CAPZ webhook failures such as
-> `dial tcp 127.0.0.1:41267: connect: connection refused`.
->
-> The mirror registry hostname uses the `mirror.internal` private DNS zone
-> (e.g. `ijm-bg1-bastion.mirror.internal:8444`) so that bootstrap and cluster
-> nodes in the disconnected VNet can resolve it.
+> The DNS VNet link is cleaned up automatically by
+> `openshift-install destroy cluster` since it lives in the installer-managed
+> resource group.
+
+### Destroy
 
 To destroy:
 
 ```bash
-MIRROR=$(grep -oP '[^"]+:8444' ~/install-dir/install-config.yaml.bak 2>/dev/null || echo "<bastion>.mirror.internal:8444")
-export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE=$MIRROR/openshift/release-images:<openshift-version>-x86_64
 ./openshift-install destroy cluster \
   --dir ~/install-dir \
   --log-level=debug
