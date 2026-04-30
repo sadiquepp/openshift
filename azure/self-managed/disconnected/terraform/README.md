@@ -87,8 +87,16 @@ Managed Identity, and role assignments
 ### Service Principal for openshift-install
 
 `openshift-install` on Azure requires a service principal with a client secret.
-It does not support managed identities. Create the SP before running `deploy.sh`
-(requires Entra ID permissions):
+It does not support managed identities. There are two options:
+
+**Option A -- Automatic (default):** Leave `installer_sp_client_id` and
+`installer_sp_client_secret` empty in `terraform.tfvars`. Terraform will
+create the app registration, service principal, password, and role
+assignments automatically via the `azuread` provider. This requires that the
+identity running `terraform apply` has Entra ID **Application Administrator**
+(or equivalent) permissions to create app registrations.
+
+**Option B -- Manual:** Pre-create the SP and provide the credentials:
 
 ```bash
 az ad sp create-for-rbac --name "<cluster>-installer" \
@@ -103,15 +111,15 @@ az role assignment create \
   --scope /subscriptions/<subscription-id>
 ```
 
-Add the `appId` and `password` to your `terraform.tfvars`:
+Then add the values to `terraform.tfvars`:
 
 ```hcl
 installer_sp_client_id     = "<appId>"
 installer_sp_client_secret = "<password>"
 ```
 
-Terraform passes these to the bastion via Ansible, which writes
-`~/.azure/osServicePrincipal.json` automatically.
+In both cases, Terraform passes the credentials to the bastion via Ansible,
+which writes `~/.azure/osServicePrincipal.json` automatically.
 
 ## Directory Structure
 
@@ -127,6 +135,7 @@ disconnected/
 │   ├── private_endpoints.tf         # Storage private endpoints (blob + table)
 │   ├── dns.tf                       # (DNS managed by installer, see notes)
 │   ├── identity.tf                  # User-assigned managed identity + role assignments
+│   ├── service_principal.tf         # Auto-created SP for openshift-install (optional)
 │   ├── vm.tf                        # Public IP, NIC, bastion VM
 │   ├── ansible.tf                   # Generated Ansible inventory + vars
 │   ├── outputs.tf                   # All outputs
@@ -276,8 +285,13 @@ export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE=$(hostname):8444/openshift/relea
 | ---------------------------- | ------------------------------------------ |
 | `ssh_public_key`             | SSH public key material for the bastion VM |
 | `azure_subscription_id`      | Azure subscription ID                      |
-| `installer_sp_client_id`     | Service principal application (client) ID  |
-| `installer_sp_client_secret` | Service principal client secret            |
+
+### Service Principal (optional)
+
+| Variable                     | Default | Description                                                  |
+| ---------------------------- | ------- | ------------------------------------------------------------ |
+| `installer_sp_client_id`     | `""`    | Pre-created SP client ID. Empty = auto-create via Terraform. |
+| `installer_sp_client_secret` | `""`    | Pre-created SP client secret. Empty = auto-create.           |
 
 
 ### Naming and Region
@@ -338,6 +352,7 @@ After `terraform apply`, these outputs are available:
 | `bastion_private_ip`         | Bastion private IP                       |
 | `firewall_private_ip`        | Azure Firewall private IP (UDR next hop) |
 | `firewall_public_ip`         | Azure Firewall public IP                 |
+| `installer_sp_client_id`     | SP client ID (auto-created or provided)  |
 | `resource_group_name`        | Resource group name                      |
 | `disconnected_vnet_id`       | Disconnected VNet ID                     |
 | `disconnected_subnet_ids`    | Disconnected subnet IDs                  |

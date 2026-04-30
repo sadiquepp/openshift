@@ -18,13 +18,15 @@ variable "azure_subscription_id" {
 # ── Service Principal for openshift-install ──────────────────────────────────
 
 variable "installer_sp_client_id" {
-  description = "Client (app) ID of the pre-created service principal for openshift-install"
+  description = "Client (app) ID of a pre-created service principal. Leave empty to auto-create."
   type        = string
+  default     = ""
 }
 
 variable "installer_sp_client_secret" {
-  description = "Client secret of the pre-created service principal for openshift-install"
+  description = "Client secret of the pre-created service principal. Leave empty to auto-create."
   type        = string
+  default     = ""
   sensitive   = true
 }
 
