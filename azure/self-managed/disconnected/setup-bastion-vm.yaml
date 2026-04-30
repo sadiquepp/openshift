@@ -343,6 +343,7 @@
       --tenant-id {{ azure_tenant_id }} \
       --storage-account-name {{ cco_storage_account }} \
       --installation-resource-group-name {{ cluster_resource_group_name }} \
+      --network-resource-group-name {{ network_resource_group_name }} \
       --output-dir /home/azureuser/cco
     when: not cco_dir_check.stat.exists
 
