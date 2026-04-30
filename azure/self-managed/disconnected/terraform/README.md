@@ -251,7 +251,8 @@ ssh azureuser@$BASTION_IP
 
 # Point the installer at the mirrored release image so all CAPI/CAPZ
 # controller images are pulled from the local mirror registry.
-export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE=$(hostname):8444/openshift/release-images:<openshift-version>-x86_64
+MIRROR=$(grep -oP '[^"]+:8444' ~/install-dir/install-config.yaml.bak 2>/dev/null || echo "<bastion>.mirror.internal:8444")
+export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE=$MIRROR/openshift/release-images:<openshift-version>-x86_64
 
 # install-dir is already prepared with manifests and CCO credentials
 ./openshift-install create cluster \
@@ -264,11 +265,16 @@ export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE=$(hostname):8444/openshift/relea
 > Cluster API management cluster will try to pull images from upstream
 > `quay.io`, causing CAPZ webhook failures such as
 > `dial tcp 127.0.0.1:41267: connect: connection refused`.
+>
+> The mirror registry hostname uses the `mirror.internal` private DNS zone
+> (e.g. `ijm-bg1-bastion.mirror.internal:8444`) so that bootstrap and cluster
+> nodes in the disconnected VNet can resolve it.
 
 To destroy:
 
 ```bash
-export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE=$(hostname):8444/openshift/release-images:<openshift-version>-x86_64
+MIRROR=$(grep -oP '[^"]+:8444' ~/install-dir/install-config.yaml.bak 2>/dev/null || echo "<bastion>.mirror.internal:8444")
+export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE=$MIRROR/openshift/release-images:<openshift-version>-x86_64
 ./openshift-install destroy cluster \
   --dir ~/install-dir \
   --log-level=debug
