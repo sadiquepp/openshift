@@ -281,12 +281,14 @@ appears, then run the installer in the foreground.
 
 ```bash
 ssh azureuser@$BASTION_IP
-
+```
+```bash
 # ── Set variables ────────────────────────────────────────────────
 CLUSTER_DOMAIN="<cluster>.<domain>"
 CLUSTER_RG="<cluster>-rg"
 EGRESS_VNET_ID="<egress-vnet-id>"
-
+```
+```bash
 # ── Background: link cluster DNS to egress VNet mid-install ──────
 (
   echo "[dns-linker] Waiting for DNS zone ${CLUSTER_DOMAIN} in ${CLUSTER_RG} ..."
