@@ -26,6 +26,7 @@ resource "local_file" "ansible_vars" {
     openshift_cluster_name_suffix              = var.openshift_cluster_name_suffix
     ssh_public_key_for_vm_and_openshift_node   = var.ssh_public_key
     resource_group_name                        = azurerm_resource_group.main.name
+    cluster_resource_group_name                = azurerm_resource_group.cluster.name
     disconnected_vnet_name                     = azurerm_virtual_network.disconnected.name
     disconnected_vnet_id                       = azurerm_virtual_network.disconnected.id
     disconnected_vnet_cidr                     = var.disconnected_vnet_cidr

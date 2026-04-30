@@ -284,23 +284,18 @@ ssh azureuser@$BASTION_IP
 
 # ── Set variables ────────────────────────────────────────────────
 CLUSTER_DOMAIN="<cluster>.<domain>"
+CLUSTER_RG="<cluster>-rg"
 EGRESS_VNET_ID="<egress-vnet-id>"
 
 # ── Background: link cluster DNS to egress VNet mid-install ──────
 (
-  echo "[dns-linker] Waiting for metadata.json ..."
-  while [ ! -f ~/install-dir/metadata.json ]; do sleep 10; done
-
-  INFRA_ID=$(jq -r .infraID ~/install-dir/metadata.json)
-  INSTALLER_RG="${INFRA_ID}-rg"
-
-  echo "[dns-linker] Waiting for DNS zone ${CLUSTER_DOMAIN} in ${INSTALLER_RG} ..."
+  echo "[dns-linker] Waiting for DNS zone ${CLUSTER_DOMAIN} in ${CLUSTER_RG} ..."
   while ! az network private-dns zone show \
-    -g "$INSTALLER_RG" -n "$CLUSTER_DOMAIN" &>/dev/null; do sleep 10; done
+    -g "$CLUSTER_RG" -n "$CLUSTER_DOMAIN" &>/dev/null; do sleep 10; done
 
   echo "[dns-linker] Creating egress VNet link ..."
   az network private-dns link vnet create \
-    --resource-group "$INSTALLER_RG" \
+    --resource-group "$CLUSTER_RG" \
     --zone-name "$CLUSTER_DOMAIN" \
     --name egress-vnet-link \
     --virtual-network "$EGRESS_VNET_ID" \
@@ -315,9 +310,11 @@ EGRESS_VNET_ID="<egress-vnet-id>"
   --log-level=debug
 ```
 
-> The DNS VNet link is cleaned up automatically by
-> `openshift-install destroy cluster` since it lives in the installer-managed
-> resource group.
+> The cluster resource group (`<cluster>-rg`) is pre-created by Terraform
+> so that `ccoctl` can scope role assignments to it. The installer uses it
+> via `platform.azure.resourceGroupName` in `install-config.yaml`.
+> `openshift-install destroy cluster` removes the resources inside the RG
+> but does **not** delete the RG itself (since it was pre-created).
 
 ### Destroy
 

@@ -11,8 +11,13 @@ output "azure_tenant_id" {
 # ── Resource Group ───────────────────────────────────────────────────────────
 
 output "resource_group_name" {
-  description = "Name of the resource group"
+  description = "Name of the infra resource group"
   value       = azurerm_resource_group.main.name
+}
+
+output "cluster_resource_group_name" {
+  description = "Name of the cluster resource group (used by openshift-install)"
+  value       = azurerm_resource_group.cluster.name
 }
 
 # ── Disconnected VNet ────────────────────────────────────────────────────────

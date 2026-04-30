@@ -38,6 +38,7 @@ networking:
 platform:
   azure:
     baseDomainResourceGroupName: {{ resource_group_name }}
+    resourceGroupName: {{ cluster_resource_group_name }}
     region: {{ azure_region }}
     networkResourceGroupName: {{ network_resource_group_name }}
     virtualNetwork: {{ disconnected_vnet_name }}
