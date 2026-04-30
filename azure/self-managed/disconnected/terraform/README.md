@@ -165,7 +165,7 @@ az login          # Authenticate with Azure
 ssh-keygen        # Generate SSH key pair
 ```
 
-### 2. Create `terraform.tfvars`
+### 2. Create `terraform.tfvars`. Use the provided `terraform.tfvars.example` as a template.
 
 ```hcl
 # ── Required ──────────────────────────────────────────────────────
