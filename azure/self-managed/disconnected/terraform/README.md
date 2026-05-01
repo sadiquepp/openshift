@@ -170,11 +170,11 @@ ssh_public_key        = "ssh-rsa AAAAB3Nza..."
 azure_subscription_id = "00000000-0000-0000-0000-000000000000"
 azure_tenant_id       = "00000000-0000-0000-0000-000000000000"
 
-# ── Service Principal (optional) ─────────────────────────────────
+# ── Service Principal (Required) ─────────────────────────────────
 # Leave empty to auto-create via Terraform (requires Entra ID
 # app registration permissions). Or provide a pre-created SP:
-# installer_sp_client_id     = "00000000-0000-0000-0000-000000000000"
-# installer_sp_client_secret = "xxxxxxxxxxxxxxxxxxxx"
+installer_sp_client_id     = "00000000-0000-0000-0000-000000000000"
+installer_sp_client_secret = "xxxxxxxxxxxxxxxxxxxx"
 
 # ── Naming ────────────────────────────────────────────────────────
 prefix_for_name               = "myproject"
