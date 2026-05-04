@@ -291,6 +291,8 @@ EGRESS_VNET_ID="<egress-vnet-id>"
 ```bash
 # ── Background: link cluster DNS to egress VNet mid-install ──────
 (
+  echo "[dns-linker] Logging in to Azure with managed identity ..."
+  az login --identity
   echo "[dns-linker] Waiting for DNS zone ${CLUSTER_DOMAIN} in ${CLUSTER_RG} ..."
   while ! az network private-dns zone show \
     -g "$CLUSTER_RG" -n "$CLUSTER_DOMAIN" &>/dev/null; do sleep 10; done
@@ -340,6 +342,9 @@ cd ~/cco
   --region <region> \
   --subscription-id <subscription-id> \
   --tenant-id <tenant-id>
+
+# 4. Delete the manifests, tls, jwk, openid-configuration files and directories
+rm -rf ~/cco/manifests ~/cco/tls ~/cco/jwks ~/cco/openid-configuration ~/cco/serviceaccount-signer.private ~/cco/serviceaccount-signer.public
 
 /home/azureuser/cco/ccoctl azure create-all \
   --credentials-requests-dir ~/cco/credrequests \

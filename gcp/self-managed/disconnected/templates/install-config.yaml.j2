@@ -1,0 +1,46 @@
+apiVersion: v1
+baseDomain: {{ openshift_base_domain }}
+credentialsMode: Manual
+compute:
+- architecture: amd64
+  hyperthreading: Enabled
+  name: worker
+  platform: {}
+  replicas: 3
+controlPlane:
+  architecture: amd64
+  hyperthreading: Enabled
+  name: master
+  platform: {}
+  replicas: 3
+metadata:
+  creationTimestamp: null
+  name: {{ openshift_cluster_name }}
+networking:
+  clusterNetwork:
+  - cidr: 10.128.0.0/14
+    hostPrefix: 23
+  machineNetwork:
+  - cidr: {{ disconnected_vpc_cidr }}
+  networkType: OVNKubernetes
+  serviceNetwork:
+  - 172.30.0.0/16
+platform:
+  gcp:
+    projectID: {{ gcp_project_id }}
+    region: {{ gcp_region }}
+    network: {{ disconnected_vpc_name }}
+    controlPlaneSubnet: {{ control_plane_subnet_name }}
+    computeSubnet: {{ compute_subnet_name }}
+publish: Internal
+pullSecret: '{"auths":{"{{ installer_quay_hostname }}:{{ mirror_registry_port }}": {"auth": {{ quay_credential.stdout }}} }}'
+imageDigestSources:
+- mirrors:
+  - {{ installer_quay_hostname }}:{{ mirror_registry_port }}/openshift/release-images
+  source: quay.io/openshift-release-dev/ocp-release
+- mirrors:
+  - {{ installer_quay_hostname }}:{{ mirror_registry_port }}/openshift/release
+  source: quay.io/openshift-release-dev/ocp-v4.0-art-dev
+sshKey: |
+  {{ ssh_public_key_for_vm_and_openshift_node }}
+additionalTrustBundle: |
