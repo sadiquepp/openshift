@@ -17,9 +17,21 @@ variable "gcp_region" {
 
 # ── Service Account for openshift-install ─────────────────────────────────────
 
+variable "use_service_account_key" {
+  description = "Set to false to skip copying a service account JSON key and rely on VM identity instead"
+  type        = bool
+  default     = true
+}
+
 variable "installer_sa_key_file" {
-  description = "Path to the pre-created GCP service account JSON key file for openshift-install. Create one with: gcloud iam service-accounts keys create key.json --iam-account=<SA_EMAIL>"
+  description = "Path to the pre-created GCP service account JSON key file for openshift-install. Create one with: gcloud iam service-accounts keys create key.json --iam-account=<SA_EMAIL>. Ignored when use_service_account_key = false."
   type        = string
+  default     = ""
+
+  validation {
+    condition     = var.use_service_account_key == false || var.installer_sa_key_file != ""
+    error_message = "installer_sa_key_file must be set when use_service_account_key is true."
+  }
 }
 
 # ── Disconnected VPC ──────────────────────────────────────────────────────────

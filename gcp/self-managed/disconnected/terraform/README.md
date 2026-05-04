@@ -16,32 +16,32 @@ deploy a cluster using **IPI** (Installer-Provisioned Infrastructure).
                         │       Egress VPC (172.17.0.0/16)         │
                         │                                          │
                         │   ┌──────────────┐    ┌───────────┐      │
-  Internet ◄── NAT ◄── ┤   │ Bastion VM   │    │ Egress    │      │
+  Internet ◄── NAT ◄──  ┤   │ Bastion VM   │    │ Egress    │      │
                         │   │  - mirror    │    │ Subnet    │      │
                         │   │  - squid     │    │           │      │
                         │   │  - terraform │    │           │      │
                         │   └──────────────┘    └───────────┘      │
                         │                                          │
                         │   ┌──────────────────────────────────┐   │
-                        │   │ Cloud Router + Cloud NAT          │   │
-                        │   │  (bastion outbound internet)      │   │
+                        │   │ Cloud Router + Cloud NAT         │   │
+                        │   │  (bastion outbound internet)     │   │
                         │   └──────────────────────────────────┘   │
                         └────────────┬─────────────────────────────┘
                                      │
-                              VPC Peering
+                            VPC Peering (Disconnected → Egress)
                                      │
                         ┌────────────┴─────────────────────────────┐
                         │   Disconnected VPC (172.16.0.0/16)       │
                         │                                          │
                         │  ┌───────────────┐  ┌───────────────┐    │
-                        │  │ Control Plane  │  │ Compute       │    │
-                        │  │ Subnet         │  │ Subnet        │    │
-                        │  │ (172.16.1.0)   │  │ (172.16.2.0)  │    │
+                        │  │ Control Plane │  │ Compute       │    │
+                        │  │ Subnet        │  │ Subnet        │    │
+                        │  │ (172.16.1.0)  │  │ (172.16.2.0)  │    │
                         │  └───────────────┘  └───────────────┘    │
                         │                                          │
                         │  ┌───────────────────────────────────┐   │
-                        │  │ PSC Endpoint (all-apis)            │   │
-                        │  │  172.16.100.2 → all Google APIs    │   │
+                        │  │ PSC Endpoint (all-apis)           │   │
+                        │  │  172.16.100.2 → all Google APIs   │   │
                         │  └───────────────────────────────────┘   │
                         │                                          │
                         │  Cloud DNS Private Zones:                │

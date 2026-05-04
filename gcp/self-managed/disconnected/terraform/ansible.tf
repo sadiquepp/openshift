@@ -33,5 +33,6 @@ resource "local_file" "ansible_vars" {
     bastion_private_ip                       = google_compute_instance.bastion.network_interface[0].network_ip
     mirror_registry_fqdn                     = "${google_compute_instance.bastion.name}.mirror.internal"
     installer_sa_key_file                    = var.installer_sa_key_file
+    use_service_account_key                  = var.use_service_account_key
   })
 }
