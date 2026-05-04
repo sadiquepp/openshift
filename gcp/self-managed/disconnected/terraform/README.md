@@ -253,46 +253,21 @@ ssh ocpuser@$BASTION_IP
 
 ### Destroy and re-run
 
-Unlike Azure, GCP does not have resource groups that the installer deletes.
-However, you must re-run `ccoctl` to clean up and recreate workload identity
-resources:
-
 ```bash
 # 1. Destroy the cluster
 ./openshift-install destroy cluster \
   --dir ~/install-dir \
   --log-level=debug
 
-# 2. Delete old CCO resources
-cd ~/cco
-~/cco/ccoctl gcp delete \
-  --name <cco_suffix> \
-  --project <project-id> \
-  --credentials-requests-dir ~/cco/credrequests
-
-# 3. Recreate CCO resources
-rm -rf ~/cco/manifests ~/cco/tls
-~/cco/ccoctl gcp create-all \
-  --credentials-requests-dir ~/cco/credrequests \
-  --name <cco_suffix> \
-  --region <region> \
-  --project <project-id> \
-  --output-dir ~/cco
-
-# 4. Recreate install-dir with fresh manifests
+# 2. Delete install-dir
 rm -rf ~/install-dir
-mkdir ~/install-dir
-cp ~/install-config.yaml ~/install-dir/
-./openshift-install create manifests --dir ~/install-dir
-cp ~/cco/manifests/* ~/install-dir/manifests/
-cp -r ~/cco/tls ~/install-dir/
 
-# 5. Re-run the installer
+# 3. Unpack the backup of install-dir
+tar -xjf ~/install-dir-backup.bz2
+
+# 4. Re-run the installer
 ./openshift-install create cluster --dir ~/install-dir --log-level=debug
 ```
-
-> The `deploy.sh` script prints all the above commands with pre-populated
-> values from Terraform outputs after setup completes.
 
 ---
 

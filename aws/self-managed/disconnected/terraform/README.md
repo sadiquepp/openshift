@@ -192,7 +192,12 @@ To destroy:
   --dir ~/install-dir \
   --log-level=debug
 ```
-
+To re-run the installer, you need to unpack the backup of install-dir and re-run the installer if there are no changes to the install-config.yaml needs to be made.
+```bash
+rm -rf ~/install-dir
+tar -xjf ~/install-dir-backup.bz2
+./openshift-install create cluster --dir ~/install-dir --log-level=debug
+```
 ### Option B: UPI (User-Provisioned Infrastructure)
 
 You manage the infrastructure (EC2 nodes, LB, DNS). Use this when you need
