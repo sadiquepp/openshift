@@ -1,0 +1,42 @@
+- name: Normalize SSH key variable name from AWS Terraform output
+  set_fact:
+    ssh_public_key_for_vm_and_openshift_node: "{{ ssh_public_key_for_ec2_and_openshit_node }}"
+  when: ssh_public_key_for_ec2_and_openshit_node is defined
+
+- name: Git Clone ROSA Terraform Classic
+  git:
+    repo: https://github.com/rh-mobb/terraform_rhcs_rosa_sts.git
+    clone: yes
+    dest: "{{ home_dir }}/terraform-rosa"
+
+- name: Git Clone ROSA Terraform HCP
+  git:
+    repo: https://github.com/terraform-redhat/terraform-rhcs-rosa-hcp.git
+    clone: yes
+    dest: "{{ home_dir }}/terraform-rhcs-rosa-hcp"
+
+- name: Creates .aws directory to store files
+  file:
+    path: "{{ home_dir }}/.aws"
+    state: directory
+
+- name: Update .aws/config with region
+  copy:
+    dest: "{{ home_dir }}/.aws/config"
+    content: |
+      [default]
+      region = {{ aws_region }}
+
+- name: Copy ROSA Create/Delete Cluster Scripts
+  template:
+    src: "aws/{{ item }}.j2"
+    dest: "{{ home_dir }}/{{ item }}"
+    mode: 0755
+  loop:
+    - rosa-create-cluster-hcp-shared-vpc.sh
+    - rosa-create-cluster-hcp-zero-egress.sh
+    - rosa-delete-cluster-hcp-zero-egress.sh
+    - rosa-create-cluster-hcp.sh
+    - rosa-delete-cluster-hcp.sh
+    - rosa-create-cluster-hcp-zero-egress-proxy.sh
+  when: rosa_scripts | default(true) | bool

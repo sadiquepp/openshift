@@ -1,0 +1,39 @@
+admin_username: ec2-user
+home_dir: "/home/{{ admin_username }}"
+pull_secret_location: "{{ home_dir }}/pull-secret.txt"
+quay_root_mount: /registry
+mirror_registry_port: 8443
+cco_dir: "{{ home_dir }}/sts"
+cco_suffix: "{{ openshift_cluster_name }}-sts"
+
+cloud_extra_packages:
+  - awscli2
+
+tarballs:
+  - https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/{{ openshift_major_version }}.{{ openshift_minor_version }}/openshift-client-linux.tar.gz
+  - https://mirror.openshift.com/pub/cgw/rosa/latest/rosa-linux.tar.gz
+  - https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/latest/oc-mirror.tar.gz
+  - https://mirror.openshift.com/pub/cgw/mirror-registry/latest/mirror-registry-amd64.tar.gz
+
+tarball_basenames:
+  - openshift-client-linux.tar.gz
+  - rosa-linux.tar.gz
+  - oc-mirror.tar.gz
+  - mirror-registry-amd64.tar.gz
+
+cli_binaries:
+  - oc
+  - rosa
+  - kubectl
+  - oc-mirror
+
+mirror_operators:
+  - aws-load-balancer-operator
+
+aws_region: ap-southeast-1
+oidc_config_id: place-holder-if-not-passed-via-parameter
+vpc_owner_aws_account_number: 12345
+aws_account_number_to_share_with: 12345
+hypershift_local_hosted_zone_id: abcde
+rosa_shared_vpc_hosted_zone_id: abcde
+rosa_shared_vpc_cluster_domain: example.com

@@ -1,0 +1,14 @@
+- name: Create All CCO Files for Azure
+  shell: |
+    cd {{ cco_dir }}
+    {{ cco_dir }}/ccoctl azure create-all \
+    --credentials-requests-dir {{ cco_dir }}/credrequests/ \
+    --name {{ cco_suffix }} \
+    --region {{ azure_region }} \
+    --subscription-id {{ azure_subscription_id }} \
+    --tenant-id {{ azure_tenant_id }} \
+    --storage-account-name {{ cco_storage_account }} \
+    --installation-resource-group-name {{ cluster_resource_group_name }} \
+    --network-resource-group-name {{ network_resource_group_name }} \
+    --output-dir {{ cco_dir }}
+  when: not cco_dir_check.stat.exists

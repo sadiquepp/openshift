@@ -21,7 +21,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PLAYBOOK_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+PLAYBOOK_DIR="$(cd "$SCRIPT_DIR/../../../cloud/self-managed/disconnected" && pwd)"
 
 # ── Parse arguments ──────────────────────────────────────────────────────────
 
@@ -95,9 +95,10 @@ sleep 30
 ansible-playbook \
   -i "$SCRIPT_DIR/inventory.ini" \
   -e "@$SCRIPT_DIR/ansible-vars.json" \
+  -e "cloud_provider=gcp" \
   "${ANSIBLE_EXTRA[@]}" \
   "${EXTRA_ARGS[@]}" \
-  "$PLAYBOOK_DIR/setup-bastion-vm.yaml"
+  "$PLAYBOOK_DIR/setup-bastion.yaml"
 
 # ── Done ─────────────────────────────────────────────────────────────────────
 

@@ -1,0 +1,52 @@
+prefix_for_name: project_name
+openshift_major_version: "4.20"
+openshift_minor_version: 0
+openshift_version: "{{ openshift_major_version }}.{{ openshift_minor_version }}"
+openshift_base_domain: example.com
+openshift_cluster_name_suffix: xt1
+openshift_cluster_name: "{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}"
+cco_suffix: "{{ openshift_cluster_name }}-cco"
+admin_username: ocpuser
+home_dir: "/home/{{ admin_username }}"
+pull_secret_location: "{{ home_dir }}/pull-secret.txt"
+mirror_registry_password: SedUam1879yz
+mirror_registry_port: 8444
+quay_root_mount: "{{ home_dir }}/registry"
+openshift_local_repository: openshift/release-images
+mirror_operators: []
+cco_dir: "{{ home_dir }}/cco"
+
+common_packages:
+  - tmux
+  - tigervnc
+  - tigervnc-server
+  - wget
+  - podman
+  - jq
+  - golang
+  - unzip
+  - bind-utils
+  - squid
+  - openssl-devel
+  - git
+  - yum-utils
+  - ansible-core
+  - python3-pip
+  - '@Server with GUI'
+
+cloud_extra_packages: []
+
+tarballs:
+  - https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/{{ openshift_major_version }}.{{ openshift_minor_version }}/openshift-client-linux.tar.gz
+  - https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/latest/oc-mirror.tar.gz
+  - https://mirror.openshift.com/pub/cgw/mirror-registry/latest/mirror-registry-amd64.tar.gz
+
+tarball_basenames:
+  - openshift-client-linux.tar.gz
+  - oc-mirror.tar.gz
+  - mirror-registry-amd64.tar.gz
+
+cli_binaries:
+  - oc
+  - kubectl
+  - oc-mirror

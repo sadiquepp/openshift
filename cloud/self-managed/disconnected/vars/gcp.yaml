@@ -1,0 +1,10 @@
+admin_username: ocpuser
+home_dir: "/home/{{ admin_username }}"
+pull_secret_location: "{{ home_dir }}/pull-secret.txt"
+quay_root_mount: "{{ home_dir }}/registry"
+cco_dir: "{{ home_dir }}/cco"
+cco_suffix: "{{ openshift_cluster_name }}-cco"
+
+gcp_region: asia-southeast1
+gcp_project_id: my-gcp-project
+use_service_account_key: true

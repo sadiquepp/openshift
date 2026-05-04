@@ -1,0 +1,15 @@
+- name: Delete existing STS resources
+  shell: |
+    cd {{ cco_dir }}
+    {{ cco_dir }}/ccoctl aws delete --name {{ cco_suffix }} --region {{ aws_region }}
+  when: not cco_dir_check.stat.exists
+
+- name: Create All STS Files for AWS
+  shell: |
+    cd {{ cco_dir }}
+    {{ cco_dir }}/ccoctl aws create-all \
+    --credentials-requests-dir {{ cco_dir }}/credrequests/ \
+    --name {{ cco_suffix }} \
+    --region {{ aws_region }} \
+    --create-private-s3-bucket
+  when: not cco_dir_check.stat.exists

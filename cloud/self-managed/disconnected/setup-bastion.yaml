@@ -1,27 +1,10 @@
-- name: Setup Bastion Node (GCP)
-  hosts: gcp_vm
+- name: Setup Bastion Node
+  hosts: bastion
   gather_facts: false
-  remote_user: ocpuser
-  vars:
-    prefix_for_name: project_name
-    openshift_major_version: "4.20"
-    openshift_minor_version: 0
-    openshift_version: "{{ openshift_major_version }}.{{ openshift_minor_version }}"
-    gcp_region: asia-southeast1
-    gcp_project_id: my-gcp-project
-    openshift_base_domain: example.com
-    openshift_cluster_name_suffix: xt1
-    openshift_cluster_name: "{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}"
-    cco_suffix: "{{ openshift_cluster_name }}-cco"
-    admin_username: ocpuser
-    home_dir: "/home/{{ admin_username }}"
-    pull_secret_location: "{{ home_dir }}/pull-secret.txt"
-    mirror_registry_password: SedUam1879yz
-    mirror_registry_port: 8444
-    quay_root_mount: "{{ home_dir }}/registry"
-    openshift_local_repository: openshift/release-images
-    mirror_operators: []
-    use_service_account_key: true
+  remote_user: "{{ admin_username }}"
+  vars_files:
+    - vars/common.yaml
+    - "vars/{{ cloud_provider }}.yaml"
   tasks:
 
   - name: Wait for SSH banners
@@ -35,78 +18,12 @@
 
   - name: Install Required RPM Packages
     dnf:
-      name:
-        - tmux
-        - tigervnc
-        - tigervnc-server
-        - wget
-        - podman
-        - jq
-        - golang
-        - unzip
-        - bind-utils
-        - squid
-        - openssl-devel
-        - git
-        - yum-utils
-        - ansible-core
-        - python3-pip
-        - '@Server with GUI'
+      name: "{{ common_packages + cloud_extra_packages }}"
       state: present
     become: true
 
-  - name: Add Google Cloud SDK Yum Repo
-    copy:
-      dest: /etc/yum.repos.d/google-cloud-sdk.repo
-      content: |
-        [google-cloud-sdk]
-        name=Google Cloud SDK
-        baseurl=https://packages.cloud.google.com/yum/repos/cloud-sdk-el9-x86_64
-        enabled=1
-        gpgcheck=1
-        repo_gpgcheck=0
-        gpgkey=https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
-    become: true
-
-  - name: Install Google Cloud SDK
-    dnf:
-      name: google-cloud-cli
-      state: present
-    become: true
-
-  - name: Create .gcp directory
-    file:
-      path: "{{ home_dir }}/.gcp"
-      state: directory
-    when: use_service_account_key | bool
-
-  - name: Copy GCP service account key for openshift-install
-    copy:
-      src: "{{ installer_sa_key_file }}"
-      dest: "{{ home_dir }}/.gcp/osServiceAccount.json"
-      mode: "0600"
-    when: use_service_account_key | bool
-
-  - name: Set GOOGLE_APPLICATION_CREDENTIALS in bashrc
-    lineinfile:
-      path: "{{ home_dir }}/.bashrc"
-      line: 'export GOOGLE_APPLICATION_CREDENTIALS="{{ home_dir }}/.gcp/osServiceAccount.json"'
-      create: yes
-      state: present
-    when: use_service_account_key | bool
-
-  - name: Activate gcloud with service account
-    shell: |
-      gcloud auth activate-service-account --key-file={{ home_dir }}/.gcp/osServiceAccount.json
-      gcloud config set project {{ gcp_project_id }}
-      gcloud config set compute/region {{ gcp_region }}
-    when: use_service_account_key | bool
-
-  - name: Configure gcloud project and region (VM identity)
-    shell: |
-      gcloud config set project {{ gcp_project_id }}
-      gcloud config set compute/region {{ gcp_region }}
-    when: not (use_service_account_key | bool)
+  - name: Cloud-specific setup (CLI, credentials, auth)
+    include_tasks: "tasks/cloud-setup/{{ cloud_provider }}.yaml"
 
   - name: Enable mouse scrolling for tmux
     lineinfile:
@@ -154,7 +71,7 @@
 
   - name: Copy squid allow list
     template:
-      src: squid-allow-list.txt.j2
+      src: "{{ cloud_provider }}/squid-allow-list.txt.j2"
       dest: /etc/squid/squid-allow-list.txt
     become: true
 
@@ -171,31 +88,22 @@
     get_url:
       url: "{{ item }}"
       dest: "{{ home_dir }}/"
-    loop:
-      - https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/{{ openshift_major_version }}.{{ openshift_minor_version }}/openshift-client-linux.tar.gz
-      - https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/latest/oc-mirror.tar.gz
-      - https://mirror.openshift.com/pub/cgw/mirror-registry/latest/mirror-registry-amd64.tar.gz
+    loop: "{{ tarballs }}"
 
   - name: Unarchive Downloaded Tarballs
     unarchive:
       src: "{{ home_dir }}/{{ item }}"
       dest: "{{ home_dir }}/"
       remote_src: yes
-    loop:
-      - openshift-client-linux.tar.gz
-      - oc-mirror.tar.gz
-      - mirror-registry-amd64.tar.gz
+    loop: "{{ tarball_basenames }}"
 
-  - name: Copy OC CLI to /usr/bin
+  - name: Copy CLI binaries to /usr/bin
     copy:
       src: "{{ home_dir }}/{{ item }}"
       dest: "/usr/bin/{{ item }}"
       remote_src: yes
       mode: 0755
-    loop:
-      - oc
-      - kubectl
-      - oc-mirror
+    loop: "{{ cli_binaries }}"
     become: yes
 
   - name: Creates directory quay_root_mount
@@ -303,7 +211,7 @@
 
   - name: Check if cco-dir already exists
     stat:
-      path: "{{ home_dir }}/cco/manifests"
+      path: "{{ cco_dir }}/manifests"
     register: cco_dir_check
 
   - name: Extract Openshift Install Binary from mirror registry
@@ -314,16 +222,16 @@
 
   - name: Create credentials/Install directory
     file:
-      path: "{{ home_dir }}/{{ item }}"
+      path: "{{ item }}"
       state: directory
     loop:
-      - install-dir
-      - cco
+      - "{{ home_dir }}/install-dir"
+      - "{{ cco_dir }}"
     when: not install_dir_check.stat.exists
 
   - name: Extract ccoutils
     shell: |
-      cd {{ home_dir }}/cco
+      cd {{ cco_dir }}
       RELEASE_IMAGE=$({{ home_dir }}/openshift-install version | awk '/release image/ {print $3}')
       CCO_IMAGE=$(oc adm release info -a {{ home_dir }}/pull-secret.txt --image-for='cloud-credential-operator' $RELEASE_IMAGE)
       oc image extract $CCO_IMAGE --file="/usr/bin/ccoctl" -a {{ home_dir }}/pull-secret.txt
@@ -331,37 +239,27 @@
 
   - name: Changing permission of ccoutil to 755
     file:
-      path: "{{ home_dir }}/cco/ccoctl"
+      path: "{{ cco_dir }}/ccoctl"
       mode: 0755
     when: not cco_dir_check.stat.exists
 
   - name: Extract the list of CredentialsRequest objects from the OpenShift Container Platform release image
     shell: |
-      cd {{ home_dir }}/cco
+      cd {{ cco_dir }}
       RELEASE_IMAGE=$({{ home_dir }}/openshift-install version | awk '/release image/ {print $3}')
       oc adm release extract --credentials-requests \
-      --cloud=gcp \
-      --to={{ home_dir }}/cco/credrequests \
+      --cloud={{ cloud_provider }} \
+      --to={{ cco_dir }}/credrequests \
       ${RELEASE_IMAGE}
     when: not cco_dir_check.stat.exists
 
-  - name: Create All CCO Files for GCP
-    shell: |
-      cd {{ home_dir }}/cco
-      {{ home_dir }}/cco/ccoctl gcp create-all \
-      --credentials-requests-dir {{ home_dir }}/cco/credrequests/ \
-      --name {{ cco_suffix }} \
-      --region {{ gcp_region }} \
-      --project {{ gcp_project_id }} \
-      --output-dir {{ home_dir }}/cco
-    when: not cco_dir_check.stat.exists
+  - name: Cloud-specific CCO/STS creation
+    include_tasks: "tasks/cco/{{ cloud_provider }}.yaml"
 
   - name: Copy install-config.yaml
     template:
-      src: "{{ item }}.j2"
-      dest: "{{ item }}"
-    loop:
-      - install-config.yaml
+      src: "{{ cloud_provider }}/install-config.yaml.j2"
+      dest: "{{ home_dir }}/install-config.yaml"
     when: not install_dir_check.stat.exists
 
   - name: Read Quay Root CA
@@ -394,14 +292,14 @@
 
   - name: Copy CCO credentials to install-dir/manifests
     copy:
-      src: "{{ home_dir }}/cco/manifests/"
+      src: "{{ cco_dir }}/manifests/"
       dest: "{{ home_dir }}/install-dir/manifests/"
       remote_src: yes
     when: not install_dir_check.stat.exists
 
   - name: Copy CCO tls files to install-dir/
     copy:
-      src: "{{ home_dir }}/cco/tls"
+      src: "{{ cco_dir }}/tls"
       dest: "{{ home_dir }}/install-dir/"
       remote_src: yes
     when: not install_dir_check.stat.exists
@@ -412,11 +310,3 @@
       dest: "{{ home_dir }}/install-dir-backup.bz2"
       format: bz2
     when: not install_dir_check.stat.exists
-
-#  - name: Install the cluster
-#    shell: |
-#      openshift-install create cluster --dir {{ home_dir }}/install-dir --log-level=debug
-#
-#  - name: Destroy the cluster
-#    shell: |
-#      openshift-install destroy cluster --dir {{ home_dir }}/install-dir --log-level=debug
