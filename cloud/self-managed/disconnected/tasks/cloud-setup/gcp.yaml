@@ -50,3 +50,18 @@
     gcloud config set project {{ gcp_project_id }}
     gcloud config set compute/region {{ gcp_region }}
   when: not (use_service_account_key | bool)
+
+- name: Allow root SSH login for mirror-registry installer
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?PermitRootLogin'
+    line: 'PermitRootLogin prohibit-password'
+  become: true
+  register: sshd_config_changed
+
+- name: Restart sshd if config changed
+  systemd:
+    name: sshd
+    state: restarted
+  become: true
+  when: sshd_config_changed.changed

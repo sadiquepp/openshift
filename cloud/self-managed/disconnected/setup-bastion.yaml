@@ -112,21 +112,6 @@
       state: directory
     become: true
 
-  - name: Allow root SSH login for mirror-registry installer
-    lineinfile:
-      path: /etc/ssh/sshd_config
-      regexp: '^#?PermitRootLogin'
-      line: 'PermitRootLogin prohibit-password'
-    become: true
-    register: sshd_config_changed
-
-  - name: Restart sshd if config changed
-    systemd:
-      name: sshd
-      state: restarted
-    become: true
-    when: sshd_config_changed.changed
-
   - name: Check if mirror registry is already running
     shell: |
       podman login -u init -p {{ mirror_registry_password }} {{ installer_quay_hostname }}:{{ mirror_registry_port }} 2>/dev/null
