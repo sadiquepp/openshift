@@ -10,9 +10,6 @@ resource "google_dns_managed_zone" "googleapis" {
     networks {
       network_url = google_compute_network.disconnected.id
     }
-    networks {
-      network_url = google_compute_network.egress.id
-    }
   }
 }
 
@@ -35,9 +32,6 @@ resource "google_dns_managed_zone" "gcr" {
   private_visibility_config {
     networks {
       network_url = google_compute_network.disconnected.id
-    }
-    networks {
-      network_url = google_compute_network.egress.id
     }
   }
 }
@@ -62,9 +56,6 @@ resource "google_dns_managed_zone" "pkg_dev" {
     networks {
       network_url = google_compute_network.disconnected.id
     }
-    networks {
-      network_url = google_compute_network.egress.id
-    }
   }
 }
 
@@ -87,9 +78,6 @@ resource "google_dns_managed_zone" "accounts_google" {
   private_visibility_config {
     networks {
       network_url = google_compute_network.disconnected.id
-    }
-    networks {
-      network_url = google_compute_network.egress.id
     }
   }
 }
