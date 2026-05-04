@@ -12,7 +12,7 @@ resource "google_compute_global_address" "psc_apis" {
 }
 
 resource "google_compute_global_forwarding_rule" "psc_apis" {
-  name                  = "${var.prefix_for_name}-psc-all-apis"
+  name                  = "${replace(var.prefix_for_name, "-", "")}pscapis"
   target                = "all-apis"
   network               = google_compute_network.disconnected.id
   ip_address            = google_compute_global_address.psc_apis.id

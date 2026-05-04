@@ -163,6 +163,7 @@ ansible-galaxy collection install community.general
 git clone https://github.com/sadiquepp/openshift.git
 gcloud auth login          # Authenticate with GCP
 gcloud config set project <project-id>
+gcloud auth application-default login
 ssh-keygen                 # Generate SSH key pair
 ```
 
