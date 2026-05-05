@@ -12,6 +12,12 @@
       delay: 5
       timeout: 300
 
+  - name: Gather hostname fact
+    setup:
+      gather_subset:
+        - min
+    when: mirror_registry_fqdn is not defined
+
   - name: Store mirror registry hostname
     set_fact:
       installer_quay_hostname: "{{ mirror_registry_fqdn | default(ansible_hostname) }}"
