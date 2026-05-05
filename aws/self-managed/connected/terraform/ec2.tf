@@ -9,7 +9,7 @@ resource "aws_key_pair" "installer" {
 
 resource "aws_security_group" "installer" {
   name        = "ping_ssh_8443"
-  description = "Security group for installer EC2 — SSH, VNC, proxy, registry"
+  description = "Security group for bastion EC2 SSH VNC proxy registry"
   vpc_id      = aws_vpc.connected.id
 
   ingress {
