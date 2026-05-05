@@ -205,11 +205,16 @@
       path: "{{ cco_dir }}/manifests"
     register: cco_dir_check
 
+  - name: Check if openshift-install binary already exists
+    stat:
+      path: "{{ home_dir }}/openshift-install"
+    register: openshift_install_check
+
   - name: Extract Openshift Install Binary from mirror registry
     shell: |
       oc adm release extract -a {{ pull_secret_location }} \
        --command=openshift-install "{{ installer_quay_hostname }}:{{ mirror_registry_port }}/{{ openshift_local_repository }}:{{ openshift_version }}-x86_64"
-    when: not install_dir_check.stat.exists
+    when: not openshift_install_check.stat.exists
 
   - name: Create credentials/Install directory
     file:
