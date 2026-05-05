@@ -1,6 +1,6 @@
 ---
 - name: Prepare UPI install directory (install-dir-upi)
-  hosts: aws_ec2
+  hosts: bastion
   gather_facts: false
   remote_user: ec2-user
   vars:
