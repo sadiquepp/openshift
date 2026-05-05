@@ -23,7 +23,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PLAYBOOK_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+PLAYBOOK_DIR="$(cd "$SCRIPT_DIR/../../../../cloud/self-managed/disconnected" && pwd)"
 
 # ── Parse arguments ──────────────────────────────────────────────────────────
 
