@@ -109,7 +109,7 @@ ansible-playbook \
   -e cloud_provider=aws \
   "${ANSIBLE_EXTRA[@]}" \
   "${EXTRA_ARGS[@]}" \
-  "$PLAYBOOK_DIR/setup-bastion-ec2.yaml"
+  "$PLAYBOOK_DIR/setup-bastion.yaml"
 
 # ── Step 3: Prepare UPI install directory ────────────────────────────────────
 
