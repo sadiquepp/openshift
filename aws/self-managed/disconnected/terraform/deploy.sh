@@ -24,6 +24,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLAYBOOK_DIR="$(cd "$SCRIPT_DIR/../../../../cloud/self-managed/disconnected" && pwd)"
+UPI_PLAYBOOK_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ── Parse arguments ──────────────────────────────────────────────────────────
 
@@ -122,7 +123,7 @@ ansible-playbook \
   -e "@$SCRIPT_DIR/ansible-vars.json" \
   "${ANSIBLE_EXTRA[@]}" \
   "${EXTRA_ARGS[@]}" \
-  "$PLAYBOOK_DIR/prepare-upi-install-dir.yaml"
+  "$UPI_PLAYBOOK_DIR/prepare-upi-install-dir.yaml"
 
 # ── Done ─────────────────────────────────────────────────────────────────────
 
