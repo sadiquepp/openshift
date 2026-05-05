@@ -41,8 +41,8 @@ rosa create cluster \
   --machine-cidr {{ disconnected_vpc_cidr }} \
   --subnet-ids {{ disconnected_subnet_id_a }},{{ disconnected_subnet_id_b }},{{ disconnected_subnet_id_c }} \
   --additional-trust-bundle-file /etc/squid/certs/squid-ca-crt.pem \
-  --http-proxy http://{{ installer_quay_hostname.stdout }}:3128 \
-  --https-proxy http://{{ installer_quay_hostname.stdout }}:3128 \
+  --http-proxy http://{{ installer_quay_hostname }}:3128 \
+  --https-proxy http://{{ installer_quay_hostname }}:3128 \
   --no-proxy s3.dualstack.{{ aws_region }}.amazonaws.com,s3.{{ aws_region }}.amazonaws.com,ec2.{{ aws_region }}.amazonaws.com,elasticloadbalancing.{{ aws_region }}.amazonaws.com,sts.{{ aws_region }}.amazonaws.com \
   --yes \
   --region {{ aws_region }}

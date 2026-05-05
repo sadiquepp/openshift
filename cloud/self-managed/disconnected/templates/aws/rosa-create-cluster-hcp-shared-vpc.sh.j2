@@ -54,6 +54,6 @@ rosa create cluster \
   --vpc-endpoint-role-arn arn:aws:iam::{{ vpc_owner_aws_account_number }}:role/{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}-shared-vpc-endpoint \
   --base-domain {{ rosa_shared_vpc_cluster_domain }} \
   --additional-allowed-principals arn:aws:iam::{{ vpc_owner_aws_account_number }}:role/{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}-shared-vpc-route53,arn:aws:iam::{{ vpc_owner_aws_account_number }}:role/{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}-shared-vpc-endpoint \
-  --http-proxy http://{{ installer_quay_hostname.stdout }}:3128 \
-  --https-proxy http://{{ installer_quay_hostname.stdout }}:3128 \
+  --http-proxy http://{{ installer_quay_hostname }}:3128 \
+  --https-proxy http://{{ installer_quay_hostname }}:3128 \
   --no-proxy s3.dualstack.{{ aws_region }}.amazonaws.com,s3.{{ aws_region }}.amazonaws.com,ec2.{{ aws_region }}.amazonaws.com,elasticloadbalancing.{{ aws_region }}.amazonaws.com,sts.{{ aws_region }}.amazonaws.com
