@@ -60,7 +60,7 @@ echo "  Step 1/2 — Terraform: VPC, IGW, NAT GW, Route53, IAM, EC2"
 echo "================================================================"
 cd "$SCRIPT_DIR"
 terraform init -upgrade
-terraform apply
+terraform apply -auto-approve
 
 BASTION_IP="$(terraform output -raw installer_public_ip)"
 echo ""

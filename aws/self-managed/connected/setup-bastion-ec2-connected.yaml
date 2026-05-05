@@ -66,10 +66,10 @@
         [default]
         region = {{ aws_region }}
 
-  - name: Get the Mirror Registry, OC and OPM Tarball
+  - name: Get the OC, openshift-install, ccoctl and ROSA Tarballs
     get_url:
       url: "{{ item }}"
-      dest: /home/ec2-user/
+      dest: /home/ec2-user/ 
     loop:
       - https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/{{ openshift_major_version }}.{{ openshift_minor_version }}/openshift-client-linux.tar.gz
       - https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/{{ openshift_major_version }}.{{ openshift_minor_version }}/openshift-install-linux.tar.gz
