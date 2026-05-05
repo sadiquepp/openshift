@@ -51,13 +51,17 @@
       /home/ec2-user/openshift-install create manifests --dir {{ upi_install_dir }}
 
   - name: Remove machine-managed master machine resources
-    shell: |
-      rm -f {{ upi_install_dir }}/openshift/99_openshift-cluster-api_master-machines-*.yaml
-      rm -f {{ upi_install_dir }}/openshift/99_openshift-machine-api_master-control-plane-machine-set.yaml
+    file: |
+      path: "{{ upi_install_dir }}/openshift/99_openshift-cluster-api_master-machines-*.yaml"
+      state: absent
+    file: |
+      path: "{{ upi_install_dir }}/openshift/99_openshift-machine-api_master-control-plane-machine-set.yaml"
+      state: absent
 
   - name: Remove machine-managed worker machineset resources
-    shell: |
-      rm -f {{ upi_install_dir }}/openshift/99_openshift-cluster-api_worker-machineset-*.yaml
+    file: |
+      path: "{{ upi_install_dir }}/openshift/99_openshift-cluster-api_worker-machineset-*.yaml"
+      state: absent
 
   - name: Remove privateZone from DNS config
     lineinfile:
