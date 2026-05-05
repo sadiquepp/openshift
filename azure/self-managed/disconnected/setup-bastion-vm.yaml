@@ -14,7 +14,7 @@
     cco_suffix: "{{ openshift_cluster_name }}-cco"
     cco_storage_account: "{{ cco_suffix | regex_replace('[^a-z0-9]', '') | truncate(24, True, '') }}"
     pull_secret_location: /home/azureuser/pull-secret.txt
-    mirror_registry_password: SedUam1879yz
+    mirror_registry_password: '{{ mirror_registry_password }}'
     mirror_registry_port: 8444
     quay_root_mount: /home/azureuser/registry
     openshift_local_repository: openshift/release-images
