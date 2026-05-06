@@ -1,0 +1,11 @@
+#!/bin/bash
+az aro create \
+--resource-group {{ resource_group_name }} \
+--name {{ openshift_cluster_name }} \
+--vnet {{ disconnected_vnet_name }} \
+--master-subnet {{ disconnected_subnet_name_a }} \
+--worker-subnet {{ disconnected_subnet_name_b }} \
+--version {{ openshift_version }} \
+--pull-secret '{{ pull_secret }}' \
+--ssh-key '{{ ssh_public_key_for_vm_and_openshift_node }}' \
+--tags 'Environment=disconnected' 'ManagedBy=terraform'

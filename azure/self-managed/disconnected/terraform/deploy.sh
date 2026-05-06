@@ -95,7 +95,7 @@ sleep 30
 ansible-playbook \
   -i "$SCRIPT_DIR/inventory.ini" \
   -e "@$SCRIPT_DIR/ansible-vars.json" \
-  -e "cloud_provider=azure" \ 
+  -e "cloud_provider=azure" \
   "${ANSIBLE_EXTRA[@]}" \
   "${EXTRA_ARGS[@]}" \
   "$PLAYBOOK_DIR/setup-bastion.yaml"
