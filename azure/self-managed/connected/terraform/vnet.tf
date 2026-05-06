@@ -14,6 +14,10 @@ resource "azurerm_virtual_network" "connected" {
   tags = {
     Name = local.connected_vnet_name
   }
+
+  lifecycle {
+    ignore_changes = [tags["cost-center"]]
+  }
 }
 
 # ── OpenShift Subnets (private, one per AZ) ───────────────────────────────────
@@ -48,6 +52,10 @@ resource "azurerm_public_ip" "nat" {
   tags = {
     Name = "${local.connected_vnet_name}-nat-pip"
   }
+
+  lifecycle {
+    ignore_changes = [tags["cost-center"]]
+  }
 }
 
 resource "azurerm_nat_gateway" "main" {
@@ -57,6 +65,10 @@ resource "azurerm_nat_gateway" "main" {
 
   tags = {
     Name = "${local.connected_vnet_name}-nat"
+  }
+
+  lifecycle {
+    ignore_changes = [tags["cost-center"]]
   }
 }
 

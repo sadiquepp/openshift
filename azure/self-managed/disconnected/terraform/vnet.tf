@@ -16,6 +16,10 @@ resource "azurerm_virtual_network" "disconnected" {
   tags = {
     Name = local.disconnected_vnet_name
   }
+
+  lifecycle {
+    ignore_changes = [tags["cost-center"]]
+  }
 }
 
 resource "azurerm_subnet" "disconnected" {
@@ -44,6 +48,10 @@ resource "azurerm_virtual_network" "egress" {
 
   tags = {
     Name = local.egress_vnet_name
+  }
+
+  lifecycle {
+    ignore_changes = [tags["cost-center"]]
   }
 }
 
@@ -107,6 +115,10 @@ resource "azurerm_route_table" "disconnected" {
 
   tags = {
     Name = "${var.prefix_for_name}-disconnected-rt"
+  }
+
+  lifecycle {
+    ignore_changes = [tags["cost-center"]]
   }
 }
 

@@ -6,6 +6,10 @@ resource "azurerm_resource_group" "main" {
     Environment = "connected"
     ManagedBy   = "terraform"
   }
+
+  lifecycle {
+    ignore_changes = [tags["cost-center"]]
+  }
 }
 
 resource "azurerm_resource_group" "cluster" {
@@ -15,5 +19,9 @@ resource "azurerm_resource_group" "cluster" {
   tags = {
     Environment = "connected"
     ManagedBy   = "terraform"
+  }
+
+  lifecycle {
+    ignore_changes = [tags["cost-center"]]
   }
 }

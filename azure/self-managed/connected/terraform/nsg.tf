@@ -32,6 +32,10 @@ resource "azurerm_network_security_group" "connected" {
   tags = {
     Name = "${var.prefix_for_name}-connected-nsg"
   }
+
+  lifecycle {
+    ignore_changes = [tags["cost-center"]]
+  }
 }
 
 resource "azurerm_subnet_network_security_group_association" "connected" {
@@ -86,6 +90,10 @@ resource "azurerm_network_security_group" "bastion" {
 
   tags = {
     Name = "${var.prefix_for_name}-bastion-nsg"
+  }
+
+  lifecycle {
+    ignore_changes = [tags["cost-center"]]
   }
 }
 

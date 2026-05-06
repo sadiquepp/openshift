@@ -17,6 +17,10 @@ resource "azurerm_private_dns_zone" "mirror" {
   tags = {
     Name = "${var.prefix_for_name}-mirror-dns"
   }
+
+  lifecycle {
+    ignore_changes = [tags["cost-center"]]
+  }
 }
 
 resource "azurerm_private_dns_a_record" "bastion" {

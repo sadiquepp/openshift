@@ -27,6 +27,10 @@ resource "azurerm_public_ip" "firewall" {
   tags = {
     Name = "${var.prefix_for_name}-firewall-pip"
   }
+
+  lifecycle {
+    ignore_changes = [tags["cost-center"]]
+  }
 }
 
 resource "azurerm_public_ip" "firewall_mgmt" {
@@ -38,6 +42,10 @@ resource "azurerm_public_ip" "firewall_mgmt" {
 
   tags = {
     Name = "${var.prefix_for_name}-firewall-mgmt-pip"
+  }
+
+  lifecycle {
+    ignore_changes = [tags["cost-center"]]
   }
 }
 
@@ -51,6 +59,10 @@ resource "azurerm_firewall_policy" "main" {
 
   tags = {
     Name = "${var.prefix_for_name}-fw-policy"
+  }
+
+  lifecycle {
+    ignore_changes = [tags["cost-center"]]
   }
 }
 
@@ -136,5 +148,9 @@ resource "azurerm_firewall" "main" {
 
   tags = {
     Name = "${var.prefix_for_name}-firewall"
+  }
+
+  lifecycle {
+    ignore_changes = [tags["cost-center"]]
   }
 }

@@ -10,6 +10,10 @@ resource "azurerm_public_ip" "bastion" {
   tags = {
     Name = "${local.openshift_cluster_name}-bastion-pip"
   }
+
+  lifecycle {
+    ignore_changes = [tags["cost-center"]]
+  }
 }
 
 # ── NIC for Bastion ──────────────────────────────────────────────────────────
@@ -28,6 +32,10 @@ resource "azurerm_network_interface" "bastion" {
 
   tags = {
     Name = "${local.openshift_cluster_name}-bastion-nic"
+  }
+
+  lifecycle {
+    ignore_changes = [tags["cost-center"]]
   }
 }
 
@@ -69,5 +77,9 @@ resource "azurerm_linux_virtual_machine" "bastion" {
   tags = {
     Name       = "${local.openshift_cluster_name}-installer"
     Automation = "ocp_installer"
+  }
+
+  lifecycle {
+    ignore_changes = [tags["cost-center"]]
   }
 }

@@ -12,6 +12,10 @@ resource "azurerm_storage_account" "mirror" {
   tags = {
     Name = "${var.prefix_for_name}-mirror-storage"
   }
+
+  lifecycle {
+    ignore_changes = [tags["cost-center"]]
+  }
 }
 
 resource "azurerm_storage_container" "bootstrap" {
@@ -43,6 +47,10 @@ resource "azurerm_private_endpoint" "storage_blob" {
 
   tags = {
     Name = "${var.prefix_for_name}-storage-blob-pe"
+  }
+
+  lifecycle {
+    ignore_changes = [tags["cost-center"]]
   }
 }
 
@@ -88,6 +96,10 @@ resource "azurerm_private_endpoint" "storage_table" {
 
   tags = {
     Name = "${var.prefix_for_name}-storage-table-pe"
+  }
+
+  lifecycle {
+    ignore_changes = [tags["cost-center"]]
   }
 }
 
