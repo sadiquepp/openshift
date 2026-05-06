@@ -1,0 +1,244 @@
+- name: Setup Bastion Node (Azure Connected)
+  hosts: azure_vm
+  gather_facts: false
+  remote_user: azureuser
+  vars:
+    prefix_for_name: project_name
+    openshift_major_version: "4.18"
+    openshift_minor_version: 20
+    openshift_version: "{{ openshift_major_version }}.{{ openshift_minor_version }}"
+    azure_region: southeastasia
+    openshift_base_domain: example.com
+    openshift_cluster_name_suffix: xt1
+    openshift_cluster_name: "{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}"
+    cco_suffix: "{{ openshift_cluster_name }}-cco"
+    cco_storage_account: "{{ cco_suffix | regex_replace('[^a-z0-9]', '') | truncate(24, True, '') }}"
+  tasks:
+
+  - name: Wait for SSH banners
+    wait_for_connection:
+      delay: 5
+      timeout: 300
+
+  - name: Check if VG has free space to grow
+    shell: |
+      FREE=$(vgs --noheadings -o vg_free --units m rootvg | tr -d ' mM.')
+      [ "${FREE%%,*}" -gt 0 ] 2>/dev/null && echo "grow" || echo "skip"
+    register: lv_grow_check
+    become: true
+    changed_when: false
+
+  - name: Expand partition and LVs to use full OS disk
+    shell: |
+      PV=$(pvs --noheadings -o pv_name | head -1 | tr -d ' ')
+      PART_NUM=$(echo "$PV" | grep -oE '[0-9]+$')
+      DISK=$(echo "$PV" | sed "s/${PART_NUM}$//")
+      growpart "$DISK" "$PART_NUM" || true
+      pvresize "$PV"
+      lvextend -r -L +5G  /dev/rootvg/rootlv || true
+      lvextend -r -L +3G  /dev/rootvg/tmplv  || true
+      lvextend -r -L +20G /dev/rootvg/varlv  || true
+      lvextend -r -l +100%FREE /dev/rootvg/homelv || true
+    become: true
+    when: lv_grow_check.stdout == "grow"
+
+  - name: Install Required RPM Packages
+    dnf:
+      name:
+        - tmux
+        - tigervnc
+        - tigervnc-server
+        - wget
+        - podman
+        - jq
+        - golang
+        - unzip
+        - bind-utils
+        - openssl-devel
+        - git
+        - yum-utils
+        - ansible-core
+        - python3-pip
+        - '@Server with GUI'
+      state: present
+    become: true
+
+  - name: Add Azure CLI Yum Repo
+    copy:
+      dest: /etc/yum.repos.d/azure-cli.repo
+      content: |
+        [azure-cli]
+        name=Azure CLI
+        baseurl=https://packages.microsoft.com/yumrepos/azure-cli
+        enabled=1
+        gpgcheck=1
+        gpgkey=https://packages.microsoft.com/keys/microsoft.asc
+    become: true
+
+  - name: Install Azure CLI
+    dnf:
+      name: azure-cli
+      state: present
+    become: true
+
+  - name: Create .azure directory
+    file:
+      path: /home/azureuser/.azure
+      state: directory
+
+  - name: Write osServicePrincipal.json for openshift-install
+    copy:
+      dest: /home/azureuser/.azure/osServicePrincipal.json
+      mode: "0600"
+      content: |
+        {
+          "subscriptionId": "{{ azure_subscription_id }}",
+          "clientId": "{{ installer_sp_client_id }}",
+          "clientSecret": "{{ installer_sp_client_secret }}",
+          "tenantId": "{{ azure_tenant_id }}"
+        }
+
+  - name: Enable mouse scrolling for tmux
+    lineinfile:
+      path: /home/azureuser/.tmux.conf
+      line: "set -g mouse on"
+      create: yes
+      state: present
+
+  - name: Create VNC User
+    ansible.builtin.user:
+      name: vncuser
+    become: true
+
+  - name: Listen for vnc server on port 5999
+    ansible.builtin.lineinfile:
+      path: /etc/tigervnc/vncserver.users
+      insertafter: EOF
+      line: ":99=vncuser"
+    become: true
+
+  - name: Get the OC, openshift-install, and ccoctl Tarballs
+    get_url:
+      url: "{{ item }}"
+      dest: /home/azureuser/
+    loop:
+      - https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/{{ openshift_major_version }}.{{ openshift_minor_version }}/openshift-client-linux.tar.gz
+      - https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/{{ openshift_major_version }}.{{ openshift_minor_version }}/openshift-install-linux.tar.gz
+      - https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/{{ openshift_major_version }}.{{ openshift_minor_version }}/ccoctl-linux-rhel9.tar.gz
+
+  - name: Unarchive Downloaded Tarballs
+    unarchive:
+      src: "/home/azureuser/{{ item }}"
+      dest: /home/azureuser/
+      remote_src: yes
+    loop:
+      - openshift-client-linux.tar.gz
+      - openshift-install-linux.tar.gz
+      - ccoctl-linux-rhel9.tar.gz
+
+  - name: Copy CLI binaries to /usr/bin
+    copy:
+      src: "/home/azureuser/{{ item }}"
+      dest: "/usr/bin/{{ item }}"
+      remote_src: yes
+      mode: 0755
+    loop:
+      - oc
+      - kubectl
+      - openshift-install
+      - ccoctl
+    become: yes
+
+  - name: Copy pull secret
+    copy:
+      dest: /home/azureuser/pull-secret.txt
+      content: "{{ pull_secret }}"
+
+  - name: Create .docker Directory
+    file:
+      path: /home/azureuser/.docker
+      state: directory
+
+  - name: Copy pull secret to .docker directory
+    copy:
+      src: /home/azureuser/pull-secret.txt
+      dest: /home/azureuser/.docker/config.json
+      remote_src: yes
+
+  - name: Create credentials directory
+    file:
+      path: "/home/azureuser/{{ item }}"
+      state: directory
+    loop:
+      - install-dir
+      - cco
+
+  - name: Delete existing CCO resources
+    shell: |
+      cd /home/azureuser/cco
+      ccoctl azure delete \
+        --name {{ cco_suffix }} \
+        --region {{ azure_region }} \
+        --subscription-id {{ azure_subscription_id }} \
+        --storage-account-name {{ cco_storage_account }}
+    ignore_errors: true
+
+  - name: Extract the list of CredentialsRequest objects from the release image
+    shell: |
+      cd /home/azureuser/cco
+      RELEASE_IMAGE=$(openshift-install version | awk '/release image/ {print $3}')
+      oc adm release extract -a /home/azureuser/pull-secret.txt \
+        --credentials-requests \
+        --cloud=azure \
+        --to=/home/azureuser/cco/credrequests \
+        ${RELEASE_IMAGE}
+
+  - name: Create all CCO files for Azure
+    shell: |
+      cd /home/azureuser/cco
+      ccoctl azure create-all \
+        --credentials-requests-dir /home/azureuser/cco/credrequests/ \
+        --name {{ cco_suffix }} \
+        --region {{ azure_region }} \
+        --subscription-id {{ azure_subscription_id }} \
+        --tenant-id {{ azure_tenant_id }} \
+        --storage-account-name {{ cco_storage_account }} \
+        --installation-resource-group-name {{ cluster_resource_group_name }} \
+        --network-resource-group-name {{ network_resource_group_name }} \
+        --output-dir /home/azureuser/cco
+
+  - name: Copy install-config.yaml
+    template:
+      src: "{{ item }}.j2"
+      dest: "{{ item }}"
+    loop:
+      - install-config.yaml
+
+  - name: Copy Install-config.yaml to install-dir
+    copy:
+      src: "/home/azureuser/install-config.yaml"
+      dest: "/home/azureuser/install-dir/install-config.yaml"
+      remote_src: yes
+      mode: 0644
+
+  - name: Generate Manifests
+    shell: |
+      openshift-install create manifests --dir /home/azureuser/install-dir
+
+  - name: Copy CCO credentials to install-dir/manifests
+    copy:
+      src: "/home/azureuser/cco/manifests/"
+      dest: "/home/azureuser/install-dir/manifests/"
+      remote_src: yes
+
+  - name: Copy CCO tls files to install-dir/
+    copy:
+      src: /home/azureuser/cco/tls
+      dest: /home/azureuser/install-dir/
+      remote_src: yes
+
+  - name: Take a backup of the install-dir
+    community.general.archive:
+      path: /home/azureuser/install-dir
+      dest: /home/azureuser/install-dir-backup.bz2
+      format: bz2

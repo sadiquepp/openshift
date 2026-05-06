@@ -1,0 +1,122 @@
+variable "prefix_for_name" {
+  description = "Prefix used for naming all resources"
+  type        = string
+  default     = "project_name"
+}
+
+variable "azure_region" {
+  description = "Azure region"
+  type        = string
+  default     = "southeastasia"
+}
+
+variable "azure_subscription_id" {
+  description = "Azure subscription ID"
+  type        = string
+}
+
+variable "azure_tenant_id" {
+  description = "Azure tenant (directory) ID. Required when create_service_principal is true."
+  type        = string
+  default     = ""
+}
+
+# ── Service Principal for openshift-install ──────────────────────────────────
+
+variable "create_service_principal" {
+  description = "Auto-create the service principal via Terraform. Requires Entra ID app registration permissions. Recommended: false (provide a pre-created SP instead)."
+  type        = bool
+  default     = false
+}
+
+variable "installer_sp_client_id" {
+  description = "Client (app) ID of the pre-created service principal for openshift-install"
+  type        = string
+}
+
+variable "installer_sp_client_secret" {
+  description = "Client secret of the pre-created service principal for openshift-install"
+  type        = string
+  sensitive   = true
+}
+
+# ── Connected VNet ────────────────────────────────────────────────────────────
+
+variable "connected_vnet_cidr" {
+  description = "Address space for the connected VNet"
+  type        = string
+  default     = "172.16.0.0/16"
+}
+
+variable "connected_subnet_cidrs" {
+  description = "CIDR blocks for connected subnets used by OpenShift (one per availability zone)"
+  type        = list(string)
+  default     = ["172.16.1.0/24", "172.16.2.0/24", "172.16.3.0/24"]
+}
+
+variable "bastion_subnet_cidr" {
+  description = "CIDR block for the bastion subnet"
+  type        = string
+  default     = "172.16.4.0/24"
+}
+
+# ── OpenShift Cluster ────────────────────────────────────────────────────────
+
+variable "openshift_base_domain" {
+  description = "Base domain for the OpenShift cluster (e.g. example.com)"
+  type        = string
+  default     = "example.com"
+}
+
+variable "openshift_cluster_name_suffix" {
+  description = "Suffix appended to prefix_for_name to form the cluster name"
+  type        = string
+  default     = "xt1"
+}
+
+# ── Bastion VM ───────────────────────────────────────────────────────────────
+
+variable "ssh_public_key" {
+  description = "SSH public key material for the bastion VM (also used for OpenShift nodes)"
+  type        = string
+}
+
+variable "installer_vm_size" {
+  description = "Azure VM size for the bastion / installer instance"
+  type        = string
+  default     = "Standard_D2s_v3"
+}
+
+variable "installer_disk_size" {
+  description = "OS disk size in GB for the bastion instance"
+  type        = number
+  default     = 100
+}
+
+variable "installer_image" {
+  description = "Source image reference for the bastion VM"
+  type = object({
+    publisher = string
+    offer     = string
+    sku       = string
+    version   = string
+  })
+  default = {
+    publisher = "RedHat"
+    offer     = "RHEL"
+    sku       = "9_4"
+    version   = "latest"
+  }
+}
+
+variable "ssh_private_key_path" {
+  description = "Path to the SSH private key for connecting to the bastion VM (used in generated Ansible inventory)"
+  type        = string
+  default     = "~/.ssh/id_rsa"
+}
+
+variable "admin_username" {
+  description = "Admin username for the bastion VM"
+  type        = string
+  default     = "azureuser"
+}
