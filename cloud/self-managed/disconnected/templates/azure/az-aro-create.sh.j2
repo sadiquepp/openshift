@@ -1,7 +1,7 @@
 #!/bin/bash
 az aro create \
 --resource-group {{ resource_group_name }} \
---name {{ openshift_cluster_name }} \
+--name {{ openshift_cluster_name }}-aro \
 --vnet {{ disconnected_vnet_name }} \
 --master-subnet {{ aro_subnet_name_a }} \
 --worker-subnet {{ aro_subnet_name_b }} \
