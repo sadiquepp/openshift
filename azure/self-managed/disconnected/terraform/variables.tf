@@ -54,6 +54,12 @@ variable "disconnected_subnet_cidrs" {
   default     = ["172.16.1.0/24", "172.16.2.0/24", "172.16.3.0/24"]
 }
 
+variable "aro_subnet_cidrs" {
+  description = "CIDR blocks for ARO subnets (one per availability zone)"
+  type        = list(string)
+  default     = ["172.16.4.0/24", "172.16.5.0/24"]
+}
+
 # ── Egress VNet ──────────────────────────────────────────────────────────────
 
 variable "egress_vnet_cidr" {

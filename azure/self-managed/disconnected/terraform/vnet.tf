@@ -31,6 +31,15 @@ resource "azurerm_subnet" "disconnected" {
   address_prefixes     = [var.disconnected_subnet_cidrs[count.index]]
 }
 
+resource "azurerm_subnet" "aro" {
+  count = length(var.aro_subnet_cidrs)
+
+  name                 = "${local.disconnected_vnet_name}-aro-az${count.index + 1}"
+  resource_group_name  = azurerm_resource_group.main.name
+  virtual_network_name = azurerm_virtual_network.disconnected.name
+  address_prefixes     = [var.aro_subnet_cidrs[count.index]]
+}
+
 resource "azurerm_subnet" "private_endpoints" {
   name                 = "${local.disconnected_vnet_name}-private-endpoints"
   resource_group_name  = azurerm_resource_group.main.name

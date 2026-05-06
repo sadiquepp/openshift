@@ -19,6 +19,7 @@ azure_region = "southeastasia"
 # ── Disconnected VNet ─────────────────────────────────────────────
 disconnected_vnet_cidr    = "172.16.0.0/16"
 disconnected_subnet_cidrs = ["172.16.1.0/24", "172.16.2.0/24", "172.16.3.0/24"]
+aro_subnet_cidrs = ["172.16.4.0/24", "172.16.5.0/24"]
 
 # ── Egress VNet ──────────────────────────────────────────────────
 egress_vnet_cidr          = "172.17.0.0/16"

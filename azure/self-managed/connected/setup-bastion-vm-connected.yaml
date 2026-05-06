@@ -69,7 +69,7 @@
       content: |
         [azure-cli]
         name=Azure CLI
-        baseurl=https://packages.microsoft.com/yumrepos/azure-cli
+        baseurl=https://packages.microsoft.com/rhel/9/prod
         enabled=1
         gpgcheck=1
         gpgkey=https://packages.microsoft.com/keys/microsoft.asc
