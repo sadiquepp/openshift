@@ -54,3 +54,10 @@
         "clientSecret": "{{ installer_sp_client_secret }}",
         "tenantId": "{{ azure_tenant_id }}"
       }
+
+- name: Create az-aro-create.sh script
+  template:
+    src: templates/azure/az-aro-create.sh.j2
+    dest: "{{ home_dir }}/az-aro-create.sh"
+    mode: "0700"
+  become: true

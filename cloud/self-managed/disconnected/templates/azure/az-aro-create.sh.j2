@@ -7,5 +7,7 @@ az aro create \
 --worker-subnet {{ disconnected_subnet_name_b }} \
 --version {{ openshift_version }} \
 --pull-secret '{{ pull_secret }}' \
---ssh-key '{{ ssh_public_key_for_vm_and_openshift_node }}' \
+--api-server-visibility Private \
+--ingress-visibility Private \
+--outbound-type UserDefinedRouting \
 --tags 'Environment=disconnected' 'ManagedBy=terraform'
