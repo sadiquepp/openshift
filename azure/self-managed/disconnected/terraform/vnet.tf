@@ -137,3 +137,10 @@ resource "azurerm_subnet_route_table_association" "disconnected" {
   subnet_id      = azurerm_subnet.disconnected[count.index].id
   route_table_id = azurerm_route_table.disconnected.id
 }
+
+resource "azurerm_subnet_route_table_association" "aro" {
+  count = length(azurerm_subnet.aro)
+
+  subnet_id      = azurerm_subnet.aro[count.index].id
+  route_table_id = azurerm_route_table.disconnected.id
+}
