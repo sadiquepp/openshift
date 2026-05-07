@@ -41,4 +41,13 @@ resource "ibm_is_instance" "bastion" {
     name = "${local.openshift_cluster_name}-bastion-boot"
     size = var.bastion_boot_volume_size
   }
+
+  user_data = <<-EOF
+    #!/bin/bash
+    mkdir -p /root/.ssh
+    chmod 700 /root/.ssh
+    echo "${var.ssh_public_key}" >> /root/.ssh/authorized_keys
+    chmod 600 /root/.ssh/authorized_keys
+    restorecon -R /root/.ssh 2>/dev/null || true
+  EOF
 }

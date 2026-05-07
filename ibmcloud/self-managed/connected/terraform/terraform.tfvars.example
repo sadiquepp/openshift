@@ -7,7 +7,7 @@ ibmcloud_api_key = ""
 
 # Resource group — set create_resource_group = true to create a new one,
 # or false to use an existing group.
-create_resource_group = true
+create_resource_group = false
 resource_group_name   = "Default"
 
 ssh_public_key = "ssh-rsa AAAA..."

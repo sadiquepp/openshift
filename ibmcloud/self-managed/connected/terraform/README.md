@@ -82,7 +82,7 @@ curl -fsSL https://clis.cloud.ibm.com/install/linux | sh
 ibmcloud plugin install vpc-infrastructure
 
 # Login
-export IBM_CLOUD_API_KEY="<your-api-key-here>"
+export IBMCLOUD_API_KEY="<your-api-key-here>"
 ibmcloud login -r us-east
 
 # Generate SSH key
