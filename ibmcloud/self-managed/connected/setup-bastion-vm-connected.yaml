@@ -54,10 +54,10 @@
     shell: |
       ibmcloud plugin install vpc-infrastructure -f
 
-  - name: Set IC_API_KEY in bashrc
+  - name: Set IBMCLOUD_API_KEY in bashrc
     lineinfile:
       path: "{{ home_dir }}/.bashrc"
-      line: 'export IC_API_KEY="{{ ibmcloud_api_key }}"'
+      line: 'export IBMCLOUD_API_KEY="{{ ibmcloud_api_key }}"'
       create: yes
       state: present
 
@@ -175,7 +175,7 @@
         --name {{ cco_suffix }} \
         --output-dir {{ home_dir }}/cco
     when: not cco_dir_check.stat.exists
-    
+
   - name: Copy install-config.yaml
     template:
       src: "{{ item }}.j2"

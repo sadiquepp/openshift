@@ -29,6 +29,7 @@ platform:
   ibmcloud:
     region: {{ ibmcloud_region }}
     resourceGroupName: {{ resource_group_name }}
+    networkResourceGroupName: {{ resource_group_name }}
     vpcName: {{ connected_vpc_name }}
     controlPlaneSubnets:
 {% for sn in control_plane_subnet_names %}
