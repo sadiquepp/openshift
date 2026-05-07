@@ -63,8 +63,8 @@
 
   - name: Login to IBM Cloud
     shell: |
-      export IC_API_KEY="{{ ibmcloud_api_key }}"
-      ibmcloud login -r {{ ibmcloud_region }} --apikey "$IC_API_KEY"
+      export IBMCLOUD_API_KEY="{{ ibmcloud_api_key }}"
+      ibmcloud login -r {{ ibmcloud_region }} --apikey "$IBMCLOUD_API_KEY"
       ibmcloud target -g {{ resource_group_name }}
 
   - name: Enable mouse scrolling for tmux
@@ -141,10 +141,14 @@
     loop:
       - install-dir
       - cco
+  - name: Check if cco-dir already exists
+    stat:
+      path: "{{ home_dir }}/cco/manifests"
+    register: cco_dir_check
 
   - name: Delete existing CCO resources
     shell: |
-      export IC_API_KEY="{{ ibmcloud_api_key }}"
+      export IBMCLOUD_API_KEY="{{ ibmcloud_api_key }}"
       cd {{ home_dir }}/cco
       ccoctl ibmcloud delete-service-id \
         --credentials-requests-dir {{ home_dir }}/cco/credrequests \
@@ -160,16 +164,18 @@
         --cloud=ibmcloud \
         --to={{ home_dir }}/cco/credrequests \
         ${RELEASE_IMAGE}
+    when: not cco_dir_check.stat.exists
 
   - name: Create all CCO service IDs for IBM Cloud
     shell: |
-      export IC_API_KEY="{{ ibmcloud_api_key }}"
+      export IBMCLOUD_API_KEY="{{ ibmcloud_api_key }}"
       cd {{ home_dir }}/cco
       ccoctl ibmcloud create-service-id \
         --credentials-requests-dir {{ home_dir }}/cco/credrequests/ \
         --name {{ cco_suffix }} \
         --output-dir {{ home_dir }}/cco
-
+    when: not cco_dir_check.stat.exists
+    
   - name: Copy install-config.yaml
     template:
       src: "{{ item }}.j2"
@@ -186,7 +192,7 @@
 
   - name: Generate Manifests
     shell: |
-      export IC_API_KEY="{{ ibmcloud_api_key }}"
+      export IBMCLOUD_API_KEY="{{ ibmcloud_api_key }}"
       openshift-install create manifests --dir {{ home_dir }}/install-dir
 
   - name: Copy CCO credentials to install-dir/manifests
