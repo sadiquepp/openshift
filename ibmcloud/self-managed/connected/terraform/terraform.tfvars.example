@@ -1,0 +1,37 @@
+# ── Required ──────────────────────────────────────────────────────────────────
+
+ibmcloud_region  = "us-east"
+
+# IBM Cloud API key. You can also set IC_API_KEY env var instead.
+ibmcloud_api_key = ""
+
+# Resource group — set create_resource_group = true to create a new one,
+# or false to use an existing group.
+create_resource_group = true
+resource_group_name   = "Default"
+
+ssh_public_key = "ssh-rsa AAAA..."
+
+# ── Naming ────────────────────────────────────────────────────────────────────
+
+prefix_for_name               = "project_name"
+openshift_base_domain         = "example.com"
+openshift_cluster_name_suffix = "xt1"
+
+# ── Zones (defaults shown) ───────────────────────────────────────────────────
+
+# zones = ["us-east-1", "us-east-2", "us-east-3"]
+
+# ── Network CIDRs (defaults shown) ───────────────────────────────────────────
+
+# connected_vpc_cidr         = "172.16.0.0/16"
+# control_plane_subnet_cidrs = ["172.16.1.0/24", "172.16.2.0/24", "172.16.3.0/24"]
+# compute_subnet_cidrs       = ["172.16.4.0/24", "172.16.5.0/24", "172.16.6.0/24"]
+# bastion_subnet_cidr        = "172.16.10.0/24"
+
+# ── Bastion VM (defaults shown) ──────────────────────────────────────────────
+
+# bastion_profile          = "bx2-4x16"
+# bastion_image_name       = "ibm-redhat-9-4-minimal-amd64-3"
+# bastion_boot_volume_size = 100
+# ssh_private_key_path     = "~/.ssh/id_rsa"

@@ -1,0 +1,33 @@
+# ── Required ──────────────────────────────────────────────────────────────────
+
+gcp_project_id = "my-gcp-project"
+gcp_region     = "asia-southeast1"
+
+ssh_public_key = "ssh-rsa AAAA..."
+
+# Path to pre-created GCP service account JSON key for openshift-install.
+# See README.md for how to create it. Not needed if use_service_account_key = false.
+use_service_account_key = true
+installer_sa_key_file   = "~/ocp-installer-sa-key.json"
+
+# ── Naming ────────────────────────────────────────────────────────────────────
+
+prefix_for_name               = "project_name"
+openshift_base_domain         = "example.com"
+openshift_cluster_name_suffix = "xt1"
+
+# ── Network CIDRs (defaults shown) ───────────────────────────────────────────
+
+# connected_vpc_cidr        = "172.16.0.0/16"
+# control_plane_subnet_cidr = "172.16.1.0/24"
+# compute_subnet_cidr       = "172.16.2.0/24"
+# bastion_subnet_cidr       = "172.16.3.0/24"
+
+# ── Bastion VM (defaults shown) ──────────────────────────────────────────────
+
+# bastion_machine_type  = "e2-standard-4"
+# bastion_disk_size_gb  = 100
+# bastion_image_family  = "rhel-9"
+# bastion_image_project = "rhel-cloud"
+# admin_username        = "ocpuser"
+# ssh_private_key_path  = "~/.ssh/id_rsa"

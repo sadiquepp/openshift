@@ -1,0 +1,238 @@
+- name: Setup Bastion Node (GCP Connected)
+  hosts: gcp_vm
+  gather_facts: false
+  remote_user: ocpuser
+  vars:
+    prefix_for_name: project_name
+    openshift_major_version: "4.18"
+    openshift_minor_version: 20
+    openshift_version: "{{ openshift_major_version }}.{{ openshift_minor_version }}"
+    gcp_region: asia-southeast1
+    gcp_project_id: my-gcp-project
+    openshift_base_domain: example.com
+    openshift_cluster_name_suffix: xt1
+    openshift_cluster_name: "{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}"
+    cco_suffix: "{{ openshift_cluster_name }}-cco"
+    admin_username: ocpuser
+    home_dir: "/home/{{ admin_username }}"
+    use_service_account_key: true
+  tasks:
+
+  - name: Wait for SSH banners
+    wait_for_connection:
+      delay: 5
+      timeout: 300
+
+  - name: Install Required RPM Packages
+    dnf:
+      name:
+        - tmux
+        - tigervnc
+        - tigervnc-server
+        - wget
+        - podman
+        - jq
+        - golang
+        - unzip
+        - bind-utils
+        - openssl-devel
+        - git
+        - yum-utils
+        - ansible-core
+        - python3-pip
+        - '@Server with GUI'
+      state: present
+    become: true
+
+  - name: Add Google Cloud SDK Yum Repo
+    copy:
+      dest: /etc/yum.repos.d/google-cloud-sdk.repo
+      content: |
+        [google-cloud-sdk]
+        name=Google Cloud SDK
+        baseurl=https://packages.cloud.google.com/yum/repos/cloud-sdk-el9-x86_64
+        enabled=1
+        gpgcheck=1
+        repo_gpgcheck=0
+        gpgkey=https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
+    become: true
+
+  - name: Install Google Cloud SDK
+    dnf:
+      name: google-cloud-cli
+      state: present
+    become: true
+
+  - name: Create .gcp directory
+    file:
+      path: "{{ home_dir }}/.gcp"
+      state: directory
+    when: use_service_account_key | bool
+
+  - name: Copy GCP service account key for openshift-install
+    copy:
+      src: "{{ installer_sa_key_file }}"
+      dest: "{{ home_dir }}/.gcp/osServiceAccount.json"
+      mode: "0600"
+    when: use_service_account_key | bool
+
+  - name: Set GOOGLE_APPLICATION_CREDENTIALS in bashrc
+    lineinfile:
+      path: "{{ home_dir }}/.bashrc"
+      line: 'export GOOGLE_APPLICATION_CREDENTIALS="{{ home_dir }}/.gcp/osServiceAccount.json"'
+      create: yes
+      state: present
+    when: use_service_account_key | bool
+
+  - name: Activate gcloud with service account
+    shell: |
+      gcloud auth activate-service-account --key-file={{ home_dir }}/.gcp/osServiceAccount.json
+      gcloud config set project {{ gcp_project_id }}
+      gcloud config set compute/region {{ gcp_region }}
+    when: use_service_account_key | bool
+
+  - name: Configure gcloud project and region (VM identity)
+    shell: |
+      gcloud config set project {{ gcp_project_id }}
+      gcloud config set compute/region {{ gcp_region }}
+    when: not (use_service_account_key | bool)
+
+  - name: Enable mouse scrolling for tmux
+    lineinfile:
+      path: "{{ home_dir }}/.tmux.conf"
+      line: "set -g mouse on"
+      create: yes
+      state: present
+
+  - name: Create VNC User
+    ansible.builtin.user:
+      name: vncuser
+    become: true
+
+  - name: Listen for vnc server on port 5999
+    ansible.builtin.lineinfile:
+      path: /etc/tigervnc/vncserver.users
+      insertafter: EOF
+      line: ":99=vncuser"
+    become: true
+
+  - name: Get the OC, openshift-install, and ccoctl Tarballs
+    get_url:
+      url: "{{ item }}"
+      dest: "{{ home_dir }}/"
+    loop:
+      - https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/{{ openshift_major_version }}.{{ openshift_minor_version }}/openshift-client-linux.tar.gz
+      - https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/{{ openshift_major_version }}.{{ openshift_minor_version }}/openshift-install-linux.tar.gz
+      - https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/{{ openshift_major_version }}.{{ openshift_minor_version }}/ccoctl-linux-rhel9.tar.gz
+
+  - name: Unarchive Downloaded Tarballs
+    unarchive:
+      src: "{{ home_dir }}/{{ item }}"
+      dest: "{{ home_dir }}/"
+      remote_src: yes
+    loop:
+      - openshift-client-linux.tar.gz
+      - openshift-install-linux.tar.gz
+      - ccoctl-linux-rhel9.tar.gz
+
+  - name: Copy CLI binaries to /usr/bin
+    copy:
+      src: "{{ home_dir }}/{{ item }}"
+      dest: "/usr/bin/{{ item }}"
+      remote_src: yes
+      mode: 0755
+    loop:
+      - oc
+      - kubectl
+      - openshift-install
+      - ccoctl
+    become: yes
+
+  - name: Copy pull secret
+    copy:
+      dest: "{{ home_dir }}/pull-secret.txt"
+      content: "{{ pull_secret }}"
+
+  - name: Create .docker Directory
+    file:
+      path: "{{ home_dir }}/.docker"
+      state: directory
+
+  - name: Copy pull secret to .docker directory
+    copy:
+      src: "{{ home_dir }}/pull-secret.txt"
+      dest: "{{ home_dir }}/.docker/config.json"
+      remote_src: yes
+
+  - name: Create credentials directory
+    file:
+      path: "{{ home_dir }}/{{ item }}"
+      state: directory
+    loop:
+      - install-dir
+      - cco
+
+  - name: Delete existing CCO resources
+    shell: |
+      cd {{ home_dir }}/cco
+      ccoctl gcp delete \
+        --name {{ cco_suffix }} \
+        --project {{ gcp_project_id }} \
+        --credentials-requests-dir {{ home_dir }}/cco/credrequests
+    ignore_errors: true
+
+  - name: Extract the list of CredentialsRequest objects from the release image
+    shell: |
+      cd {{ home_dir }}/cco
+      RELEASE_IMAGE=$(openshift-install version | awk '/release image/ {print $3}')
+      oc adm release extract -a {{ home_dir }}/pull-secret.txt \
+        --credentials-requests \
+        --cloud=gcp \
+        --to={{ home_dir }}/cco/credrequests \
+        ${RELEASE_IMAGE}
+
+  - name: Create all CCO files for GCP
+    shell: |
+      cd {{ home_dir }}/cco
+      ccoctl gcp create-all \
+        --credentials-requests-dir {{ home_dir }}/cco/credrequests/ \
+        --name {{ cco_suffix }} \
+        --region {{ gcp_region }} \
+        --project {{ gcp_project_id }} \
+        --output-dir {{ home_dir }}/cco
+
+  - name: Copy install-config.yaml
+    template:
+      src: "{{ item }}.j2"
+      dest: "{{ item }}"
+    loop:
+      - install-config.yaml
+
+  - name: Copy Install-config.yaml to install-dir
+    copy:
+      src: "{{ home_dir }}/install-config.yaml"
+      dest: "{{ home_dir }}/install-dir/install-config.yaml"
+      remote_src: yes
+      mode: 0644
+
+  - name: Generate Manifests
+    shell: |
+      openshift-install create manifests --dir {{ home_dir }}/install-dir
+
+  - name: Copy CCO credentials to install-dir/manifests
+    copy:
+      src: "{{ home_dir }}/cco/manifests/"
+      dest: "{{ home_dir }}/install-dir/manifests/"
+      remote_src: yes
+
+  - name: Copy CCO tls files to install-dir/
+    copy:
+      src: "{{ home_dir }}/cco/tls"
+      dest: "{{ home_dir }}/install-dir/"
+      remote_src: yes
+
+  - name: Take a backup of the install-dir
+    community.general.archive:
+      path: "{{ home_dir }}/install-dir"
+      dest: "{{ home_dir }}/install-dir-backup.bz2"
+      format: bz2

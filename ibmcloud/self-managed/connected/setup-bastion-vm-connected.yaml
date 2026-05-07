@@ -1,0 +1,202 @@
+- name: Setup Bastion Node (IBM Cloud Connected)
+  hosts: ibmcloud_vm
+  gather_facts: false
+  remote_user: root
+  vars:
+    prefix_for_name: project_name
+    openshift_major_version: "4.18"
+    openshift_minor_version: 20
+    openshift_version: "{{ openshift_major_version }}.{{ openshift_minor_version }}"
+    ibmcloud_region: us-east
+    resource_group_name: Default
+    openshift_base_domain: example.com
+    openshift_cluster_name_suffix: xt1
+    openshift_cluster_name: "{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}"
+    cco_suffix: "{{ openshift_cluster_name }}-cco"
+    home_dir: /root
+  tasks:
+
+  - name: Wait for SSH banners
+    wait_for_connection:
+      delay: 5
+      timeout: 300
+
+  - name: Install Required RPM Packages
+    dnf:
+      name:
+        - tmux
+        - tigervnc
+        - tigervnc-server
+        - wget
+        - podman
+        - jq
+        - golang
+        - unzip
+        - bind-utils
+        - openssl-devel
+        - git
+        - yum-utils
+        - ansible-core
+        - python3-pip
+        - '@Server with GUI'
+      state: present
+
+  - name: Install IBM Cloud CLI
+    shell: |
+      curl -fsSL https://clis.cloud.ibm.com/install/linux | sh
+    args:
+      creates: /usr/local/bin/ibmcloud
+
+  - name: Install IBM Cloud VPC infrastructure plugin
+    shell: |
+      ibmcloud plugin install vpc-infrastructure -f
+
+  - name: Set IC_API_KEY in bashrc
+    lineinfile:
+      path: "{{ home_dir }}/.bashrc"
+      line: 'export IC_API_KEY="{{ ibmcloud_api_key }}"'
+      create: yes
+      state: present
+
+  - name: Login to IBM Cloud
+    shell: |
+      export IC_API_KEY="{{ ibmcloud_api_key }}"
+      ibmcloud login -r {{ ibmcloud_region }} --apikey "$IC_API_KEY"
+      ibmcloud target -g {{ resource_group_name }}
+
+  - name: Enable mouse scrolling for tmux
+    lineinfile:
+      path: "{{ home_dir }}/.tmux.conf"
+      line: "set -g mouse on"
+      create: yes
+      state: present
+
+  - name: Create VNC User
+    ansible.builtin.user:
+      name: vncuser
+
+  - name: Listen for vnc server on port 5999
+    ansible.builtin.lineinfile:
+      path: /etc/tigervnc/vncserver.users
+      insertafter: EOF
+      line: ":99=vncuser"
+
+  - name: Get the OC, openshift-install, and ccoctl Tarballs
+    get_url:
+      url: "{{ item }}"
+      dest: "{{ home_dir }}/"
+    loop:
+      - https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/{{ openshift_major_version }}.{{ openshift_minor_version }}/openshift-client-linux.tar.gz
+      - https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/{{ openshift_major_version }}.{{ openshift_minor_version }}/openshift-install-linux.tar.gz
+      - https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/{{ openshift_major_version }}.{{ openshift_minor_version }}/ccoctl-linux-rhel9.tar.gz
+
+  - name: Unarchive Downloaded Tarballs
+    unarchive:
+      src: "{{ home_dir }}/{{ item }}"
+      dest: "{{ home_dir }}/"
+      remote_src: yes
+    loop:
+      - openshift-client-linux.tar.gz
+      - openshift-install-linux.tar.gz
+      - ccoctl-linux-rhel9.tar.gz
+
+  - name: Copy CLI binaries to /usr/bin
+    copy:
+      src: "{{ home_dir }}/{{ item }}"
+      dest: "/usr/bin/{{ item }}"
+      remote_src: yes
+      mode: 0755
+    loop:
+      - oc
+      - kubectl
+      - openshift-install
+      - ccoctl
+
+  - name: Copy pull secret
+    copy:
+      dest: "{{ home_dir }}/pull-secret.txt"
+      content: "{{ pull_secret }}"
+
+  - name: Create .docker Directory
+    file:
+      path: "{{ home_dir }}/.docker"
+      state: directory
+
+  - name: Copy pull secret to .docker directory
+    copy:
+      src: "{{ home_dir }}/pull-secret.txt"
+      dest: "{{ home_dir }}/.docker/config.json"
+      remote_src: yes
+
+  - name: Create credentials directory
+    file:
+      path: "{{ home_dir }}/{{ item }}"
+      state: directory
+    loop:
+      - install-dir
+      - cco
+
+  - name: Delete existing CCO resources
+    shell: |
+      export IC_API_KEY="{{ ibmcloud_api_key }}"
+      cd {{ home_dir }}/cco
+      ccoctl ibmcloud delete-service-id \
+        --credentials-requests-dir {{ home_dir }}/cco/credrequests \
+        --name {{ cco_suffix }}
+    ignore_errors: true
+
+  - name: Extract the list of CredentialsRequest objects from the release image
+    shell: |
+      cd {{ home_dir }}/cco
+      RELEASE_IMAGE=$(openshift-install version | awk '/release image/ {print $3}')
+      oc adm release extract -a {{ home_dir }}/pull-secret.txt \
+        --credentials-requests \
+        --cloud=ibmcloud \
+        --to={{ home_dir }}/cco/credrequests \
+        ${RELEASE_IMAGE}
+
+  - name: Create all CCO service IDs for IBM Cloud
+    shell: |
+      export IC_API_KEY="{{ ibmcloud_api_key }}"
+      cd {{ home_dir }}/cco
+      ccoctl ibmcloud create-service-id \
+        --credentials-requests-dir {{ home_dir }}/cco/credrequests/ \
+        --name {{ cco_suffix }} \
+        --output-dir {{ home_dir }}/cco
+
+  - name: Copy install-config.yaml
+    template:
+      src: "{{ item }}.j2"
+      dest: "{{ item }}"
+    loop:
+      - install-config.yaml
+
+  - name: Copy Install-config.yaml to install-dir
+    copy:
+      src: "{{ home_dir }}/install-config.yaml"
+      dest: "{{ home_dir }}/install-dir/install-config.yaml"
+      remote_src: yes
+      mode: 0644
+
+  - name: Generate Manifests
+    shell: |
+      export IC_API_KEY="{{ ibmcloud_api_key }}"
+      openshift-install create manifests --dir {{ home_dir }}/install-dir
+
+  - name: Copy CCO credentials to install-dir/manifests
+    copy:
+      src: "{{ home_dir }}/cco/manifests/"
+      dest: "{{ home_dir }}/install-dir/manifests/"
+      remote_src: yes
+
+  - name: Copy CCO tls files to install-dir/
+    copy:
+      src: "{{ home_dir }}/cco/tls"
+      dest: "{{ home_dir }}/install-dir/"
+      remote_src: yes
+
+  - name: Take a backup of the install-dir
+    community.general.archive:
+      path: "{{ home_dir }}/install-dir"
+      dest: "{{ home_dir }}/install-dir-backup.bz2"
+      format: bz2
