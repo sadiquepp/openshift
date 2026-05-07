@@ -150,7 +150,7 @@ When complete, the bastion has:
 
 ```bash
 BASTION_IP=$(terraform output -raw bastion_floating_ip)
-ssh -i ~/.ssh/id_rsa root@$BASTION_IP
+ssh -i ~/.ssh/id_rsa vpcuser@$BASTION_IP
 ```
 
 ---
@@ -160,7 +160,7 @@ ssh -i ~/.ssh/id_rsa root@$BASTION_IP
 ### IPI (Installer-Provisioned Infrastructure)
 
 ```bash
-ssh root@$BASTION_IP
+ssh vpcuser@$BASTION_IP
 
 # install-dir is already prepared with manifests and CCO credentials
 ./openshift-install create cluster \
@@ -279,7 +279,7 @@ The exact commands with your cluster-specific values are printed at the end of
 | Identity | IAM Role / Instance Profile | Managed Identity + SP | Service Account | API Key (`IC_API_KEY`) |
 | CCO tool | `ccoctl aws create-all` | `ccoctl azure create-all` | `ccoctl gcp create-all` | `ccoctl ibmcloud create-service-id` |
 | Bastion IP | Elastic IP | Public IP | Static External IP | Floating IP |
-| Bastion user | `ec2-user` | `azureuser` | `ocpuser` | `root` |
+| Bastion user | `ec2-user` | `azureuser` | `ocpuser` | `vpcuser` |
 
 ---
 

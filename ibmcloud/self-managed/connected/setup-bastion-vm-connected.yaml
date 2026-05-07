@@ -1,7 +1,7 @@
 - name: Setup Bastion Node (IBM Cloud Connected)
   hosts: ibmcloud_vm
   gather_facts: false
-  remote_user: root
+  remote_user: vpcuser
   vars:
     prefix_for_name: project_name
     openshift_major_version: "4.18"
@@ -13,7 +13,8 @@
     openshift_cluster_name_suffix: xt1
     openshift_cluster_name: "{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}"
     cco_suffix: "{{ openshift_cluster_name }}-cco"
-    home_dir: /root
+    admin_username: vpcuser
+    home_dir: "/home/{{ admin_username }}"
   tasks:
 
   - name: Wait for SSH banners
@@ -40,12 +41,14 @@
         - python3-pip
         - '@Server with GUI'
       state: present
+    become: true
 
   - name: Install IBM Cloud CLI
     shell: |
       curl -fsSL https://clis.cloud.ibm.com/install/linux | sh
     args:
       creates: /usr/local/bin/ibmcloud
+    become: true
 
   - name: Install IBM Cloud VPC infrastructure plugin
     shell: |
@@ -74,12 +77,14 @@
   - name: Create VNC User
     ansible.builtin.user:
       name: vncuser
+    become: true
 
   - name: Listen for vnc server on port 5999
     ansible.builtin.lineinfile:
       path: /etc/tigervnc/vncserver.users
       insertafter: EOF
       line: ":99=vncuser"
+    become: true
 
   - name: Get the OC, openshift-install, and ccoctl Tarballs
     get_url:
@@ -111,6 +116,7 @@
       - kubectl
       - openshift-install
       - ccoctl
+    become: true
 
   - name: Copy pull secret
     copy:

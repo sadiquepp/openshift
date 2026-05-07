@@ -44,10 +44,7 @@ resource "ibm_is_instance" "bastion" {
 
   user_data = <<-EOF
     #!/bin/bash
-    mkdir -p /root/.ssh
-    chmod 700 /root/.ssh
-    echo "${var.ssh_public_key}" >> /root/.ssh/authorized_keys
-    chmod 600 /root/.ssh/authorized_keys
-    restorecon -R /root/.ssh 2>/dev/null || true
+    # Clear password expiry on vpcuser so SSH doesn't force an interactive change
+    chage -I -1 -m 0 -M 99999 -E -1 vpcuser
   EOF
 }

@@ -11,7 +11,7 @@ resource "local_file" "ansible_inventory" {
     ${ibm_is_floating_ip.bastion.address}
 
     [ibmcloud_vm:vars]
-    ansible_user=root
+    ansible_user=vpcuser
     ansible_ssh_private_key_file=${var.ssh_private_key_path}
     ansible_ssh_common_args=-o StrictHostKeyChecking=no
   INI

@@ -92,7 +92,7 @@ cat <<EOF
 ================================================================
   Environment ready!
 
-  Bastion: ssh -i $SSH_KEY root@$BASTION_IP
+  Bastion: ssh -i $SSH_KEY vpcuser@$BASTION_IP
 
   The bastion has: oc, openshift-install, ccoctl, ibmcloud CLI
   and CCO credentials prepared.
@@ -101,7 +101,7 @@ cat <<EOF
 
   1. SSH into the bastion:
 
-     ssh -i $SSH_KEY root@$BASTION_IP
+     ssh -i $SSH_KEY vpcuser@$BASTION_IP
 
   2. Run the installer:
 
