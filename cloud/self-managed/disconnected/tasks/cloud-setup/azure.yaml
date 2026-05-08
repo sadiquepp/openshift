@@ -50,6 +50,8 @@
     content: |
       {
         "subscriptionId": "{{ azure_subscription_id }}",
+        "clientId": "{{ installer_sp_client_id }}",
+        "clientSecret": "{{ installer_sp_client_secret }}",
         "tenantId": "{{ azure_tenant_id }}"
       }
 
