@@ -91,7 +91,8 @@ gcloud config set project <your-project-id>
 ssh-keygen
 ```
 
-### 2. Create a Service Account key for openshift-install. (This step is not required in most cases. Use `use_service_account_key = false` in `terraform.tfvars` to use the VM identity instead of a service account JSON key.)
+### 2. Optional: Create a Service Account key for openshift-install. 
+(This step is not required in most cases and vm identity works as of this testing. Use `use_service_account_key = false` in `terraform.tfvars` to use the VM identity instead of a service account JSON key.)
 
 ```bash
 PROJECT_ID=$(gcloud config get-value project)
