@@ -19,3 +19,9 @@ resource "azurerm_role_assignment" "ocp_install_user_access_admin" {
   role_definition_name = "User Access Administrator"
   principal_id         = azurerm_user_assigned_identity.ocp_install.principal_id
 }
+
+resource "azurerm_role_assignment" "ocp_install_storage_blob_data_contributor" {
+  scope                = "/subscriptions/${data.azurerm_client_config.current.subscription_id}"
+  role_definition_name = "Storage Blob Data Contributor"
+  principal_id         = azurerm_user_assigned_identity.ocp_install.principal_id
+}
