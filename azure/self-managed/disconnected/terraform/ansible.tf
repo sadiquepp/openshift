@@ -46,6 +46,7 @@ resource "local_file" "ansible_vars" {
     network_resource_group_name                = azurerm_resource_group.main.name
     bastion_private_ip                         = azurerm_network_interface.bastion.private_ip_address
     mirror_registry_fqdn                       = "${azurerm_private_dns_a_record.bastion.name}.${azurerm_private_dns_zone.mirror.name}"
+    use_service_principal                      = local.use_service_principal
     installer_sp_client_id                     = local.sp_client_id
     installer_sp_client_secret                 = local.sp_client_secret
   })

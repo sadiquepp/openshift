@@ -30,14 +30,16 @@ variable "create_service_principal" {
 }
 
 variable "installer_sp_client_id" {
-  description = "Client (app) ID of the pre-created service principal for openshift-install"
+  description = "Client (app) ID of the pre-created service principal for openshift-install. Leave empty to rely on VM managed identity instead."
   type        = string
+  default     = ""
 }
 
 variable "installer_sp_client_secret" {
-  description = "Client secret of the pre-created service principal for openshift-install"
+  description = "Client secret of the pre-created service principal for openshift-install. Leave empty to rely on VM managed identity instead."
   type        = string
   sensitive   = true
+  default     = ""
 }
 
 # ── Connected VNet ────────────────────────────────────────────────────────────

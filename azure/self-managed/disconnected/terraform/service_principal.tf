@@ -3,7 +3,8 @@
 # Recommended: pre-create the SP manually and pass the credentials instead.
 
 locals {
-  create_sp = var.create_service_principal
+  create_sp            = var.create_service_principal
+  use_service_principal = local.create_sp || var.installer_sp_client_id != ""
 
   sp_client_id     = local.create_sp ? azuread_application.ocp_installer[0].client_id : var.installer_sp_client_id
   sp_client_secret = local.create_sp ? azuread_service_principal_password.ocp_installer[0].value : var.installer_sp_client_secret

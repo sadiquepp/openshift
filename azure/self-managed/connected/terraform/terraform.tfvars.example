@@ -1,8 +1,10 @@
 # ── Required ──────────────────────────────────────────────────────
 ssh_public_key             = "ssh-rsa AAAAB3Nza..."
 azure_subscription_id      = "00000000-0000-0000-0000-000000000000"
-installer_sp_client_id     = "00000000-0000-0000-0000-000000000000"
-installer_sp_client_secret = "xxxxxxxxxxxxxxxxxxxx"
+
+# ── Service Principal (optional — omit both to use VM managed identity) ──
+# installer_sp_client_id     = "00000000-0000-0000-0000-000000000000"
+# installer_sp_client_secret = "xxxxxxxxxxxxxxxxxxxx"
 
 # ── Auto-create SP (experimental, not recommended) ───────────────
 # create_service_principal = true

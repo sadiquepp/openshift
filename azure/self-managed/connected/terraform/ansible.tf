@@ -41,6 +41,7 @@ resource "local_file" "ansible_vars" {
     connected_subnet_name_b                  = azurerm_subnet.connected[1].name
     connected_subnet_name_c                  = azurerm_subnet.connected[2].name
     network_resource_group_name              = azurerm_resource_group.main.name
+    use_service_principal                    = local.use_service_principal
     installer_sp_client_id                   = local.sp_client_id
     installer_sp_client_secret               = local.sp_client_secret
   })

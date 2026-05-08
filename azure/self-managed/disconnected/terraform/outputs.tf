@@ -69,8 +69,8 @@ output "firewall_public_ip" {
 # ── Service Principal ─────────────────────────────────────────────────────────
 
 output "installer_sp_client_id" {
-  description = "Service principal client ID (auto-created or user-provided)"
-  value       = local.sp_client_id
+  description = "Service principal client ID (auto-created or user-provided; empty when using VM identity)"
+  value       = local.use_service_principal ? local.sp_client_id : ""
 }
 
 # ── Identity ─────────────────────────────────────────────────────────────────

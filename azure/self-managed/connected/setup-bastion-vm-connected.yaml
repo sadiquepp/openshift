@@ -97,6 +97,7 @@
           "clientSecret": "{{ installer_sp_client_secret }}",
           "tenantId": "{{ azure_tenant_id }}"
         }
+    when: use_service_principal | default(true) | bool
 
   - name: Enable mouse scrolling for tmux
     lineinfile:
