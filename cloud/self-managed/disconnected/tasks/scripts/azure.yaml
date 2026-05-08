@@ -1,0 +1,11 @@
+- name: Create install-cluster.sh
+  template:
+    src: templates/azure/install-cluster.sh.j2
+    dest: "{{ home_dir }}/install-cluster.sh"
+    mode: "0755"
+
+- name: Create reinstall-cluster.sh
+  template:
+    src: templates/azure/reinstall-cluster.sh.j2
+    dest: "{{ home_dir }}/reinstall-cluster.sh"
+    mode: "0755"

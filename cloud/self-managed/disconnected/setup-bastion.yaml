@@ -306,3 +306,7 @@
       dest: "{{ home_dir }}/install-dir-backup.bz2"
       format: bz2
     when: not install_dir_check.stat.exists
+
+  - name: Cloud-specific helper scripts
+    include_tasks: "tasks/scripts/{{ cloud_provider }}.yaml"
+    when: lookup('fileglob', 'tasks/scripts/' + cloud_provider + '.yaml') | length > 0

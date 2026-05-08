@@ -100,19 +100,10 @@ ansible-playbook \
   "${EXTRA_ARGS[@]}" \
   "$PLAYBOOK_DIR/setup-bastion.yaml"
 
-# ── Copy install-cluster.sh to the bastion ───────────────────────────────────
+# ── Done ─────────────────────────────────────────────────────────────────────
 
 SSH_KEY="$(terraform -chdir="$SCRIPT_DIR" output -raw ssh_private_key_path 2>/dev/null || echo '~/.ssh/id_rsa')"
 ADMIN_USER="$(terraform -chdir="$SCRIPT_DIR" output -raw admin_username 2>/dev/null || echo 'azureuser')"
-
-echo ""
-echo "  Copying install scripts to bastion ..."
-scp -i "$SSH_KEY" -o StrictHostKeyChecking=no \
-  "$SCRIPT_DIR/install-cluster.sh" \
-  "$SCRIPT_DIR/reinstall-cluster.sh" \
-  "$ADMIN_USER@$BASTION_IP:/home/$ADMIN_USER/"
-
-# ── Done ─────────────────────────────────────────────────────────────────────
 
 cat <<EOF
 ================================================================

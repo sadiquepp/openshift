@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CLUSTER_DOMAIN="{{ openshift_cluster_name }}.{{ openshift_base_domain }}"
+CLUSTER_RG="{{ cluster_resource_group_name }}"
+EGRESS_VNET_ID="{{ egress_vnet_id }}"
+
+az login --identity
+
+# Background: link cluster private DNS zone to egress VNet mid-install
+(
+  while ! az network private-dns zone show \
+    -g "$CLUSTER_RG" -n "$CLUSTER_DOMAIN" &>/dev/null; do sleep 10; done
+  az network private-dns link vnet create \
+    --resource-group "$CLUSTER_RG" \
+    --zone-name "$CLUSTER_DOMAIN" \
+    --name egress-vnet-link \
+    --virtual-network "$EGRESS_VNET_ID" \
+    --registration-enabled false
+  echo '[dns-linker] Done.'
+) &
+
+# Foreground: run the installer
+~/openshift-install create cluster --dir ~/install-dir --log-level=debug
