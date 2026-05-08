@@ -23,8 +23,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PLAYBOOK_DIR="$(cd "$SCRIPT_DIR/../../../../cloud/self-managed/disconnected" && pwd)"
-UPI_PLAYBOOK_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+TF_DIR="$SCRIPT_DIR/terraform"
+PLAYBOOK_DIR="$(cd "$SCRIPT_DIR/../../../cloud/self-managed/disconnected" && pwd)"
+UPI_PLAYBOOK_DIR="$SCRIPT_DIR"
 
 # ── Parse arguments ──────────────────────────────────────────────────────────
 
@@ -86,7 +87,7 @@ fi
 echo "================================================================"
 echo "  Step 1/3 — Terraform: VPCs, transit GW, endpoints, bastion EC2"
 echo "================================================================"
-cd "$SCRIPT_DIR"
+cd "$TF_DIR"
 terraform init -upgrade
 terraform apply --auto-approve
 
@@ -104,8 +105,8 @@ echo "  Waiting 30s for EC2 SSH to become available ..."
 sleep 30
 
 ansible-playbook \
-  -i "$SCRIPT_DIR/inventory.ini" \
-  -e "@$SCRIPT_DIR/ansible-vars.json" \
+  -i "$TF_DIR/inventory.ini" \
+  -e "@$TF_DIR/ansible-vars.json" \
   -e cloud_provider=aws \
   "${ANSIBLE_EXTRA[@]}" \
   "${EXTRA_ARGS[@]}" \
@@ -119,15 +120,15 @@ echo "  Step 3/3 — Ansible: prepare install-dir-upi (manifests + ignition)"
 echo "================================================================"
 
 ansible-playbook \
-  -i "$SCRIPT_DIR/inventory.ini" \
-  -e "@$SCRIPT_DIR/ansible-vars.json" \
+  -i "$TF_DIR/inventory.ini" \
+  -e "@$TF_DIR/ansible-vars.json" \
   "${ANSIBLE_EXTRA[@]}" \
   "${EXTRA_ARGS[@]}" \
   "$UPI_PLAYBOOK_DIR/prepare-upi-install-dir.yaml"
 
 # ── Done ─────────────────────────────────────────────────────────────────────
 
-SSH_KEY="$(terraform -chdir="$SCRIPT_DIR" output -raw ssh_private_key_path 2>/dev/null || echo '~/.ssh/id_rsa')"
+SSH_KEY="$(terraform -chdir="$TF_DIR" output -raw ssh_private_key_path 2>/dev/null || echo '~/.ssh/id_rsa')"
 
 echo ""
 echo "================================================================"

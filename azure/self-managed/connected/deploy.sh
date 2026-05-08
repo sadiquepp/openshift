@@ -19,7 +19,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PLAYBOOK_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+TF_DIR="$SCRIPT_DIR/terraform"
 
 # ── Parse arguments ──────────────────────────────────────────────────────────
 
@@ -58,7 +58,7 @@ fi
 echo "================================================================"
 echo "  Step 1/2 — Terraform: VNet, NAT GW, NSG, identity, bastion VM"
 echo "================================================================"
-cd "$SCRIPT_DIR"
+cd "$TF_DIR"
 terraform init -upgrade
 terraform apply -auto-approve
 
@@ -76,22 +76,22 @@ echo "  Waiting 30s for VM SSH to become available ..."
 sleep 30
 
 ansible-playbook \
-  -i "$SCRIPT_DIR/inventory.ini" \
-  -e "@$SCRIPT_DIR/ansible-vars.json" \
+  -i "$TF_DIR/inventory.ini" \
+  -e "@$TF_DIR/ansible-vars.json" \
   "${ANSIBLE_EXTRA[@]}" \
   "${EXTRA_ARGS[@]}" \
-  "$PLAYBOOK_DIR/setup-bastion-vm-connected.yaml"
+  "$SCRIPT_DIR/setup-bastion-vm-connected.yaml"
 
 # ── Done ─────────────────────────────────────────────────────────────────────
 
-SSH_KEY="$(terraform -chdir="$SCRIPT_DIR" output -raw ssh_private_key_path 2>/dev/null || echo '~/.ssh/id_rsa')"
-ADMIN_USER="$(terraform -chdir="$SCRIPT_DIR" output -raw admin_username 2>/dev/null || echo 'azureuser')"
+SSH_KEY="$(terraform -chdir="$TF_DIR" output -raw ssh_private_key_path 2>/dev/null || echo '~/.ssh/id_rsa')"
+ADMIN_USER="$(terraform -chdir="$TF_DIR" output -raw admin_username 2>/dev/null || echo 'azureuser')"
 
-AZURE_REGION="$(terraform -chdir="$SCRIPT_DIR" output -raw azure_region 2>/dev/null || echo 'southeastasia')"
-AZURE_SUB="$(terraform -chdir="$SCRIPT_DIR" output -raw azure_subscription_id)"
-CLUSTER_DOMAIN="$(terraform -chdir="$SCRIPT_DIR" output -raw cluster_domain)"
-CLUSTER_RG="$(terraform -chdir="$SCRIPT_DIR" output -raw cluster_resource_group_name)"
-NETWORK_RG="$(terraform -chdir="$SCRIPT_DIR" output -raw resource_group_name)"
+AZURE_REGION="$(terraform -chdir="$TF_DIR" output -raw azure_region 2>/dev/null || echo 'southeastasia')"
+AZURE_SUB="$(terraform -chdir="$TF_DIR" output -raw azure_subscription_id)"
+CLUSTER_DOMAIN="$(terraform -chdir="$TF_DIR" output -raw cluster_domain)"
+CLUSTER_RG="$(terraform -chdir="$TF_DIR" output -raw cluster_resource_group_name)"
+NETWORK_RG="$(terraform -chdir="$TF_DIR" output -raw resource_group_name)"
 CCO_SUFFIX="${CLUSTER_DOMAIN%%.*}-cco"
 CCO_SA="$(echo "$CCO_SUFFIX" | tr -dc 'a-z0-9' | cut -c1-24)"
 
@@ -137,7 +137,7 @@ cat <<EOF
        --name $CCO_SUFFIX \\
        --region $AZURE_REGION \\
        --subscription-id $AZURE_SUB \\
-       --tenant-id $(terraform -chdir="$SCRIPT_DIR" output -raw azure_tenant_id) \\
+       --tenant-id $(terraform -chdir="$TF_DIR" output -raw azure_tenant_id) \\
        --storage-account-name $CCO_SA \\
        --installation-resource-group-name $CLUSTER_RG \\
        --network-resource-group-name $NETWORK_RG \\

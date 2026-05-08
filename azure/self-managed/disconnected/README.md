@@ -121,6 +121,8 @@ Terraform passes these to the bastion via Ansible, which writes
 
 ```
 disconnected/
+├── deploy.sh                        # Environment setup script
+├── README.md                        # This file
 ├── terraform/
 │   ├── main.tf                      # Provider configuration
 │   ├── variables.tf                 # All input variables
@@ -134,9 +136,7 @@ disconnected/
 │   ├── service_principal.tf         # Auto-created SP for openshift-install (optional)
 │   ├── vm.tf                        # Public IP, NIC, bastion VM
 │   ├── ansible.tf                   # Generated Ansible inventory + vars
-│   ├── outputs.tf                   # All outputs
-│   ├── deploy.sh                    # Environment setup script
-│   └── README.md                    # This file
+│   └── outputs.tf                   # All outputs
 ├── setup-bastion-vm.yaml            # Ansible: configure bastion, mirror registry, images
 ├── files/
 │   └── squid.conf                   # Squid proxy configuration
@@ -215,7 +215,7 @@ admin_username          = "azureuser"
 ### 3. Run the setup
 
 ```bash
-cd openshift/azure/self-managed/disconnected/terraform
+cd openshift/azure/self-managed/disconnected
 ./deploy.sh \
   --pull-secret-file ~/pull-secret.json \
   --mirror-registry-password 'MyP@ss' \
@@ -259,7 +259,7 @@ When complete, the bastion has:
 ### 4. SSH into the bastion
 
 ```bash
-BASTION_IP=$(terraform output -raw bastion_public_ip)
+BASTION_IP=$(cd terraform && terraform output -raw bastion_public_ip)
 ssh -i ~/.ssh/id_rsa azureuser@$BASTION_IP
 ```
 

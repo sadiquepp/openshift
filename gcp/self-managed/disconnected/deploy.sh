@@ -21,7 +21,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PLAYBOOK_DIR="$(cd "$SCRIPT_DIR/../../../../cloud/self-managed/disconnected" && pwd)"
+TF_DIR="$SCRIPT_DIR/terraform"
+PLAYBOOK_DIR="$(cd "$SCRIPT_DIR/../../../cloud/self-managed/disconnected" && pwd)"
 
 # ── Parse arguments ──────────────────────────────────────────────────────────
 
@@ -75,7 +76,7 @@ fi
 echo "================================================================"
 echo "  Step 1/2 — Terraform: VPCs, peering, PSC, firewall, bastion VM"
 echo "================================================================"
-cd "$SCRIPT_DIR"
+cd "$TF_DIR"
 terraform init -upgrade
 terraform apply --auto-approve
 
@@ -93,8 +94,8 @@ echo "  Waiting 30s for VM SSH to become available ..."
 sleep 30
 
 ansible-playbook \
-  -i "$SCRIPT_DIR/inventory.ini" \
-  -e "@$SCRIPT_DIR/ansible-vars.json" \
+  -i "$TF_DIR/inventory.ini" \
+  -e "@$TF_DIR/ansible-vars.json" \
   -e "cloud_provider=gcp" \
   "${ANSIBLE_EXTRA[@]}" \
   "${EXTRA_ARGS[@]}" \
@@ -102,11 +103,11 @@ ansible-playbook \
 
 # ── Done ─────────────────────────────────────────────────────────────────────
 
-SSH_KEY="$(terraform -chdir="$SCRIPT_DIR" output -raw ssh_private_key_path 2>/dev/null || echo '~/.ssh/id_rsa')"
-ADMIN_USER="$(terraform -chdir="$SCRIPT_DIR" output -raw admin_username 2>/dev/null || echo 'ocpuser')"
-GCP_PROJECT="$(terraform -chdir="$SCRIPT_DIR" output -raw gcp_project_id)"
-GCP_REGION="$(terraform -chdir="$SCRIPT_DIR" output -raw gcp_region)"
-CLUSTER_DOMAIN="$(terraform -chdir="$SCRIPT_DIR" output -raw cluster_domain)"
+SSH_KEY="$(terraform -chdir="$TF_DIR" output -raw ssh_private_key_path 2>/dev/null || echo '~/.ssh/id_rsa')"
+ADMIN_USER="$(terraform -chdir="$TF_DIR" output -raw admin_username 2>/dev/null || echo 'ocpuser')"
+GCP_PROJECT="$(terraform -chdir="$TF_DIR" output -raw gcp_project_id)"
+GCP_REGION="$(terraform -chdir="$TF_DIR" output -raw gcp_region)"
+CLUSTER_DOMAIN="$(terraform -chdir="$TF_DIR" output -raw cluster_domain)"
 CCO_SUFFIX="${CLUSTER_DOMAIN%%.*}-cco"
 HOME_DIR="/home/$ADMIN_USER"
 

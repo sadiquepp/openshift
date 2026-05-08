@@ -1,6 +1,6 @@
 # Disconnected OpenShift Environment on AWS
 
-> **Also available for Azure:** See [`azure/self-managed/disconnected/`](../../../../azure/self-managed/disconnected/terraform/README.md)
+> **Also available for Azure:** See [`azure/self-managed/disconnected/`](../../../azure/self-managed/disconnected/README.md)
 > for the equivalent setup on Microsoft Azure.
 
 Set up a disconnected (air-gapped) environment on AWS for deploying OpenShift
@@ -52,6 +52,8 @@ the method of your choice: **IPI**, **UPI**, or **ROSA**.
 
 ```
 disconnected/
+├── deploy.sh                    # Environment setup script
+├── README.md                    # This file
 ├── terraform/
 │   ├── main.tf                      # Provider configuration
 │   ├── variables.tf                 # All input variables
@@ -63,9 +65,7 @@ disconnected/
 │   ├── route53.tf                   # Private hosted zone + egress VPC association
 │   ├── ec2.tf                       # SSH key pair, security group, bastion EC2 instance
 │   ├── ansible.tf                   # Generated Ansible inventory + vars
-│   ├── outputs.tf                   # All outputs (VPC IDs, IPs, hosted zone, etc.)
-│   ├── deploy.sh                    # Environment setup script
-│   └── README.md                    # This file
+│   └── outputs.tf                   # All outputs (VPC IDs, IPs, hosted zone, etc.)
 ├── setup-bastion-ec2.yaml           # Ansible: configure bastion, mirror registry, images
 ├── prepare-upi-install-dir.yaml     # Ansible: create install-dir-upi for UPI deployments
 ├── files/
@@ -116,7 +116,7 @@ installer_disk_size     = 100
 ### 3. Run the setup
 
 ```bash
-cd openshift/aws/self-managed/disconnected/terraform
+cd openshift/aws/self-managed/disconnected
 ./deploy.sh \
   --pull-secret-file ~/pull-secret.json \
   --mirror-registry-password 'MyP@ss' \
@@ -161,7 +161,7 @@ When complete, the bastion has:
 ### 4. SSH into the bastion
 
 ```bash
-BASTION_IP=$(terraform output -raw installer_public_ip)
+BASTION_IP=$(cd terraform && terraform output -raw installer_public_ip)
 ssh -i ~/.ssh/id_rsa ec2-user@$BASTION_IP
 ```
 

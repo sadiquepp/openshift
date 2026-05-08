@@ -3,7 +3,7 @@
 > **Also available for:**
 >
 > - **AWS:** See `[aws/self-managed/disconnected/](../../../../aws/self-managed/disconnected/terraform/README.md)`
-> - **Azure:** See `[azure/self-managed/disconnected/](../../../../azure/self-managed/disconnected/terraform/README.md)`
+> - **Azure:** See `[azure/self-managed/disconnected/](../../../azure/self-managed/disconnected/README.md)`
 
 Set up a disconnected (air-gapped) environment on Google Cloud for deploying
 OpenShift clusters. This creates the network infrastructure, a bastion host
@@ -130,6 +130,9 @@ copies it to `~/.gcp/osServiceAccount.json` and configures
 
 ```
 disconnected/
+├── deploy.sh                    # Environment setup script
+├── terraform.tfvars.example     # Example variable file
+├── README.md                    # This file
 ├── terraform/
 │   ├── main.tf                      # Provider configuration
 │   ├── variables.tf                 # All input variables
@@ -140,10 +143,7 @@ disconnected/
 │   ├── iam.tf                       # Service account + IAM role bindings
 │   ├── vm.tf                        # Bastion compute instance + external IP
 │   ├── ansible.tf                   # Generated Ansible inventory + vars
-│   ├── outputs.tf                   # All outputs
-│   ├── deploy.sh                    # Environment setup script
-│   ├── terraform.tfvars.example     # Example variable file
-│   └── README.md                    # This file
+│   └── outputs.tf                   # All outputs
 ├── setup-bastion-vm.yaml            # Ansible: configure bastion, mirror registry, images
 ├── files/
 │   └── squid.conf                   # Squid proxy configuration
@@ -192,7 +192,7 @@ openshift_cluster_name_suffix = "xt1"
 ### 3. Run the setup
 
 ```bash
-cd openshift/gcp/self-managed/disconnected/terraform
+cd openshift/gcp/self-managed/disconnected
 ./deploy.sh \
   --pull-secret-file ~/pull-secret.json \
   --mirror-registry-password 'MyP@ss' \
@@ -236,7 +236,7 @@ When complete, the bastion has:
 ### 4. SSH into the bastion
 
 ```bash
-BASTION_IP=$(terraform output -raw bastion_public_ip)
+BASTION_IP=$(cd terraform && terraform output -raw bastion_public_ip)
 ssh -i ~/.ssh/id_rsa ocpuser@$BASTION_IP
 ```
 
@@ -401,5 +401,4 @@ terraform destroy
 | EC2 Instance                | Linux Virtual Machine          | Compute Engine Instance            |
 | Security Group              | Network Security Group (NSG)   | VPC Firewall Rules                 |
 | Key Pair                    | SSH key on VM                  | SSH key via instance metadata      |
-
 

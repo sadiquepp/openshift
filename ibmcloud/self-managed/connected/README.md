@@ -50,6 +50,9 @@ a bastion VSI pre-configured with the tools and CCO credentials needed to run
 
 ```
 connected/
+├── deploy.sh                              # Environment setup script
+├── terraform.tfvars.example               # Example tfvars
+├── README.md                              # This file
 ├── terraform/
 │   ├── main.tf                          # Provider + resource group data source
 │   ├── variables.tf                     # All input variables
@@ -57,10 +60,7 @@ connected/
 │   ├── security_groups.tf               # Security group + rules for bastion
 │   ├── vm.tf                            # SSH key, image, floating IP, bastion VSI
 │   ├── ansible.tf                       # Generated Ansible inventory + vars
-│   ├── outputs.tf                       # All outputs (VPC, IPs, etc.)
-│   ├── deploy.sh                        # Environment setup script
-│   ├── terraform.tfvars.example         # Example tfvars
-│   └── README.md                        # This file
+│   └── outputs.tf                       # All outputs (VPC, IPs, etc.)
 ├── templates/
 │   └── install-config.yaml.j2           # OpenShift install-config template
 └── setup-bastion-vm-connected.yaml      # Ansible: install tools, CCO, install-dir
@@ -120,7 +120,7 @@ openshift_cluster_name_suffix = "xt1"
 ### 4. Run the setup
 
 ```bash
-cd openshift/ibmcloud/self-managed/connected/terraform
+cd openshift/ibmcloud/self-managed/connected
 ./deploy.sh \
   --pull-secret-file ~/pull-secret.json \
   --openshift-version 4.18.20
@@ -149,7 +149,7 @@ When complete, the bastion has:
 ### 5. SSH into the bastion
 
 ```bash
-BASTION_IP=$(terraform output -raw bastion_floating_ip)
+BASTION_IP=$(cd terraform && terraform output -raw bastion_floating_ip)
 ssh -i ~/.ssh/id_rsa vpcuser@$BASTION_IP
 ```
 

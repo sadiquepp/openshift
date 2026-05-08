@@ -51,6 +51,9 @@ on the subscription (for `openshift-install`)
 
 ```
 connected/
+├── deploy.sh                            # Environment setup script
+├── terraform.tfvars.example             # Example tfvars
+├── README.md                            # This file
 ├── terraform/
 │   ├── main.tf                          # Provider configuration
 │   ├── variables.tf                     # All input variables
@@ -61,10 +64,7 @@ connected/
 │   ├── service_principal.tf             # SP for openshift-install (optional auto-create)
 │   ├── vm.tf                            # Bastion VM with public IP
 │   ├── ansible.tf                       # Generated Ansible inventory + vars
-│   ├── outputs.tf                       # All outputs (VNet IDs, IPs, RG names, etc.)
-│   ├── deploy.sh                        # Environment setup script
-│   ├── terraform.tfvars.example         # Example tfvars
-│   └── README.md                        # This file
+│   └── outputs.tf                       # All outputs (VNet IDs, IPs, RG names, etc.)
 ├── templates/
 │   └── install-config.yaml.j2           # OpenShift install-config template
 └── setup-bastion-vm-connected.yaml      # Ansible: install tools, CCO, install-dir
@@ -130,7 +130,7 @@ installer_disk_size  = 100
 ### 4. Run the setup
 
 ```bash
-cd openshift/azure/self-managed/connected/terraform
+cd openshift/azure/self-managed/connected
 ./deploy.sh \
   --pull-secret-file ~/pull-secret.json \
   --openshift-version 4.18.20
@@ -164,7 +164,7 @@ When complete, the bastion has:
 ### 5. SSH into the bastion
 
 ```bash
-BASTION_IP=$(terraform output -raw bastion_public_ip)
+BASTION_IP=$(cd terraform && terraform output -raw bastion_public_ip)
 ssh -i ~/.ssh/id_rsa azureuser@$BASTION_IP
 ```
 
