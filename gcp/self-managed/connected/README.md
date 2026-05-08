@@ -112,7 +112,7 @@ for ROLE in \
   roles/iam.serviceAccountAdmin \
   roles/iam.serviceAccountKeyAdmin \
   roles/iam.serviceAccountUser \
-  roles/storage.admin
+  roles/storage.admin \
   roles/iam.serviceAccountTokenCreator; do
   gcloud projects add-iam-policy-binding $PROJECT_ID \
     --member="serviceAccount:$SA_EMAIL" \
@@ -206,37 +206,14 @@ To destroy:
 ```
 
 ### Re-deploying after destroy
-
+1. Unarchive the install-dir.
 ```bash
-# 1. Delete old CCO resources
-cd ~/cco
-ccoctl gcp delete \
-  --name <cluster>-cco \
-  --project <project-id> \
-  --credentials-requests-dir ~/cco/credrequests
-
-# 2. Recreate CCO resources
-rm -rf ~/cco/manifests ~/cco/tls
-ccoctl gcp create-all \
-  --credentials-requests-dir ~/cco/credrequests \
-  --name <cluster>-cco \
-  --region <region> \
-  --project <project-id> \
-  --output-dir ~/cco
-
-# 3. Recreate install-dir
-rm -rf ~/install-dir && mkdir ~/install-dir
-cp ~/install-config.yaml ~/install-dir/
-./openshift-install create manifests --dir ~/install-dir
-cp ~/cco/manifests/* ~/install-dir/manifests/
-cp -r ~/cco/tls ~/install-dir/
-
-# 4. Re-run the installer
+tar xjf ~/install-dir-backup.bz2
+```
+2. Re-run the installer
+```bash
 ./openshift-install create cluster --dir ~/install-dir --log-level=debug
 ```
-
-The exact commands with your cluster-specific values are printed at the end of
-`deploy.sh`.
 
 ---
 
