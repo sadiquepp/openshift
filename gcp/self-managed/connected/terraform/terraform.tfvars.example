@@ -6,7 +6,7 @@ gcp_region     = "asia-southeast1"
 ssh_public_key = "ssh-rsa AAAA..."
 
 # Path to pre-created GCP service account JSON key for openshift-install.
-# See README.md for how to create it. Not needed if use_service_account_key = false.
+# See README.md for how to create it. Not needed if use_service_account_key = false. No need to enable this if vm identity is working.
 use_service_account_key = false
 installer_sa_key_file   = "~/ocp-installer-sa-key.json"
 
