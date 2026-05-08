@@ -19,6 +19,7 @@ locals {
     "roles/iam.workloadIdentityPoolAdmin",
     "roles/resourcemanager.projectIamAdmin",
     "roles/storage.admin",
+    "roles/iam.serviceAccountTokenCreator",
   ]
 }
 
