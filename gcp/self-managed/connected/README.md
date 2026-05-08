@@ -50,21 +50,21 @@ and CCO credentials needed to run `openshift-install`.
 
 ```
 connected/
-├── terraform/
-│   ├── main.tf                          # Provider configuration
-│   ├── variables.tf                     # All input variables
-│   ├── vpc.tf                           # VPC, subnets, Cloud Router + NAT
-│   ├── firewall.tf                      # Firewall rules (SSH, VNC, internal, health checks)
-│   ├── iam.tf                           # Service account + IAM role bindings
-│   ├── vm.tf                            # Bastion VM with external IP
-│   ├── ansible.tf                       # Generated Ansible inventory + vars
-│   ├── outputs.tf                       # All outputs (VPC, IPs, SA, etc.)
-│   ├── deploy.sh                        # Environment setup script
-│   ├── terraform.tfvars.example         # Example tfvars
-│   └── README.md                        # This file
+├── deploy.sh                              # Environment setup script
+├── README.md                              # This file
+├── setup-bastion-vm-connected.yaml        # Ansible: install tools, CCO, install-dir
 ├── templates/
-│   └── install-config.yaml.j2           # OpenShift install-config template
-└── setup-bastion-vm-connected.yaml      # Ansible: install tools, CCO, install-dir
+│   └── install-config.yaml.j2             # OpenShift install-config template
+└── terraform/
+    ├── main.tf                            # Provider configuration
+    ├── variables.tf                       # All input variables
+    ├── vpc.tf                             # VPC, subnets, Cloud Router + NAT
+    ├── firewall.tf                        # Firewall rules (SSH, VNC, internal, health checks)
+    ├── iam.tf                             # Service account + IAM role bindings
+    ├── vm.tf                              # Bastion VM with external IP
+    ├── ansible.tf                         # Generated Ansible inventory + vars
+    ├── outputs.tf                         # All outputs (VPC, IPs, SA, etc.)
+    └── terraform.tfvars.example           # Example tfvars
 ```
 
 ---
@@ -145,7 +145,7 @@ openshift_cluster_name_suffix = "xt1"
 ### 4. Run the setup
 
 ```bash
-cd openshift/gcp/self-managed/connected/terraform
+cd openshift/gcp/self-managed/connected
 ./deploy.sh \
   --pull-secret-file ~/pull-secret.json \
   --openshift-version 4.18.20
@@ -174,7 +174,7 @@ When complete, the bastion has:
 ### 5. SSH into the bastion
 
 ```bash
-BASTION_IP=$(terraform output -raw bastion_public_ip)
+BASTION_IP=$(cd terraform && terraform output -raw bastion_public_ip)
 ssh -i ~/.ssh/id_rsa ocpuser@$BASTION_IP
 ```
 
