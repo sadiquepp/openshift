@@ -125,6 +125,10 @@ gcloud iam service-accounts keys create ~/ocp-installer-sa-key.json \
 ```
 
 ### 3. Create `terraform.tfvars`
+```bash
+cp terraform/terraform.tfvars.example terraform/terraform.tfvars
+vi terraform/terraform.tfvars
+```
 
 ```hcl
 # ── Required ──────────────────────────────────────────────────────
