@@ -100,20 +100,19 @@ ansible-playbook \
   "${EXTRA_ARGS[@]}" \
   "$PLAYBOOK_DIR/setup-bastion.yaml"
 
-# ── Done ─────────────────────────────────────────────────────────────────────
+# ── Copy install-cluster.sh to the bastion ───────────────────────────────────
 
 SSH_KEY="$(terraform -chdir="$SCRIPT_DIR" output -raw ssh_private_key_path 2>/dev/null || echo '~/.ssh/id_rsa')"
 ADMIN_USER="$(terraform -chdir="$SCRIPT_DIR" output -raw admin_username 2>/dev/null || echo 'azureuser')"
-CLUSTER_DOMAIN="$(terraform -chdir="$SCRIPT_DIR" output -raw cluster_domain)"
-CLUSTER_RG="$(terraform -chdir="$SCRIPT_DIR" output -raw cluster_resource_group_name)"
-EGRESS_VNET_ID="$(terraform -chdir="$SCRIPT_DIR" output -raw egress_vnet_id)"
 
-AZURE_REGION="$(terraform -chdir="$SCRIPT_DIR" output -raw azure_region 2>/dev/null || echo 'southeastasia')"
-AZURE_SUB="$(terraform -chdir="$SCRIPT_DIR" output -raw azure_subscription_id)"
-AZURE_TENANT="$(terraform -chdir="$SCRIPT_DIR" output -raw azure_tenant_id)"
-NETWORK_RG="$(terraform -chdir="$SCRIPT_DIR" output -raw resource_group_name)"
-CCO_SUFFIX="${CLUSTER_DOMAIN%%.*}-cco"
-CCO_SA="$(echo "$CCO_SUFFIX" | tr -dc 'a-z0-9' | cut -c1-24)"
+echo ""
+echo "  Copying install scripts to bastion ..."
+scp -i "$SSH_KEY" -o StrictHostKeyChecking=no \
+  "$SCRIPT_DIR/install-cluster.sh" \
+  "$SCRIPT_DIR/reinstall-cluster.sh" \
+  "$ADMIN_USER@$BASTION_IP:/home/$ADMIN_USER/"
+
+# ── Done ─────────────────────────────────────────────────────────────────────
 
 cat <<EOF
 ================================================================
@@ -131,70 +130,13 @@ cat <<EOF
 
      ssh -i $SSH_KEY $ADMIN_USER@$BASTION_IP
 
-  2. Start the DNS linker in the background, then run the installer:
+  2. Run the install script (handles DNS linking + installer):
 
-     CLUSTER_DOMAIN="$CLUSTER_DOMAIN"
-     CLUSTER_RG="$CLUSTER_RG"
-     EGRESS_VNET_ID="$EGRESS_VNET_ID"
+     ~/install-cluster.sh
 
-     # Background: link cluster DNS to egress VNet mid-install
-     (
-       az login --identity
-       while ! az network private-dns zone show \\
-         -g "\$CLUSTER_RG" -n "\$CLUSTER_DOMAIN" &>/dev/null; do sleep 10; done
-       az network private-dns link vnet create \\
-         --resource-group "\$CLUSTER_RG" \\
-         --zone-name "\$CLUSTER_DOMAIN" \\
-         --name egress-vnet-link \\
-         --virtual-network "\$EGRESS_VNET_ID" \\
-         --registration-enabled false
-       echo '[dns-linker] Done.'
-     ) &
+  3. Destroy and re-run (all-in-one):
 
-     # Foreground: run the installer
-     ./openshift-install create cluster --dir ~/install-dir --log-level=debug
-
-  3. Destroy and re-run:
-
-     # Step 1: Destroy the cluster
-     ./openshift-install destroy cluster --dir ~/install-dir --log-level=debug
-
-     # Step 2: Recreate the cluster RG
-     az group create --name $CLUSTER_RG --location $AZURE_REGION
-
-     # Step 3: Delete old CCO resources
-     cd ~/cco
-     /home/$ADMIN_USER/cco/ccoctl azure delete \\
-       --name $CCO_SUFFIX \\
-       --region $AZURE_REGION \\
-       --subscription-id $AZURE_SUB \\
-       --storage-account-name $CCO_SA
-
-     # Step 4: Delete the manifests, tls, jwk, openid-configuration files and directories
-     rm -rf ~/cco/manifests ~/cco/tls ~/cco/jwks ~/cco/openid-configuration ~/cco/serviceaccount-signer.private ~/cco/serviceaccount-signer.public
-
-     # Step 5: Recreate CCO resources with role assignments for the new RG
-     /home/$ADMIN_USER/cco/ccoctl azure create-all \\
-       --credentials-requests-dir ~/cco/credrequests \\
-       --name $CCO_SUFFIX \\
-       --region $AZURE_REGION \\
-       --subscription-id $AZURE_SUB \\
-       --tenant-id $AZURE_TENANT \\
-       --storage-account-name $CCO_SA \\
-       --installation-resource-group-name $CLUSTER_RG \\
-       --network-resource-group-name $NETWORK_RG \\
-       --output-dir ~/cco
-
-     # Step 6: Recreate install-dir with fresh manifests
-     rm -rf ~/install-dir
-     mkdir ~/install-dir
-     cp ~/install-config.yaml ~/install-dir/
-     ./openshift-install create manifests --dir ~/install-dir
-     cp ~/cco/manifests/* ~/install-dir/manifests/
-     cp -r ~/cco/tls ~/install-dir/
-
-     # Step 7: Re-run the installer
-     ./openshift-install create cluster --dir ~/install-dir --log-level=debug
+     ~/reinstall-cluster.sh
 
 ================================================================
 EOF

@@ -86,7 +86,7 @@ az login
 ssh-keygen
 ```
 
-### 2. Create a Service Principal
+### 2. Create a Service Principal - Optional
 
 The OpenShift installer requires a service principal with Contributor and
 User Access Administrator roles:
