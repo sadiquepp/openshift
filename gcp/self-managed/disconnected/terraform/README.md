@@ -80,9 +80,9 @@ All Google API access is handled transparently via Private Service Connect:
 - An SSH key pair
 - An OpenShift pull secret ([console.redhat.com](https://console.redhat.com/openshift/install/pull-secret))
 
-### Service Account for openshift-install
+### Service Account for openshift-install (Optional)
 
-`openshift-install` on GCP requires a service account JSON key file.
+`openshift-install` on GCP may require a service account JSON key file in some circumstances. (This step is not required in most cases and vm identity works as of this testing. Use `use_service_account_key = false` in `terraform.tfvars` to use the VM identity instead of a service account JSON key.)
 Create the service account and key before running `deploy.sh`:
 
 ```bash
@@ -102,7 +102,8 @@ for ROLE in \
   roles/iam.serviceAccountKeyAdmin \
   roles/iam.serviceAccountUser \
   roles/storage.admin \
-  roles/serviceusage.serviceUsageAdmin; do
+  roles/serviceusage.serviceUsageAdmin
+  roles/iam.serviceAccountTokenCreator; do
   gcloud projects add-iam-policy-binding <project-id> \
     --member="serviceAccount:${SA_EMAIL}" \
     --role="${ROLE}"

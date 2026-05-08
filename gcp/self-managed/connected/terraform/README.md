@@ -91,7 +91,7 @@ gcloud config set project <your-project-id>
 ssh-keygen
 ```
 
-### 2. Create a Service Account key for openshift-install
+### 2. Create a Service Account key for openshift-install. (This step is not required in most cases. Use `use_service_account_key = false` in `terraform.tfvars` to use the VM identity instead of a service account JSON key.)
 
 ```bash
 PROJECT_ID=$(gcloud config get-value project)
@@ -111,7 +111,8 @@ for ROLE in \
   roles/iam.serviceAccountAdmin \
   roles/iam.serviceAccountKeyAdmin \
   roles/iam.serviceAccountUser \
-  roles/storage.admin; do
+  roles/storage.admin
+  roles/iam.serviceAccountTokenCreator; do
   gcloud projects add-iam-policy-binding $PROJECT_ID \
     --member="serviceAccount:$SA_EMAIL" \
     --role="$ROLE"

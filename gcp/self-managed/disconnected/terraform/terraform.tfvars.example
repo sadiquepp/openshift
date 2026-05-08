@@ -7,7 +7,7 @@ ssh_public_key = "ssh-rsa AAAA..."
 
 # Set to false to use VM identity (using vm identity to autheticate openshift-install is not working as of this testing) instead of a service account JSON key.
 # When false, installer_sa_key_file is ignored.
-use_service_account_key = true
+use_service_account_key = false
 
 # Path to pre-created GCP service account JSON key for openshift-install.
 # See README.md for how to create it. Not needed if use_service_account_key = false.

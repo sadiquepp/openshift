@@ -7,7 +7,7 @@ ssh_public_key = "ssh-rsa AAAA..."
 
 # Path to pre-created GCP service account JSON key for openshift-install.
 # See README.md for how to create it. Not needed if use_service_account_key = false.
-use_service_account_key = true
+use_service_account_key = false
 installer_sa_key_file   = "~/ocp-installer-sa-key.json"
 
 # ── Naming ────────────────────────────────────────────────────────────────────
