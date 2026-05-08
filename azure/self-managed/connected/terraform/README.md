@@ -43,7 +43,7 @@ credentials needed to run `openshift-install`.
 - Ansible
 - Azure CLI with an authenticated session (`az login`)
 - An Azure service principal with Contributor + User Access Administrator
-  on the subscription (for `openshift-install`)
+on the subscription (for `openshift-install`)
 - An SSH key pair
 - An OpenShift pull secret ([console.redhat.com](https://console.redhat.com/openshift/install/pull-secret))
 
@@ -86,7 +86,7 @@ az login
 ssh-keygen
 ```
 
-### 2. Create a Service Principal - Optional
+### 2. Create a Service Principal - Not 
 
 The OpenShift installer requires a service principal with Contributor and
 User Access Administrator roles:
@@ -136,21 +136,26 @@ cd openshift/azure/self-managed/connected/terraform
   --openshift-version 4.18.20
 ```
 
-| Flag | Required | Description |
-|------|----------|-------------|
-| `--pull-secret-file` | Yes | Path to the OpenShift pull secret JSON file |
-| `--openshift-version` | No | Full version string, e.g. `4.18.20` (default: playbook value) |
+
+| Flag                  | Required | Description                                                   |
+| --------------------- | -------- | ------------------------------------------------------------- |
+| `--pull-secret-file`  | Yes      | Path to the OpenShift pull secret JSON file                   |
+| `--openshift-version` | No       | Full version string, e.g. `4.18.20` (default: playbook value) |
+
 
 Any extra arguments are forwarded to the Ansible playbook (e.g. `-e "key=value"`).
 
 This runs two steps:
 
-| Step | Tool | What it does |
-|------|------|--------------|
-| 1 | Terraform | Creates VNet, subnets, NAT Gateway, NSGs, managed identity, service principal, bastion VM |
-| 2 | Ansible (`setup-bastion-vm-connected.yaml`) | Installs packages, downloads OCP tools (oc, openshift-install, ccoctl), creates CCO resources, prepares `install-dir` |
+
+| Step | Tool                                        | What it does                                                                                                          |
+| ---- | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| 1    | Terraform                                   | Creates VNet, subnets, NAT Gateway, NSGs, managed identity, service principal, bastion VM                             |
+| 2    | Ansible (`setup-bastion-vm-connected.yaml`) | Installs packages, downloads OCP tools (oc, openshift-install, ccoctl), creates CCO resources, prepares `install-dir` |
+
 
 When complete, the bastion has:
+
 - `openshift-install`, `oc`, `ccoctl`, `az CLI`
 - `osServicePrincipal.json` in `~/.azure/`
 - CCO credentials in `~/cco/`
@@ -244,46 +249,56 @@ The exact commands with your cluster-specific values are printed at the end of
 
 ### Required
 
-| Variable | Description |
-|----------|-------------|
-| `ssh_public_key` | SSH public key material for the bastion VM |
-| `azure_subscription_id` | Azure subscription ID |
-| `installer_sp_client_id` | Service principal client (app) ID |
-| `installer_sp_client_secret` | Service principal client secret |
+
+| Variable                     | Description                                |
+| ---------------------------- | ------------------------------------------ |
+| `ssh_public_key`             | SSH public key material for the bastion VM |
+| `azure_subscription_id`      | Azure subscription ID                      |
+| `installer_sp_client_id`     | Service principal client (app) ID          |
+| `installer_sp_client_secret` | Service principal client secret            |
+
 
 ### Naming and Region
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `prefix_for_name` | `project_name` | Prefix for all resource names |
-| `azure_region` | `southeastasia` | Azure region |
-| `openshift_base_domain` | `example.com` | Cluster base domain |
-| `openshift_cluster_name_suffix` | `xt1` | Suffix for cluster name (`<prefix>-<suffix>`) |
+
+| Variable                        | Default         | Description                                   |
+| ------------------------------- | --------------- | --------------------------------------------- |
+| `prefix_for_name`               | `project_name`  | Prefix for all resource names                 |
+| `azure_region`                  | `southeastasia` | Azure region                                  |
+| `openshift_base_domain`         | `example.com`   | Cluster base domain                           |
+| `openshift_cluster_name_suffix` | `xt1`           | Suffix for cluster name (`<prefix>-<suffix>`) |
+
 
 ### Network CIDRs
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `connected_vnet_cidr` | `172.16.0.0/16` | Connected VNet address space |
+
+| Variable                 | Default             | Description                         |
+| ------------------------ | ------------------- | ----------------------------------- |
+| `connected_vnet_cidr`    | `172.16.0.0/16`     | Connected VNet address space        |
 | `connected_subnet_cidrs` | `[172.16.1-3.0/24]` | OpenShift subnet CIDRs (one per AZ) |
-| `bastion_subnet_cidr` | `172.16.4.0/24` | Bastion subnet CIDR |
+| `bastion_subnet_cidr`    | `172.16.4.0/24`     | Bastion subnet CIDR                 |
+
 
 ### Bastion VM
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `installer_vm_size` | `Standard_D2s_v3` | Azure VM size |
-| `installer_disk_size` | `100` | OS disk size in GB |
-| `installer_image` | RHEL 9.4 | Source image reference (publisher, offer, sku, version) |
-| `ssh_private_key_path` | `~/.ssh/id_rsa` | Path to SSH private key (for Ansible) |
-| `admin_username` | `azureuser` | Admin username for the bastion VM |
+
+| Variable               | Default           | Description                                             |
+| ---------------------- | ----------------- | ------------------------------------------------------- |
+| `installer_vm_size`    | `Standard_D2s_v3` | Azure VM size                                           |
+| `installer_disk_size`  | `100`             | OS disk size in GB                                      |
+| `installer_image`      | RHEL 9.4          | Source image reference (publisher, offer, sku, version) |
+| `ssh_private_key_path` | `~/.ssh/id_rsa`   | Path to SSH private key (for Ansible)                   |
+| `admin_username`       | `azureuser`       | Admin username for the bastion VM                       |
+
 
 ### Service Principal
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `create_service_principal` | `false` | Auto-create the SP via Terraform (experimental) |
-| `azure_tenant_id` | `""` | Tenant ID (required when `create_service_principal = true`) |
+
+| Variable                   | Default | Description                                                 |
+| -------------------------- | ------- | ----------------------------------------------------------- |
+| `create_service_principal` | `false` | Auto-create the SP via Terraform (experimental)             |
+| `azure_tenant_id`          | `""`    | Tenant ID (required when `create_service_principal = true`) |
+
 
 ---
 
@@ -291,20 +306,22 @@ The exact commands with your cluster-specific values are printed at the end of
 
 After `terraform apply`, these outputs are available:
 
-| Output | Description |
-|--------|-------------|
-| `bastion_public_ip` | Bastion public IP for SSH |
-| `bastion_private_ip` | Bastion private IP |
-| `connected_vnet_id` | Connected VNet ID |
-| `connected_vnet_name` | Connected VNet name |
-| `connected_subnet_ids` | OpenShift subnet IDs |
-| `connected_subnet_names` | OpenShift subnet names |
-| `nat_gateway_public_ip` | NAT Gateway outbound IP |
-| `cluster_domain` | Fully qualified cluster domain |
-| `resource_group_name` | Network resource group name |
-| `cluster_resource_group_name` | Cluster resource group name |
-| `installer_sp_client_id` | Service principal client ID |
-| `managed_identity_client_id` | Managed identity client ID |
+
+| Output                        | Description                    |
+| ----------------------------- | ------------------------------ |
+| `bastion_public_ip`           | Bastion public IP for SSH      |
+| `bastion_private_ip`          | Bastion private IP             |
+| `connected_vnet_id`           | Connected VNet ID              |
+| `connected_vnet_name`         | Connected VNet name            |
+| `connected_subnet_ids`        | OpenShift subnet IDs           |
+| `connected_subnet_names`      | OpenShift subnet names         |
+| `nat_gateway_public_ip`       | NAT Gateway outbound IP        |
+| `cluster_domain`              | Fully qualified cluster domain |
+| `resource_group_name`         | Network resource group name    |
+| `cluster_resource_group_name` | Cluster resource group name    |
+| `installer_sp_client_id`      | Service principal client ID    |
+| `managed_identity_client_id`  | Managed identity client ID     |
+
 
 These values are also automatically written to `ansible-vars.json` for use
 by the Ansible playbook.
@@ -321,3 +338,4 @@ by the Ansible playbook.
 cd azure/self-managed/connected/terraform
 terraform destroy
 ```
+

@@ -1,8 +1,9 @@
 # Disconnected OpenShift Environment on GCP
 
 > **Also available for:**
-> - **AWS:** See [`aws/self-managed/disconnected/`](../../../../aws/self-managed/disconnected/terraform/README.md)
-> - **Azure:** See [`azure/self-managed/disconnected/`](../../../../azure/self-managed/disconnected/terraform/README.md)
+>
+> - **AWS:** See `[aws/self-managed/disconnected/](../../../../aws/self-managed/disconnected/terraform/README.md)`
+> - **Azure:** See `[azure/self-managed/disconnected/](../../../../azure/self-managed/disconnected/terraform/README.md)`
 
 Set up a disconnected (air-gapped) environment on Google Cloud for deploying
 OpenShift clusters. This creates the network infrastructure, a bastion host
@@ -58,14 +59,16 @@ deploy a cluster using **IPI** (Installer-Provisioned Infrastructure).
 OpenShift nodes in the disconnected VPC have **no proxy configuration**.
 All Google API access is handled transparently via Private Service Connect:
 
-| Destination               | Path           | Notes                                    |
-| ------------------------- | -------------- | ---------------------------------------- |
-| `*.googleapis.com`        | PSC endpoint   | Compute, Storage, IAM, DNS, all APIs     |
-| `*.gcr.io`               | PSC endpoint   | Container Registry                       |
-| `*.pkg.dev`              | PSC endpoint   | Artifact Registry                        |
-| `accounts.google.com`    | PSC endpoint   | OAuth / identity                         |
-| Mirror registry (bastion) | VPC peering    | Port 8444, via `mirror.internal` DNS     |
-| Everything else           | Blocked        | Denied by firewall rules                 |
+
+| Destination               | Path         | Notes                                |
+| ------------------------- | ------------ | ------------------------------------ |
+| `*.googleapis.com`        | PSC endpoint | Compute, Storage, IAM, DNS, all APIs |
+| `*.gcr.io`                | PSC endpoint | Container Registry                   |
+| `*.pkg.dev`               | PSC endpoint | Artifact Registry                    |
+| `accounts.google.com`     | PSC endpoint | OAuth / identity                     |
+| Mirror registry (bastion) | VPC peering  | Port 8444, via `mirror.internal` DNS |
+| Everything else           | Blocked      | Denied by firewall rules             |
+
 
 > **Cost note:** Private Service Connect has **no ongoing per-hour charge**
 > (unlike Azure Firewall ~$288/month or AWS PrivateLink per-endpoint fees).
@@ -80,9 +83,9 @@ All Google API access is handled transparently via Private Service Connect:
 - An SSH key pair
 - An OpenShift pull secret ([console.redhat.com](https://console.redhat.com/openshift/install/pull-secret))
 
-### Service Account for openshift-install (Optional)
+### Service Account for openshift-install
 
-`openshift-install` on GCP may require a service account JSON key file in some circumstances. (This step is not required in most cases and vm identity works as of this testing. Use `use_service_account_key = false` in `terraform.tfvars` to use the VM identity instead of a service account JSON key.)
+`openshift-install` on GCP requires a service account JSON key file.
 Create the service account and key before running `deploy.sh`:
 
 ```bash
@@ -102,8 +105,7 @@ for ROLE in \
   roles/iam.serviceAccountKeyAdmin \
   roles/iam.serviceAccountUser \
   roles/storage.admin \
-  roles/serviceusage.serviceUsageAdmin
-  roles/iam.serviceAccountTokenCreator; do
+  roles/serviceusage.serviceUsageAdmin; do
   gcloud projects add-iam-policy-binding <project-id> \
     --member="serviceAccount:${SA_EMAIL}" \
     --role="${ROLE}"
@@ -198,12 +200,14 @@ cd openshift/gcp/self-managed/disconnected/terraform
   --operators 'cluster-logging,elasticsearch-operator'
 ```
 
+
 | Flag                         | Required | Description                                                     |
 | ---------------------------- | -------- | --------------------------------------------------------------- |
 | `--pull-secret-file`         | Yes      | Path to the OpenShift pull secret JSON file                     |
 | `--mirror-registry-password` | No       | Password for the Quay mirror registry (default: playbook value) |
-| `--openshift-version`        | No       | Full version string, e.g. `4.20.0` (default: `4.20.0`)         |
+| `--openshift-version`        | No       | Full version string, e.g. `4.20.0` (default: `4.20.0`)          |
 | `--operators`                | No       | Comma-separated list of operators to mirror (default: none)     |
+
 
 > **Disk sizing:** Each mirrored operator adds several GB of images to the bastion's
 > mirror registry. If you include more than a handful of operators, increase
@@ -214,10 +218,12 @@ Any extra arguments are forwarded to the Ansible playbook (e.g. `-e "key=value"`
 
 This runs two steps:
 
-| Step | Tool                              | What it does                                                                                                              |
-| ---- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| 1    | Terraform                         | Creates VPCs, peering, PSC endpoint, Cloud DNS zones, firewall rules, service account, bastion VM                         |
+
+| Step | Tool                              | What it does                                                                                                                  |
+| ---- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| 1    | Terraform                         | Creates VPCs, peering, PSC endpoint, Cloud DNS zones, firewall rules, service account, bastion VM                             |
 | 2    | Ansible (`setup-bastion-vm.yaml`) | Installs packages, sets up mirror registry, mirrors OCP images, extracts tools, creates CCO credentials, prepares install-dir |
+
 
 When complete, the bastion has:
 
@@ -246,6 +252,7 @@ private zones are project-scoped and immediately visible to all attached VPCs.
 ```bash
 ssh ocpuser@$BASTION_IP
 ```
+
 ```bash
 ./openshift-install create cluster \
   --dir ~/install-dir \
@@ -254,6 +261,10 @@ ssh ocpuser@$BASTION_IP
 
 ### Destroy and re-run
 
+Unlike Azure, GCP does not have resource groups that the installer deletes.
+However, you must re-run `ccoctl` to clean up and recreate workload identity
+resources:
+
 ```bash
 # 1. Destroy the cluster
 ./openshift-install destroy cluster \
@@ -261,14 +272,14 @@ ssh ocpuser@$BASTION_IP
   --log-level=debug
 
 # 2. Delete install-dir
-rm -rf ~/install-dir
+rm -rf ~/install-dir 
 
-# 3. Unpack the backup of install-dir
-tar -xjf ~/install-dir-backup.bz2
-
-# 4. Re-run the installer
+# 5. Re-run the installer
 ./openshift-install create cluster --dir ~/install-dir --log-level=debug
 ```
+
+> The `deploy.sh` script prints all the above commands with pre-populated
+> values from Terraform outputs after setup completes.
 
 ---
 
@@ -276,42 +287,50 @@ tar -xjf ~/install-dir-backup.bz2
 
 ### Required
 
-| Variable              | Description                                        |
-| --------------------- | -------------------------------------------------- |
-| `gcp_project_id`      | GCP project ID                                     |
-| `ssh_public_key`      | SSH public key material for the bastion VM          |
+
+| Variable                | Description                                        |
+| ----------------------- | -------------------------------------------------- |
+| `gcp_project_id`        | GCP project ID                                     |
+| `ssh_public_key`        | SSH public key material for the bastion VM         |
 | `installer_sa_key_file` | Path to GCP service account JSON key for installer |
+
 
 ### Naming and Region
 
-| Variable                        | Default          | Description                                   |
-| ------------------------------- | ---------------- | --------------------------------------------- |
-| `prefix_for_name`               | `project_name`   | Prefix for all resource names                 |
-| `gcp_region`                    | `asia-southeast1`| GCP region                                    |
-| `openshift_base_domain`         | `example.com`    | Cluster base domain                           |
-| `openshift_cluster_name_suffix` | `xt1`            | Suffix for cluster name (`<prefix>-<suffix>`) |
+
+| Variable                        | Default           | Description                                   |
+| ------------------------------- | ----------------- | --------------------------------------------- |
+| `prefix_for_name`               | `project_name`    | Prefix for all resource names                 |
+| `gcp_region`                    | `asia-southeast1` | GCP region                                    |
+| `openshift_base_domain`         | `example.com`     | Cluster base domain                           |
+| `openshift_cluster_name_suffix` | `xt1`             | Suffix for cluster name (`<prefix>-<suffix>`) |
+
 
 ### Network CIDRs
 
-| Variable                    | Default          | Description                           |
-| --------------------------- | ---------------- | ------------------------------------- |
-| `disconnected_vpc_cidr`     | `172.16.0.0/16`  | Disconnected VPC address space        |
-| `control_plane_subnet_cidr` | `172.16.1.0/24`  | Control-plane subnet CIDR             |
-| `compute_subnet_cidr`       | `172.16.2.0/24`  | Compute (worker) subnet CIDR          |
-| `egress_vpc_cidr`           | `172.17.0.0/16`  | Egress VPC address space              |
-| `egress_subnet_cidr`        | `172.17.1.0/24`  | Egress (bastion) subnet CIDR          |
-| `psc_endpoint_ip`           | `172.16.100.2`   | Static IP for PSC endpoint            |
+
+| Variable                    | Default         | Description                    |
+| --------------------------- | --------------- | ------------------------------ |
+| `disconnected_vpc_cidr`     | `172.16.0.0/16` | Disconnected VPC address space |
+| `control_plane_subnet_cidr` | `172.16.1.0/24` | Control-plane subnet CIDR      |
+| `compute_subnet_cidr`       | `172.16.2.0/24` | Compute (worker) subnet CIDR   |
+| `egress_vpc_cidr`           | `172.17.0.0/16` | Egress VPC address space       |
+| `egress_subnet_cidr`        | `172.17.1.0/24` | Egress (bastion) subnet CIDR   |
+| `psc_endpoint_ip`           | `172.16.100.2`  | Static IP for PSC endpoint     |
+
 
 ### Bastion VM
 
-| Variable                | Default          | Description                      |
-| ----------------------- | ---------------- | -------------------------------- |
-| `bastion_machine_type`  | `e2-standard-4`  | GCE machine type                 |
-| `bastion_disk_size_gb`  | `200`            | Boot disk size in GB             |
-| `bastion_image_family`  | `rhel-9`         | Image family for the VM          |
-| `bastion_image_project` | `rhel-cloud`     | Project hosting the VM image     |
-| `admin_username`        | `ocpuser`        | Admin username for the VM        |
-| `ssh_private_key_path`  | `~/.ssh/id_rsa`  | Path to SSH private key          |
+
+| Variable                | Default         | Description                  |
+| ----------------------- | --------------- | ---------------------------- |
+| `bastion_machine_type`  | `e2-standard-4` | GCE machine type             |
+| `bastion_disk_size_gb`  | `200`           | Boot disk size in GB         |
+| `bastion_image_family`  | `rhel-9`        | Image family for the VM      |
+| `bastion_image_project` | `rhel-cloud`    | Project hosting the VM image |
+| `admin_username`        | `ocpuser`       | Admin username for the VM    |
+| `ssh_private_key_path`  | `~/.ssh/id_rsa` | Path to SSH private key      |
+
 
 ---
 
@@ -319,20 +338,22 @@ tar -xjf ~/install-dir-backup.bz2
 
 After `terraform apply`, these outputs are available:
 
-| Output                          | Description                         |
-| ------------------------------- | ----------------------------------- |
-| `bastion_public_ip`             | Bastion external IP for SSH         |
-| `bastion_private_ip`            | Bastion internal IP                 |
-| `bastion_name`                  | Bastion VM name                     |
-| `psc_endpoint_ip`               | PSC endpoint IP for Google APIs     |
-| `disconnected_vpc_name`         | Disconnected VPC name               |
-| `control_plane_subnet_name`     | Control-plane subnet name           |
-| `compute_subnet_name`           | Compute subnet name                 |
-| `egress_vpc_name`               | Egress VPC name                     |
-| `bastion_service_account_email` | Bastion VM service account email    |
-| `cluster_domain`                | Fully qualified cluster domain      |
-| `gcp_project_id`                | GCP project ID                      |
-| `gcp_region`                    | GCP region                          |
+
+| Output                          | Description                      |
+| ------------------------------- | -------------------------------- |
+| `bastion_public_ip`             | Bastion external IP for SSH      |
+| `bastion_private_ip`            | Bastion internal IP              |
+| `bastion_name`                  | Bastion VM name                  |
+| `psc_endpoint_ip`               | PSC endpoint IP for Google APIs  |
+| `disconnected_vpc_name`         | Disconnected VPC name            |
+| `control_plane_subnet_name`     | Control-plane subnet name        |
+| `compute_subnet_name`           | Compute subnet name              |
+| `egress_vpc_name`               | Egress VPC name                  |
+| `bastion_service_account_email` | Bastion VM service account email |
+| `cluster_domain`                | Fully qualified cluster domain   |
+| `gcp_project_id`                | GCP project ID                   |
+| `gcp_region`                    | GCP region                       |
+
 
 These values are also automatically written to `ansible-vars.json` for use
 by the Ansible playbook.
@@ -366,16 +387,19 @@ terraform destroy
 
 ## AWS / Azure / GCP Resource Mapping
 
+
 | AWS Resource                | Azure Equivalent               | GCP Equivalent                     |
 | --------------------------- | ------------------------------ | ---------------------------------- |
 | VPC                         | Virtual Network (VNet)         | VPC Network                        |
 | Subnet                      | Subnet                         | Subnetwork                         |
 | Transit Gateway             | VNet Peering                   | VPC Network Peering                |
 | Internet Gateway            | Public IP (on bastion NIC)     | Cloud NAT + External IP            |
-| VPC Endpoints (Interface)   | Azure Firewall (FQDN rules)   | Private Service Connect (all-apis) |
+| VPC Endpoints (Interface)   | Azure Firewall (FQDN rules)    | Private Service Connect (all-apis) |
 | VPC Endpoints (Gateway/S3)  | Private Endpoint for Storage   | PSC (covers GCS)                   |
 | Route53 Private Zone        | Azure Private DNS Zone         | Cloud DNS (private)                |
 | IAM Role + Instance Profile | User-Assigned Managed Identity | Service Account (attached to VM)   |
 | EC2 Instance                | Linux Virtual Machine          | Compute Engine Instance            |
 | Security Group              | Network Security Group (NSG)   | VPC Firewall Rules                 |
 | Key Pair                    | SSH key on VM                  | SSH key via instance metadata      |
+
+

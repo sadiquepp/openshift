@@ -86,8 +86,7 @@ Managed Identity, and role assignments
 
 ### Service Principal for openshift-install
 
-`openshift-install` on Azure requires a service principal with a client secret.
-It does not support managed identities. Create the SP before running
+`openshift-install` on Azure requires a service principal with a client secret. Create the SP before running
 `deploy.sh`:
 
 ```bash
