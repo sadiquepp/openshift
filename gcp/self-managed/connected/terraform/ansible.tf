@@ -7,10 +7,10 @@ resource "local_file" "ansible_inventory" {
   file_permission = "0644"
 
   content = <<-INI
-    [gcp_vm]
+    [bastion]
     ${google_compute_address.bastion.address}
 
-    [gcp_vm:vars]
+    [bastion:vars]
     ansible_user=${var.admin_username}
     ansible_ssh_private_key_file=${var.ssh_private_key_path}
     ansible_ssh_common_args=-o StrictHostKeyChecking=no
