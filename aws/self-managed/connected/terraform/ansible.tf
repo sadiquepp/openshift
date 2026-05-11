@@ -7,10 +7,10 @@ resource "local_file" "ansible_inventory" {
   file_permission = "0644"
 
   content = <<-INI
-    [aws_ec2]
+    [bastion]
     ${aws_instance.installer.public_ip}
 
-    [aws_ec2:vars]
+    [bastion:vars]
     ansible_user=ec2-user
     ansible_ssh_private_key_file=${var.ssh_private_key_path}
     ansible_ssh_common_args=-o StrictHostKeyChecking=no

@@ -7,10 +7,10 @@ resource "local_file" "ansible_inventory" {
   file_permission = "0644"
 
   content = <<-INI
-    [ibmcloud_vm]
+    [bastion]
     ${ibm_is_floating_ip.bastion.address}
 
-    [ibmcloud_vm:vars]
+    [bastion:vars]
     ansible_user=vpcuser
     ansible_ssh_private_key_file=${var.ssh_private_key_path}
     ansible_ssh_common_args=-o StrictHostKeyChecking=no
