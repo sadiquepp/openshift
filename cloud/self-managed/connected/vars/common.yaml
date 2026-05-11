@@ -1,0 +1,48 @@
+prefix_for_name: project_name
+openshift_major_version: "4.18"
+openshift_minor_version: 20
+openshift_version: "{{ openshift_major_version }}.{{ openshift_minor_version }}"
+openshift_base_domain: example.com
+openshift_cluster_name_suffix: xt1
+openshift_cluster_name: "{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}"
+cco_suffix: "{{ openshift_cluster_name }}-cco"
+admin_username: ocpuser
+home_dir: "/home/{{ admin_username }}"
+cco_dir: "{{ home_dir }}/cco"
+
+common_packages:
+  - tmux
+  - tigervnc
+  - tigervnc-server
+  - wget
+  - podman
+  - jq
+  - golang
+  - unzip
+  - bind-utils
+  - openssl-devel
+  - git
+  - yum-utils
+  - ansible-core
+  - python3-pip
+  - '@Server with GUI'
+
+cloud_extra_packages: []
+
+tarballs:
+  - https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/{{ openshift_major_version }}.{{ openshift_minor_version }}/openshift-client-linux.tar.gz
+  - https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/{{ openshift_major_version }}.{{ openshift_minor_version }}/openshift-install-linux.tar.gz
+  - https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/{{ openshift_major_version }}.{{ openshift_minor_version }}/ccoctl-linux-rhel9.tar.gz
+
+tarball_basenames:
+  - openshift-client-linux.tar.gz
+  - openshift-install-linux.tar.gz
+  - ccoctl-linux-rhel9.tar.gz
+
+cli_binaries:
+  - oc
+  - kubectl
+  - openshift-install
+  - ccoctl
+
+cloud_env: {}

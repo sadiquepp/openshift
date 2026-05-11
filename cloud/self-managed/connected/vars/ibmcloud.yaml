@@ -1,0 +1,10 @@
+admin_username: vpcuser
+home_dir: "/home/{{ admin_username }}"
+cco_dir: "{{ home_dir }}/cco"
+cco_suffix: "{{ openshift_cluster_name }}-cco"
+
+ibmcloud_region: us-east
+resource_group_name: Default
+
+cloud_env:
+  IBMCLOUD_API_KEY: "{{ ibmcloud_api_key }}"

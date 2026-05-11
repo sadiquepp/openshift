@@ -1,0 +1,52 @@
+- name: Add Google Cloud SDK Yum Repo
+  copy:
+    dest: /etc/yum.repos.d/google-cloud-sdk.repo
+    content: |
+      [google-cloud-sdk]
+      name=Google Cloud SDK
+      baseurl=https://packages.cloud.google.com/yum/repos/cloud-sdk-el9-x86_64
+      enabled=1
+      gpgcheck=1
+      repo_gpgcheck=0
+      gpgkey=https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
+  become: true
+
+- name: Install Google Cloud SDK
+  dnf:
+    name: google-cloud-cli
+    state: present
+  become: true
+
+- name: Create .gcp directory
+  file:
+    path: "{{ home_dir }}/.gcp"
+    state: directory
+  when: use_service_account_key | bool
+
+- name: Copy GCP service account key for openshift-install
+  copy:
+    src: "{{ installer_sa_key_file }}"
+    dest: "{{ home_dir }}/.gcp/osServiceAccount.json"
+    mode: "0600"
+  when: use_service_account_key | bool
+
+- name: Set GOOGLE_APPLICATION_CREDENTIALS in bashrc
+  lineinfile:
+    path: "{{ home_dir }}/.bashrc"
+    line: 'export GOOGLE_APPLICATION_CREDENTIALS="{{ home_dir }}/.gcp/osServiceAccount.json"'
+    create: yes
+    state: present
+  when: use_service_account_key | bool
+
+- name: Activate gcloud with service account
+  shell: |
+    gcloud auth activate-service-account --key-file={{ home_dir }}/.gcp/osServiceAccount.json
+    gcloud config set project {{ gcp_project_id }}
+    gcloud config set compute/region {{ gcp_region }}
+  when: use_service_account_key | bool
+
+- name: Configure gcloud project and region (VM identity)
+  shell: |
+    gcloud config set project {{ gcp_project_id }}
+    gcloud config set compute/region {{ gcp_region }}
+  when: not (use_service_account_key | bool)

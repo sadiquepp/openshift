@@ -1,0 +1,33 @@
+- name: Delete existing CCO resources
+  shell: |
+    cd {{ cco_dir }}
+    ccoctl azure delete \
+      --name {{ cco_suffix }} \
+      --region {{ azure_region }} \
+      --subscription-id {{ azure_subscription_id }} \
+      --storage-account-name {{ cco_storage_account }}
+  ignore_errors: true
+
+- name: Extract the list of CredentialsRequest objects from the release image
+  shell: |
+    cd {{ cco_dir }}
+    RELEASE_IMAGE=$(openshift-install version | awk '/release image/ {print $3}')
+    oc adm release extract -a {{ home_dir }}/pull-secret.txt \
+      --credentials-requests \
+      --cloud=azure \
+      --to={{ cco_dir }}/credrequests \
+      ${RELEASE_IMAGE}
+
+- name: Create all CCO files for Azure
+  shell: |
+    cd {{ cco_dir }}
+    ccoctl azure create-all \
+      --credentials-requests-dir {{ cco_dir }}/credrequests/ \
+      --name {{ cco_suffix }} \
+      --region {{ azure_region }} \
+      --subscription-id {{ azure_subscription_id }} \
+      --tenant-id {{ azure_tenant_id }} \
+      --storage-account-name {{ cco_storage_account }} \
+      --installation-resource-group-name {{ cluster_resource_group_name }} \
+      --network-resource-group-name {{ network_resource_group_name }} \
+      --output-dir {{ cco_dir }}

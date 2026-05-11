@@ -19,7 +19,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 TF_DIR="$SCRIPT_DIR/terraform"
+PLAYBOOK="$REPO_ROOT/cloud/self-managed/connected/setup-bastion-vm-connected.yaml"
 
 # ── Parse arguments ──────────────────────────────────────────────────────────
 
@@ -78,9 +80,10 @@ sleep 30
 ansible-playbook \
   -i "$TF_DIR/inventory.ini" \
   -e "@$TF_DIR/ansible-vars.json" \
+  -e "cloud_provider=azure" \
   "${ANSIBLE_EXTRA[@]}" \
   "${EXTRA_ARGS[@]}" \
-  "$SCRIPT_DIR/setup-bastion-vm-connected.yaml"
+  "$PLAYBOOK"
 
 # ── Done ─────────────────────────────────────────────────────────────────────
 

@@ -1,0 +1,8 @@
+admin_username: ocpuser
+home_dir: "/home/{{ admin_username }}"
+cco_dir: "{{ home_dir }}/cco"
+cco_suffix: "{{ openshift_cluster_name }}-cco"
+
+gcp_region: asia-southeast1
+gcp_project_id: my-gcp-project
+use_service_account_key: true

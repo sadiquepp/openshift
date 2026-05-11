@@ -1,0 +1,28 @@
+- name: Delete existing CCO resources
+  shell: |
+    cd {{ cco_dir }}
+    ccoctl gcp delete \
+      --name {{ cco_suffix }} \
+      --project {{ gcp_project_id }} \
+      --credentials-requests-dir {{ cco_dir }}/credrequests
+  ignore_errors: true
+
+- name: Extract the list of CredentialsRequest objects from the release image
+  shell: |
+    cd {{ cco_dir }}
+    RELEASE_IMAGE=$(openshift-install version | awk '/release image/ {print $3}')
+    oc adm release extract -a {{ home_dir }}/pull-secret.txt \
+      --credentials-requests \
+      --cloud=gcp \
+      --to={{ cco_dir }}/credrequests \
+      ${RELEASE_IMAGE}
+
+- name: Create all CCO files for GCP
+  shell: |
+    cd {{ cco_dir }}
+    ccoctl gcp create-all \
+      --credentials-requests-dir {{ cco_dir }}/credrequests/ \
+      --name {{ cco_suffix }} \
+      --region {{ gcp_region }} \
+      --project {{ gcp_project_id }} \
+      --output-dir {{ cco_dir }}

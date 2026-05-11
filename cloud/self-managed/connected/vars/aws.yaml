@@ -1,0 +1,28 @@
+admin_username: ec2-user
+home_dir: "/home/{{ admin_username }}"
+cco_dir: "{{ home_dir }}/sts"
+cco_suffix: "{{ openshift_cluster_name }}-sts"
+
+cloud_extra_packages:
+  - awscli2
+
+tarballs:
+  - https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/{{ openshift_major_version }}.{{ openshift_minor_version }}/openshift-client-linux.tar.gz
+  - https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/{{ openshift_major_version }}.{{ openshift_minor_version }}/openshift-install-linux.tar.gz
+  - https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/{{ openshift_major_version }}.{{ openshift_minor_version }}/ccoctl-linux-rhel9.tar.gz
+  - https://mirror.openshift.com/pub/openshift-v4/clients/rosa/latest/rosa-linux.tar.gz
+
+tarball_basenames:
+  - openshift-client-linux.tar.gz
+  - openshift-install-linux.tar.gz
+  - ccoctl-linux-rhel9.tar.gz
+  - rosa-linux.tar.gz
+
+cli_binaries:
+  - oc
+  - kubectl
+  - openshift-install
+  - ccoctl
+  - rosa
+
+aws_region: ap-southeast-1

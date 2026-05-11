@@ -1,0 +1,7 @@
+admin_username: azureuser
+home_dir: "/home/{{ admin_username }}"
+cco_dir: "{{ home_dir }}/cco"
+cco_suffix: "{{ openshift_cluster_name }}-cco"
+cco_storage_account: "{{ cco_suffix | regex_replace('[^a-z0-9]', '') | truncate(24, True, '') }}"
+
+azure_region: southeastasia

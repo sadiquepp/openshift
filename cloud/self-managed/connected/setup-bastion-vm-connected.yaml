@@ -1,0 +1,125 @@
+- name: Setup Bastion Node (Connected)
+  hosts: bastion
+  gather_facts: false
+  remote_user: "{{ admin_username }}"
+  vars_files:
+    - vars/common.yaml
+    - "vars/{{ cloud_provider }}.yaml"
+  tasks:
+
+  - name: Wait for SSH banners
+    wait_for_connection:
+      delay: 5
+      timeout: 300
+
+  - name: Install Required RPM Packages
+    dnf:
+      name: "{{ common_packages + cloud_extra_packages }}"
+      state: present
+    become: true
+
+  - name: Cloud-specific setup (CLI, credentials, auth)
+    include_tasks: "tasks/cloud-setup/{{ cloud_provider }}.yaml"
+
+  - name: Enable mouse scrolling for tmux
+    lineinfile:
+      path: "{{ home_dir }}/.tmux.conf"
+      line: "set -g mouse on"
+      create: yes
+      state: present
+
+  - name: Create VNC User
+    ansible.builtin.user:
+      name: vncuser
+    become: true
+
+  - name: Listen for vnc server on port 5999
+    ansible.builtin.lineinfile:
+      path: /etc/tigervnc/vncserver.users
+      insertafter: EOF
+      line: ":99=vncuser"
+    become: true
+
+  - name: Get the OC, openshift-install, and ccoctl Tarballs
+    get_url:
+      url: "{{ item }}"
+      dest: "{{ home_dir }}/"
+    loop: "{{ tarballs }}"
+
+  - name: Unarchive Downloaded Tarballs
+    unarchive:
+      src: "{{ home_dir }}/{{ item }}"
+      dest: "{{ home_dir }}/"
+      remote_src: yes
+    loop: "{{ tarball_basenames }}"
+
+  - name: Copy CLI binaries to /usr/bin
+    copy:
+      src: "{{ home_dir }}/{{ item }}"
+      dest: "/usr/bin/{{ item }}"
+      remote_src: yes
+      mode: 0755
+    loop: "{{ cli_binaries }}"
+    become: yes
+
+  - name: Copy pull secret
+    copy:
+      dest: "{{ home_dir }}/pull-secret.txt"
+      content: "{{ pull_secret }}"
+
+  - name: Create .docker Directory
+    file:
+      path: "{{ home_dir }}/.docker"
+      state: directory
+
+  - name: Copy pull secret to .docker directory
+    copy:
+      src: "{{ home_dir }}/pull-secret.txt"
+      dest: "{{ home_dir }}/.docker/config.json"
+      remote_src: yes
+
+  - name: Create credentials directory
+    file:
+      path: "{{ item }}"
+      state: directory
+    loop:
+      - "{{ home_dir }}/install-dir"
+      - "{{ cco_dir }}"
+
+  - name: Cloud-specific CCO/STS creation
+    include_tasks: "tasks/cco/{{ cloud_provider }}.yaml"
+
+  - name: Copy install-config.yaml
+    template:
+      src: "{{ cloud_provider }}/install-config.yaml.j2"
+      dest: "{{ home_dir }}/install-config.yaml"
+
+  - name: Copy Install-config.yaml to install-dir
+    copy:
+      src: "{{ home_dir }}/install-config.yaml"
+      dest: "{{ home_dir }}/install-dir/install-config.yaml"
+      remote_src: yes
+      mode: 0644
+
+  - name: Generate Manifests
+    shell: |
+      openshift-install create manifests --dir {{ home_dir }}/install-dir
+    environment: "{{ cloud_env }}"
+
+  - name: Copy CCO credentials to install-dir/manifests
+    copy:
+      src: "{{ cco_dir }}/manifests/"
+      dest: "{{ home_dir }}/install-dir/manifests/"
+      remote_src: yes
+
+  - name: Copy CCO tls files to install-dir/
+    copy:
+      src: "{{ cco_dir }}/tls"
+      dest: "{{ home_dir }}/install-dir/"
+      remote_src: yes
+
+  - name: Take a backup of the install-dir
+    community.general.archive:
+      path: "{{ home_dir }}/install-dir"
+      dest: "{{ home_dir }}/install-dir-backup.bz2"
+      format: bz2

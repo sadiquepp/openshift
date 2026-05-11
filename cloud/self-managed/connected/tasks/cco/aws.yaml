@@ -1,0 +1,24 @@
+- name: Delete existing STS resources
+  shell: |
+    cd {{ cco_dir }}
+    ccoctl aws delete --name {{ cco_suffix }} --region {{ aws_region }}
+  ignore_errors: true
+
+- name: Extract the list of CredentialsRequest objects from the release image
+  shell: |
+    cd {{ cco_dir }}
+    RELEASE_IMAGE=$(openshift-install version | awk '/release image/ {print $3}')
+    oc adm release extract -a {{ home_dir }}/pull-secret.txt \
+      --credentials-requests \
+      --cloud=aws \
+      --to={{ cco_dir }}/credrequests \
+      ${RELEASE_IMAGE}
+
+- name: Create All STS Files for AWS
+  shell: |
+    cd {{ cco_dir }}
+    ccoctl aws create-all \
+      --credentials-requests-dir {{ cco_dir }}/credrequests/ \
+      --name {{ cco_suffix }} \
+      --region {{ aws_region }} \
+      --create-private-s3-bucket

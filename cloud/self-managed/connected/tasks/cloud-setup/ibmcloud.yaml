@@ -1,0 +1,23 @@
+- name: Install IBM Cloud CLI
+  shell: |
+    curl -fsSL https://clis.cloud.ibm.com/install/linux | sh
+  args:
+    creates: /usr/local/bin/ibmcloud
+  become: true
+
+- name: Install IBM Cloud VPC infrastructure plugin
+  shell: |
+    ibmcloud plugin install vpc-infrastructure -f
+
+- name: Set IBMCLOUD_API_KEY in bashrc
+  lineinfile:
+    path: "{{ home_dir }}/.bashrc"
+    line: 'export IBMCLOUD_API_KEY="{{ ibmcloud_api_key }}"'
+    create: yes
+    state: present
+
+- name: Login to IBM Cloud
+  shell: |
+    export IBMCLOUD_API_KEY="{{ ibmcloud_api_key }}"
+    ibmcloud login -r {{ ibmcloud_region }} --apikey "$IBMCLOUD_API_KEY"
+    ibmcloud target -g {{ resource_group_name }}
