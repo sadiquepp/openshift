@@ -43,7 +43,7 @@ the method of your choice: **IPI**, **UPI**, or **ROSA**.
 ## Prerequisites
 
 - Terraform >= 1.5
-- Ansible (with `amazon.aws` and `community.aws` collections)
+- Ansible (with `amazon.aws`, `ansible.posix` and `community.general` collections)
 - AWS credentials with permissions for VPC, EC2, IAM, Route53, S3, Transit Gateway
 - An SSH key pair
 - An OpenShift pull secret ([console.redhat.com](https://console.redhat.com/openshift/install/pull-secret))
@@ -87,7 +87,7 @@ disconnected/
 ```bash
 sudo yum-config-manager --add-repo https://rpm.releases.hashicorp.com/RHEL/hashicorp.repo
 sudo yum install ansible-core terraform awscli -y
-ansible-galaxy collection install community.aws amazon.aws community.general
+ansible-galaxy collection install community.aws amazon.aws ansible.posix community.general
 git clone https://github.com/sadiquepp/openshift.git # Clone the repository
 aws configure # Configure AWS credentials
 ssh-keygen # Generate SSH key pair

@@ -39,7 +39,7 @@ the tools and STS credentials needed to run `openshift-install`.
 ## Prerequisites
 
 - Terraform >= 1.5
-- Ansible (with `amazon.aws` collection)
+- Ansible (with `amazon.aws`, `ansible.posix` and `community.general` collections)
 - AWS credentials with permissions for VPC, EC2, IAM, Route53, S3
 - An SSH key pair
 - An OpenShift pull secret ([console.redhat.com](https://console.redhat.com/openshift/install/pull-secret))
@@ -71,7 +71,7 @@ connected/
 ```bash
 sudo yum-config-manager --add-repo https://rpm.releases.hashicorp.com/RHEL/hashicorp.repo
 sudo yum install ansible-core terraform awscli -y
-ansible-galaxy collection install amazon.aws
+ansible-galaxy collection install amazon.aws ansible.posix community.general
 git clone https://github.com/sadiquepp/openshift.git
 aws configure
 ssh-keygen

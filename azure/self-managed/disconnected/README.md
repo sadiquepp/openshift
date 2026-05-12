@@ -78,7 +78,7 @@ All egress is handled transparently:
 ## Prerequisites
 
 - Terraform >= 1.5
-- Ansible (with `community.general` collection)
+- Ansible (with `community.general` and `ansible.posix` collections)
 - Azure CLI (`az`) authenticated with permissions for VNets, VMs, DNS, Storage,
 Managed Identity, and role assignments
 - An SSH key pair
@@ -155,7 +155,7 @@ disconnected/
 ```bash
 sudo yum-config-manager --add-repo https://rpm.releases.hashicorp.com/RHEL/hashicorp.repo
 sudo yum install ansible-core terraform -y
-ansible-galaxy collection install community.general
+ansible-galaxy collection install community.general ansible.posix
 git clone https://github.com/sadiquepp/openshift.git
 az login          # Authenticate with Azure
 ssh-keygen        # Generate SSH key pair

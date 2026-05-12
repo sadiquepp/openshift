@@ -40,7 +40,7 @@ credentials needed to run `openshift-install`.
 ## Prerequisites
 
 - Terraform >= 1.5
-- Ansible
+- Ansible (with `community.general` and `ansible.posix` collections)
 - Azure CLI with an authenticated session (`az login`)
 - An Azure service principal with Contributor + User Access Administrator
 on the subscription (for `openshift-install`)
@@ -79,6 +79,7 @@ connected/
 ```bash
 sudo yum-config-manager --add-repo https://rpm.releases.hashicorp.com/RHEL/hashicorp.repo
 sudo yum install ansible-core terraform -y
+ansible-galaxy collection install community.general ansible.posix
 sudo rpm --import https://packages.microsoft.com/keys/microsoft.asc
 sudo yum install azure-cli -y
 git clone https://github.com/sadiquepp/openshift.git

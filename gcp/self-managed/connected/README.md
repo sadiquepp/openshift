@@ -39,7 +39,7 @@ and CCO credentials needed to run `openshift-install`.
 ## Prerequisites
 
 - Terraform >= 1.5
-- Ansible
+- Ansible (with `community.general` and `ansible.posix` collections)
 - `gcloud` CLI authenticated (`gcloud auth login`)
 - A GCP project with Compute Engine API enabled
 - A service account JSON key for `openshift-install` (see below)
@@ -76,6 +76,7 @@ connected/
 ```bash
 sudo yum-config-manager --add-repo https://rpm.releases.hashicorp.com/RHEL/hashicorp.repo
 sudo yum install ansible-core terraform -y
+ansible-galaxy collection install community.general ansible.posix
 sudo tee /etc/yum.repos.d/google-cloud-sdk.repo << 'EOF'
 [google-cloud-sdk]
 name=Google Cloud SDK

@@ -78,7 +78,7 @@ All Google API access is handled transparently via Private Service Connect:
 ## Prerequisites
 
 - Terraform >= 1.5
-- Ansible (with `community.general` collection)
+- Ansible (with `community.general` and `ansible.posix` collections)
 - Google Cloud SDK (`gcloud`) authenticated with a project
 - An SSH key pair
 - An OpenShift pull secret ([console.redhat.com](https://console.redhat.com/openshift/install/pull-secret))
@@ -162,7 +162,7 @@ disconnected/
 ```bash
 sudo yum-config-manager --add-repo https://rpm.releases.hashicorp.com/RHEL/hashicorp.repo
 sudo yum install ansible-core terraform -y
-ansible-galaxy collection install community.general
+ansible-galaxy collection install community.general ansible.posix
 git clone https://github.com/sadiquepp/openshift.git
 gcloud auth login          # Authenticate with GCP
 gcloud config set project <project-id>
