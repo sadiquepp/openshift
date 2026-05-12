@@ -372,6 +372,15 @@ oc patch OperatorHub cluster --type json \
 oc apply -f oc-mirror-output/working-dir/cluster-resources
 ```
 
+## Access Bastion VNC Console for GUI Access
+```bash
+sudo su - vncuser
+vncpasswd   # Set a strong password and select N for readonly access
+exit
+sudo systemctl enable vncserver@:99 --now
+```
+VNC server will be available on port 5999. You can access it by connecting to the bastion node's public IP on port 5999.
+
 ## Teardown
 
 ```bash

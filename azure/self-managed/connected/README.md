@@ -328,6 +328,14 @@ These values are also automatically written to `ansible-vars.json` for use
 by the Ansible playbook.
 
 ---
+## Access Bastion VNC Console for GUI Access
+```bash
+sudo su - vncuser
+vncpasswd   # Set password and select N for readonly access
+exit
+sudo systemctl enable vncserver@:99 --now
+```
+VNC server will be available on port 5999. You can access it by connecting to the bastion node's public IP on port 5999.
 
 ## Teardown
 
