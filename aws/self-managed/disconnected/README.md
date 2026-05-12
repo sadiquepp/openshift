@@ -427,11 +427,7 @@ exit
 sudo systemctl enable vncserver@:99 --now
 ```
 
- VNC server will be available on port 5999. You can access it by connecting to the bastion node's public IP on port 5999.
-
-```bash
-ssh -i ~/.ssh/id_rsa ec2-user@$BASTION_IP -L 5999:localhost:5999
-```
+VNC server will be available on port 5999. You can access it by connecting to the bastion node's public IP on port 5999.
 
 ## Teardown
 
