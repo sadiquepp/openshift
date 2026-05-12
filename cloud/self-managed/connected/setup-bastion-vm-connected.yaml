@@ -40,6 +40,20 @@
       line: ":99=vncuser"
     become: true
 
+  - name: Gather service facts for firewalld check
+    ansible.builtin.service_facts:
+    become: true
+
+  - name: Open VNC port 5999 in firewalld
+    ansible.posix.firewalld:
+      port: 5999/tcp
+      permanent: true
+      immediate: true
+      state: enabled
+    become: true
+    when: ansible_facts.services['firewalld.service'] is defined
+          and ansible_facts.services['firewalld.service'].state == 'running'
+
   - name: Get the OC, openshift-install, and ccoctl Tarballs
     get_url:
       url: "{{ item }}"
