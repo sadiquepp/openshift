@@ -30,6 +30,7 @@ cli_binaries:
 mirror_operators:
   - aws-load-balancer-operator
 
+rosa_token: REPLACE ME WITH ROSA TOKEN
 aws_region: ap-southeast-1
 oidc_config_id: place-holder-if-not-passed-via-parameter
 vpc_owner_aws_account_number: 12345
