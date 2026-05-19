@@ -2,26 +2,27 @@
 - name: Prepare UPI install directory (install-dir-upi)
   hosts: bastion
   gather_facts: false
-  remote_user: ec2-user
+  remote_user: "{{ admin_username }}"
+  vars_files:
+    - ../../../cloud/self-managed/disconnected/vars/common.yaml
+    - ../../../cloud/self-managed/disconnected/vars/aws.yaml
   vars:
-    prefix_for_name: project_name
-    aws_region: ap-southeast-1
-    openshift_base_domain: example.com
-    openshift_cluster_name_suffix: xt1
-    openshift_cluster_name: "{{ prefix_for_name }}-{{ openshift_cluster_name_suffix }}"
-    sts_suffix: "{{ openshift_cluster_name }}-sts"
-    pull_secret_location: /home/ec2-user/pull-secret.txt
-    quay_root_mount: /registry
-    upi_install_dir: /home/ec2-user/install-dir-upi
+    upi_install_dir: "{{ home_dir }}/install-dir-upi"
   tasks:
 
-  - name: Store Hostname Into a Variable
-    shell: echo $HOSTNAME
-    register: installer_quay_hostname
+  - name: Gather hostname fact
+    setup:
+      gather_subset:
+        - min
+    when: mirror_registry_fqdn is not defined
+
+  - name: Store mirror registry hostname
+    set_fact:
+      installer_quay_hostname: "{{ mirror_registry_fqdn | default(ansible_hostname) }}"
 
   - name: Store the mirror registry credentials to a variable
     shell: |
-      CREDENTIAL=$(grep -A1 {{ installer_quay_hostname.stdout }} {{ pull_secret_location }} | grep -v {{ installer_quay_hostname.stdout }} | awk {'print $2'})
+      CREDENTIAL=$(grep -A1 {{ installer_quay_hostname }} {{ pull_secret_location }} | grep -v {{ installer_quay_hostname }} | awk {'print $2'})
       echo $CREDENTIAL
     register: quay_credential
 
@@ -33,35 +34,39 @@
   - name: Generate UPI install-config.yaml
     template:
       src: install-config-upi.yaml.j2
-      dest: /home/ec2-user/install-config-upi.yaml
+      dest: "{{ home_dir }}/install-config-upi.yaml"
+
+  - name: Read Quay Root CA
+    slurp:
+      src: "{{ quay_root_mount }}/quay-rootCA/rootCA.pem"
+    register: quay_root_ca
+    become: true
 
   - name: Append Quay Root CA to UPI install-config.yaml
-    shell: |
-      sed 's/^/    /' {{ quay_root_mount }}/quay-rootCA/rootCA.pem >> /home/ec2-user/install-config-upi.yaml
-    become: true
+    blockinfile:
+      path: "{{ home_dir }}/install-config-upi.yaml"
+      marker: ""
+      insertafter: EOF
+      block: "{{ quay_root_ca.content | b64decode | regex_replace('(?m)^', '    ') }}"
 
   - name: Copy install-config.yaml into UPI install directory
     copy:
-      src: /home/ec2-user/install-config-upi.yaml
+      src: "{{ home_dir }}/install-config-upi.yaml"
       dest: "{{ upi_install_dir }}/install-config.yaml"
       remote_src: yes
 
   - name: Generate manifests
     shell: |
-      /home/ec2-user/openshift-install create manifests --dir {{ upi_install_dir }}
+      {{ home_dir }}/openshift-install create manifests --dir {{ upi_install_dir }}
 
   - name: Remove machine-managed master machine resources
-    file: |
-      path: "{{ upi_install_dir }}/openshift/99_openshift-cluster-api_master-machines-*.yaml"
-      state: absent
-    file: |
-      path: "{{ upi_install_dir }}/openshift/99_openshift-machine-api_master-control-plane-machine-set.yaml"
-      state: absent
+    shell: |
+      rm -f {{ upi_install_dir }}/openshift/99_openshift-cluster-api_master-machines-*.yaml
+      rm -f {{ upi_install_dir }}/openshift/99_openshift-machine-api_master-control-plane-machine-set.yaml
 
   - name: Remove machine-managed worker machineset resources
-    file: |
-      path: "{{ upi_install_dir }}/openshift/99_openshift-cluster-api_worker-machineset-*.yaml"
-      state: absent
+    shell: |
+      rm -f {{ upi_install_dir }}/openshift/99_openshift-cluster-api_worker-machineset-*.yaml
 
   - name: Remove privateZone from DNS config
     lineinfile:
@@ -80,19 +85,19 @@
 
   - name: Copy STS manifests into UPI install directory
     copy:
-      src: /home/ec2-user/sts/manifests/
+      src: "{{ cco_dir }}/manifests/"
       dest: "{{ upi_install_dir }}/manifests/"
       remote_src: yes
 
   - name: Copy STS tls files into UPI install directory
     copy:
-      src: /home/ec2-user/sts/tls
+      src: "{{ cco_dir }}/tls"
       dest: "{{ upi_install_dir }}/"
       remote_src: yes
 
   - name: Create ignition configs
     shell: |
-      /home/ec2-user/openshift-install create ignition-configs --dir {{ upi_install_dir }}
+      {{ home_dir }}/openshift-install create ignition-configs --dir {{ upi_install_dir }}
 
   - name: Extract infrastructure ID
     shell: |
@@ -141,11 +146,11 @@
   - name: Copy UPI terraform files to bastion
     copy:
       src: "{{ playbook_dir }}/../upi/terraform-three-az/"
-      dest: /home/ec2-user/upi-terraform/
+      dest: "{{ home_dir }}/upi-terraform/"
 
   - name: Generate pre-filled terraform.tfvars for UPI terraform
     copy:
-      dest: /home/ec2-user/upi-terraform/terraform.tfvars
+      dest: "{{ home_dir }}/upi-terraform/terraform.tfvars"
       content: |
         # ── Auto-populated by prepare-upi-install-dir.yaml ───────────────
         # These values were extracted from the disconnected environment
@@ -203,7 +208,7 @@
   - name: Display next steps
     debug:
       msg: >-
-        UPI terraform is ready at /home/ec2-user/upi-terraform/ with a
+        UPI terraform is ready at {{ home_dir }}/upi-terraform/ with a
         pre-filled terraform.tfvars. Edit the file to set rhcos_ami_id
         and the pre-reserved private IPs, then run: cd ~/upi-terraform
         && terraform init && terraform apply

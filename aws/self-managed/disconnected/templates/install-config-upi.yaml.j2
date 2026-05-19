@@ -52,13 +52,13 @@ platform:
     - {{ disconnected_subnet_id_b }}
     - {{ disconnected_subnet_id_c }}
 publish: Internal
-pullSecret: '{"auths":{"{{ installer_quay_hostname.stdout }}:8443": {"auth": {{ quay_credential.stdout }}} }}'
+pullSecret: '{"auths":{"{{ installer_quay_hostname }}:{{ mirror_registry_port }}": {"auth": {{ quay_credential.stdout }}} }}'
 imageDigestSources:
 - mirrors:
-  - {{ installer_quay_hostname.stdout }}:8443/openshift/release-images
+  - {{ installer_quay_hostname }}:{{ mirror_registry_port }}/openshift/release-images
   source: quay.io/openshift-release-dev/ocp-release
 - mirrors:
-  - {{ installer_quay_hostname.stdout }}:8443/openshift/release
+  - {{ installer_quay_hostname }}:{{ mirror_registry_port }}/openshift/release
   source: quay.io/openshift-release-dev/ocp-v4.0-art-dev
 sshKey: |
   {{ ssh_public_key_for_ec2_and_openshit_node }}
