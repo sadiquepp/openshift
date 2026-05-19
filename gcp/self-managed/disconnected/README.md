@@ -204,7 +204,7 @@ cd openshift/gcp/self-managed/disconnected
 | Flag                         | Required | Description                                                     |
 | ---------------------------- | -------- | --------------------------------------------------------------- |
 | `--pull-secret-file`         | Yes      | Path to the OpenShift pull secret JSON file                     |
-| `--mirror-registry-password` | No       | Password for the Quay mirror registry (default: playbook value) |
+| `--mirror-registry-password` | Yes      | Password for the Quay mirror registry (default: none) |
 | `--openshift-version`        | No       | Full version string, e.g. `4.20.0` (default: `4.20.0`)          |
 | `--operators`                | No       | Comma-separated list of operators to mirror (default: none)     |
 

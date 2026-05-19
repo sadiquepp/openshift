@@ -15,7 +15,7 @@
 #     --openshift-version 4.20.0 \
 #     --operators 'aws-load-balancer-operator,cluster-logging,elasticsearch-operator'
 #
-#   All flags are optional except --pull-secret-file.
+#   --pull-secret-file and --mirror-registry-password are required.
 #   Any extra arguments after the flags are forwarded to the Ansible playbook.
 #
 set -euo pipefail
@@ -47,17 +47,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "$PULL_SECRET_FILE" ]]; then
-  echo "Error: --pull-secret-file is required" >&2
-  echo "Usage: $0 --pull-secret-file ~/pull-secret.json [options...]" >&2
+if [[ -z "$PULL_SECRET_FILE" || -z "$MIRROR_REGISTRY_PASSWORD" ]]; then
+  echo "Error: --pull-secret-file and --mirror-registry-password are required" >&2
+  echo "Usage: $0 --pull-secret-file ~/pull-secret.json --mirror-registry-password 'MyP@ss' [options...]" >&2
   exit 1
 fi
 
 ANSIBLE_EXTRA=(-e "pull_secret=$(cat "$PULL_SECRET_FILE")")
-
-if [[ -n "$MIRROR_REGISTRY_PASSWORD" ]]; then
-  ANSIBLE_EXTRA+=(-e "mirror_registry_password=$MIRROR_REGISTRY_PASSWORD")
-fi
+ANSIBLE_EXTRA+=(-e "mirror_registry_password=$MIRROR_REGISTRY_PASSWORD")
 
 if [[ -n "$OPENSHIFT_VERSION" ]]; then
   MAJOR="${OPENSHIFT_VERSION%.*}"
