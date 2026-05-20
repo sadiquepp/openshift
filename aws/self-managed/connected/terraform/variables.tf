@@ -44,14 +44,6 @@ variable "openshift_cluster_name_suffix" {
   default     = "xx1"
 }
 
-# ── Route53 ───────────────────────────────────────────────────────────────────
-
-variable "create_public_hosted_zone" {
-  description = "Create a public Route53 hosted zone for the base domain (required for public clusters)"
-  type        = bool
-  default     = true
-}
-
 # ── Bastion EC2 ───────────────────────────────────────────────────────────────
 
 variable "ssh_public_key" {

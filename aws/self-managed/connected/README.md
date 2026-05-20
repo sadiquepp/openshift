@@ -1,9 +1,9 @@
 # Connected OpenShift Environment on AWS
 
 Set up a connected (internet-accessible) environment on AWS for deploying
-OpenShift clusters. This creates the network infrastructure, an IAM role, a
-Route53 private hosted zone, and a bastion EC2 instance pre-configured with
-the tools and STS credentials needed to run `openshift-install`.
+OpenShift clusters. This creates the network infrastructure, an IAM role,
+and a bastion EC2 instance pre-configured with the tools and STS credentials
+needed to run `openshift-install`.
 
 ## Architecture
 
@@ -32,7 +32,6 @@ the tools and STS credentials needed to run `openshift-install`.
                    │  └──────────────────────────────────────────┘    │
                    │                                                  │
                    │  S3 Gateway Endpoint                             │
-                   │  Route53 Private Zone: <cluster>.<domain>        │
                    └──────────────────────────────────────────────────┘
 ```
 
@@ -43,6 +42,24 @@ the tools and STS credentials needed to run `openshift-install`.
 - AWS credentials with permissions for VPC, EC2, IAM, Route53, S3
 - An SSH key pair
 - An OpenShift pull secret ([console.redhat.com](https://console.redhat.com/openshift/install/pull-secret))
+
+### Public Route53 Hosted Zone (required for public clusters)
+
+You must have a public Route53 hosted zone for your base domain before deploying a public cluster using `openshift-install` against install-dir-public. The installer looks up this zone to create DNS records for the cluster's API and ingress endpoints. This is a one-time setup. The same hosted zone can be reused across multiple cluster deployments. Private clusters (`install-dir`) do not require this — the installer creates and manages its own private hosted zone.
+
+```bash
+# Create the public hosted zone
+aws route53 create-hosted-zone \
+  --name example.com \
+  --caller-reference "$(date +%s)"
+```
+
+The command returns a set of NS records. Update your domain registrar to use
+these name servers so that DNS queries for your domain are resolved by Route53.
+
+> **Note:** This is a one-time setup. The same hosted zone can be reused across
+> multiple cluster deployments. Private clusters (`install-dir`) do not require
+> this — the installer creates and manages its own private hosted zone.
 
 ## Directory Structure
 
