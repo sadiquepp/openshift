@@ -2,7 +2,7 @@
 #
 # Set up a connected environment for OpenShift on AWS.
 #
-#   Step 1  terraform apply   – VPC, IGW, NAT GW, Route53 zone, IAM role, bastion EC2
+#   Step 1  terraform apply   – VPC, IGW, NAT GW, IAM role, bastion EC2
 #   Step 2  ansible-playbook  – configure bastion, install tools, create STS resources
 #
 # After this script completes, SSH into the bastion and deploy a cluster
@@ -58,7 +58,7 @@ fi
 # ── Step 1: Terraform (infra + bastion EC2) ──────────────────────────────────
 
 echo "================================================================"
-echo "  Step 1/2 — Terraform: VPC, IGW, NAT GW, Route53, IAM, EC2"
+echo "  Step 1/2 — Terraform: VPC, IGW, NAT GW, IAM, EC2"
 echo "================================================================"
 cd "$TF_DIR"
 terraform init -upgrade

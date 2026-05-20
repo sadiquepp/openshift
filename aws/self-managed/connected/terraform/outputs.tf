@@ -32,18 +32,6 @@ output "iam_role_name" {
   value       = aws_iam_role.ocp_install_ec2.name
 }
 
-# ── Route53 ───────────────────────────────────────────────────────────────────
-
-output "hosted_zone_id" {
-  description = "Route53 private hosted zone ID for the cluster domain"
-  value       = aws_route53_zone.cluster.zone_id
-}
-
-output "cluster_domain" {
-  description = "Fully qualified cluster domain"
-  value       = "${local.openshift_cluster_name}.${var.openshift_base_domain}"
-}
-
 # ── Installer EC2 ────────────────────────────────────────────────────────────
 
 output "installer_instance_id" {

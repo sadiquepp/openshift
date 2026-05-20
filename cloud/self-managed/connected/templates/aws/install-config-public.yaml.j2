@@ -32,7 +32,9 @@ platform:
     - {{ connected_subnet_id_a }}
     - {{ connected_subnet_id_b }}
     - {{ connected_subnet_id_c }}
-publish: Internal
+    - {{ connected_public_subnet_id_a }}
+    - {{ connected_public_subnet_id_b }}
+    - {{ connected_public_subnet_id_c }}
 pullSecret: '{{ pull_secret }}'
 sshKey: |
   {{ ssh_public_key_for_ec2_and_openshit_node }}

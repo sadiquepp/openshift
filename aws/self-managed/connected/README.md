@@ -55,7 +55,6 @@ connected/
 │   ├── variables.tf                 # All input variables
 │   ├── vpc.tf                       # VPC, subnets, IGW, NAT GW, route tables, S3 endpoint
 │   ├── iam.tf                       # IAM role + instance profile for bastion EC2
-│   ├── route53.tf                   # Private hosted zone
 │   ├── ec2.tf                       # SSH key pair, security group, bastion EC2 instance
 │   ├── ansible.tf                   # Generated Ansible inventory + vars
 │   └── outputs.tf                   # All outputs (VPC IDs, IPs, hosted zone, etc.)
@@ -118,7 +117,7 @@ This runs two steps:
 
 | Step | Tool | What it does |
 |------|------|--------------|
-| 1 | Terraform | Creates VPC, subnets, IGW, NAT gateway, S3 endpoint, Route53 zone, IAM role, bastion EC2 |
+| 1 | Terraform | Creates VPC, subnets, IGW, NAT gateway, S3 endpoint, IAM role, bastion EC2 |
 | 2 | Ansible (`setup-bastion-ec2-connected.yaml`) | Installs packages, downloads OCP tools (oc, openshift-install, rosa, ccoctl), creates STS resources, prepares `install-dir` |
 
 When complete, the bastion has:
@@ -208,8 +207,6 @@ After `terraform apply`, these outputs are available:
 | `connected_vpc_id` | Connected VPC ID |
 | `connected_private_subnet_ids` | Private subnet IDs (for OCP cluster) |
 | `connected_public_subnet_ids` | Public subnet IDs |
-| `hosted_zone_id` | Route53 private hosted zone ID |
-| `cluster_domain` | Fully qualified cluster domain |
 | `iam_role_arn` | IAM role ARN for the bastion |
 | `vpc_owner_aws_account_number` | AWS account number |
 
