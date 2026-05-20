@@ -98,6 +98,7 @@
       state: directory
     loop:
       - "{{ home_dir }}/install-dir"
+      - "{{ home_dir }}/install-dir-public"
       - "{{ cco_dir }}"
 
   - name: Cloud-specific CCO/STS creation
@@ -105,35 +106,53 @@
 
   - name: Copy install-config.yaml
     template:
-      src: "{{ cloud_provider }}/install-config.yaml.j2"
-      dest: "{{ home_dir }}/install-config.yaml"
+      src: "{{ cloud_provider }}/{{ item }}.j2"
+      dest: "{{ home_dir }}/{{ item }}"
+    loop:
+      - install-config.yaml
+      - install-config-public.yaml
 
-  - name: Copy Install-config.yaml to install-dir
+  - name: Copy install-config into install directories
     copy:
-      src: "{{ home_dir }}/install-config.yaml"
-      dest: "{{ home_dir }}/install-dir/install-config.yaml"
+      src: "{{ home_dir }}/{{ item.src }}"
+      dest: "{{ home_dir }}/{{ item.dest }}/install-config.yaml"
       remote_src: yes
       mode: 0644
+    loop:
+      - { src: install-config.yaml, dest: install-dir }
+      - { src: install-config-public.yaml, dest: install-dir-public }
 
   - name: Generate Manifests
     shell: |
-      openshift-install create manifests --dir {{ home_dir }}/install-dir
+      openshift-install create manifests --dir {{ home_dir }}/{{ item.dir }}
+    loop:
+      - { dir: install-dir }
+      - { dir: install-dir-public }
     environment: "{{ cloud_env }}"
 
   - name: Copy CCO credentials to install-dir/manifests
     copy:
       src: "{{ cco_dir }}/manifests/"
-      dest: "{{ home_dir }}/install-dir/manifests/"
+      dest: "{{ home_dir }}/{{ item.dir }}/manifests/"
       remote_src: yes
+    loop:
+      - { dir: install-dir }
+      - { dir: install-dir-public }
 
   - name: Copy CCO tls files to install-dir/
     copy:
       src: "{{ cco_dir }}/tls"
-      dest: "{{ home_dir }}/install-dir/"
+      dest: "{{ home_dir }}/{{ item.dir }}/"
       remote_src: yes
+    loop:
+      - { dir: install-dir }
+      - { dir: install-dir-public }
 
   - name: Take a backup of the install-dir
     community.general.archive:
-      path: "{{ home_dir }}/install-dir"
-      dest: "{{ home_dir }}/install-dir-backup.bz2"
+      path: "{{ home_dir }}/{{ item.dir }}"
+      dest: "{{ home_dir }}/{{ item.dir }}-backup.bz2"
       format: bz2
+    loop:
+      - { dir: install-dir }
+      - { dir: install-dir-public }
