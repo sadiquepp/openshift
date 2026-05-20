@@ -3,6 +3,7 @@
     cd {{ cco_dir }}
     ccoctl aws delete --name {{ cco_suffix }} --region {{ aws_region }}
   ignore_errors: true
+  when: not cco_dir_check.stat.exists
 
 - name: Extract the list of CredentialsRequest objects from the release image
   shell: |
@@ -13,7 +14,8 @@
       --cloud=aws \
       --to={{ cco_dir }}/credrequests \
       ${RELEASE_IMAGE}
-
+  when: not cco_dir_check.stat.exists
+  
 - name: Create All STS Files for AWS
   shell: |
     cd {{ cco_dir }}
@@ -22,3 +24,4 @@
       --name {{ cco_suffix }} \
       --region {{ aws_region }} \
       --create-private-s3-bucket
+  when: not cco_dir_check.stat.exists

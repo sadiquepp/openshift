@@ -14,6 +14,11 @@ aws_region = "ap-southeast-1"
 # connected_private_subnet_cidrs = ["172.16.1.0/24", "172.16.2.0/24", "172.16.3.0/24"]
 # connected_public_subnet_cidrs  = ["172.16.4.0/24", "172.16.5.0/24", "172.16.6.0/24"]
 
+# ── Route53 ─────────────────────────────────────────────────────────────────
+# Creates a public hosted zone for openshift_base_domain (needed for public clusters).
+# Set to false if you already have a public zone for this domain.
+# create_public_hosted_zone = true
+
 # ── Bastion EC2 ──────────────────────────────────────────────────────────────
 ssh_private_key_path    = "~/.ssh/id_rsa"
 installer_ami           = "ami-04698733964af06d5"

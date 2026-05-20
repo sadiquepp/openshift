@@ -101,6 +101,11 @@
       dest: "{{ home_dir }}/.docker/config.json"
       remote_src: yes
 
+  - name: Check if cco-dir already exists
+    stat:
+      path: "{{ home_dir }}/cco/manifests"
+    register: cco_dir_check
+    
   - name: Create credentials directory
     file:
       path: "{{ item }}"

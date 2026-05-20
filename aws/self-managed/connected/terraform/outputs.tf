@@ -32,6 +32,23 @@ output "iam_role_name" {
   value       = aws_iam_role.ocp_install_ec2.name
 }
 
+# ── Route53 ───────────────────────────────────────────────────────────────────
+
+output "public_hosted_zone_id" {
+  description = "Public Route53 hosted zone ID (update your registrar NS records to delegate to this zone)"
+  value       = var.create_public_hosted_zone ? aws_route53_zone.public[0].zone_id : null
+}
+
+output "public_hosted_zone_name_servers" {
+  description = "NS records to configure at your domain registrar for the public hosted zone"
+  value       = var.create_public_hosted_zone ? aws_route53_zone.public[0].name_servers : []
+}
+
+output "openshift_base_domain" {
+  description = "Base domain for the OpenShift cluster"
+  value       = var.openshift_base_domain
+}
+
 # ── Installer EC2 ────────────────────────────────────────────────────────────
 
 output "installer_instance_id" {

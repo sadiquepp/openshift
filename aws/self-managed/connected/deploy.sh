@@ -2,7 +2,7 @@
 #
 # Set up a connected environment for OpenShift on AWS.
 #
-#   Step 1  terraform apply   – VPC, IGW, NAT GW, IAM role, bastion EC2
+#   Step 1  terraform apply   – VPC, IGW, NAT GW, Route53, IAM role, bastion EC2
 #   Step 2  ansible-playbook  – configure bastion, install tools, create STS resources
 #
 # After this script completes, SSH into the bastion and deploy a cluster
@@ -58,7 +58,7 @@ fi
 # ── Step 1: Terraform (infra + bastion EC2) ──────────────────────────────────
 
 echo "================================================================"
-echo "  Step 1/2 — Terraform: VPC, IGW, NAT GW, IAM, EC2"
+echo "  Step 1/2 — Terraform: VPC, IGW, NAT GW, Route53, IAM, EC2"
 echo "================================================================"
 cd "$TF_DIR"
 terraform init -upgrade
@@ -100,7 +100,20 @@ echo "  and STS credentials prepared."
 echo ""
 echo "  ── Deploy a cluster ──────────────────────────────────────────"
 echo ""
-echo "  IPI (Installer-Provisioned Infrastructure):"
+echo "  IPI Private Cluster (Installer-Provisioned Infrastructure):"
 echo "    ssh ec2-user@$BASTION_IP"
 echo "    ./openshift-install create cluster --dir ~/install-dir --log-level=debug"
+echo ""
+echo "  IPI Public Cluster (Installer-Provisioned Infrastructure):"
+echo "    Ensure your domain registrar NS records point to the Route53 zone."
+echo "    ssh ec2-user@$BASTION_IP"
+echo "    ./openshift-install create cluster --dir ~/install-dir-public --log-level=debug"
+echo ""
+NS_RECORDS="$(terraform -chdir="$TF_DIR" output -json public_hosted_zone_name_servers 2>/dev/null || echo '[]')"
+if [[ "$NS_RECORDS" != "[]" && "$NS_RECORDS" != "null" ]]; then
+echo "  ── Route53 NS records (add to your domain registrar) ──────"
+echo "  Domain: $(terraform -chdir="$TF_DIR" output -raw openshift_base_domain 2>/dev/null || echo "$BASTION_IP")"
+echo "  Name servers:"
+echo "$NS_RECORDS" | jq -r '.[] | "    " + .'
+fi
 echo "================================================================"
