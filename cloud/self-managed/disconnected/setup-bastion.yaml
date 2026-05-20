@@ -90,12 +90,20 @@
       - squid
     become: yes
 
+  - name: Check if tarballs already exist
+    stat:
+      path: "{{ home_dir }}/{{ item | basename }}"
+    loop: "{{ tarballs }}"
+    register: tarball_stats
+
   - name: Get the Mirror Registry, OC and OPM Tarball
     get_url:
-      url: "{{ item }}"
-      dest: "{{ home_dir }}/{{ item | basename }}"
-    creates: "{{ home_dir }}/{{ item | basename }}"
-    loop: "{{ tarballs }}"
+      url: "{{ item.item }}"
+      dest: "{{ home_dir }}/{{ item.item | basename }}"
+    loop: "{{ tarball_stats.results }}"
+    loop_control:
+      label: "{{ item.item | basename }}"
+    when: not item.stat.exists
 
   - name: Unarchive Downloaded Tarballs
     unarchive:

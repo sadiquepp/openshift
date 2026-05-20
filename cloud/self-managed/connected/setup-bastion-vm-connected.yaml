@@ -54,12 +54,20 @@
     when: ansible_facts.services['firewalld.service'] is defined
           and ansible_facts.services['firewalld.service'].state == 'running'
 
+  - name: Check if tarballs already exist
+    stat:
+      path: "{{ home_dir }}/{{ item | basename }}"
+    loop: "{{ tarballs }}"
+    register: tarball_stats
+
   - name: Get the OC, openshift-install, and ccoctl Tarballs
     get_url:
-      url: "{{ item }}"
-      dest: "{{ home_dir }}/{{ item | basename }}"
-    creates: "{{ home_dir }}/{{ item | basename }}"
-    loop: "{{ tarballs }}"
+      url: "{{ item.item }}"
+      dest: "{{ home_dir }}/{{ item.item | basename }}"
+    loop: "{{ tarball_stats.results }}"
+    loop_control:
+      label: "{{ item.item | basename }}"
+    when: not item.stat.exists
 
   - name: Unarchive Downloaded Tarballs
     unarchive:
