@@ -57,7 +57,9 @@
   - name: Get the OC, openshift-install, and ccoctl Tarballs
     get_url:
       url: "{{ item }}"
-      dest: "{{ home_dir }}/"
+      dest: "{{ home_dir }}/{{ item | basename }}"
+    args:
+      creates: "{{ home_dir }}/{{ item | basename }}"
     loop: "{{ tarballs }}"
 
   - name: Unarchive Downloaded Tarballs

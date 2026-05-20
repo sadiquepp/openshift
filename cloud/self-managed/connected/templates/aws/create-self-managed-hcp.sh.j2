@@ -1,0 +1,234 @@
+#!/bin/bash
+export BUCKET_NAME="self-managed-hcp-oidc-{{ openshift_cluster_name_suffix }}"
+export AWS_REGION="ap-southeast-1"
+
+# Configure aws access key and secret access key till we find out how to use instance roles
+# aws configure
+
+# Create the s3 bucket
+aws s3api create-bucket --bucket $BUCKET_NAME \
+  --create-bucket-configuration LocationConstraint=$AWS_REGION \
+  --region $AWS_REGION
+
+  # Remove public access block from the s3 bucket
+  aws s3api delete-public-access-block --bucket $BUCKET_NAME
+
+# Create the bucket policy with envsubst
+cat <<EOF > bucket-policy.json
+{
+	"Version": "2012-10-17",
+	"Statement": [
+    	{
+        	"Effect": "Allow",
+        	"Principal": "*",
+        	"Action": [
+            	"s3:PutObject",
+            	"s3:GetObject"
+        	],
+        	"Resource": "arn:aws:s3:::${BUCKET_NAME}/*"
+    	}
+	]
+}
+EOF
+
+# Apply the bucket policy
+aws s3api put-bucket-policy --bucket $BUCKET_NAME --policy file://bucket-policy.json
+
+# Create a Secret in the local-cluster namespace so the HyperShift operator will know how to use the bucket that we just created. Don’t forget the second command to apply the labels
+export KUBECONFIG={{ home_dir }}/install-dir/auth/kubeconfig
+oc create secret generic hypershift-operator-oidc-provider-s3-credentials --from-file=credentials=$HOME/.aws/credentials --from-literal=bucket=$BUCKET_NAME --from-literal=region=$AWS_REGION -n local-cluster
+
+# Apply the labels
+oc label secret hypershift-operator-oidc-provider-s3-credentials cluster.open-cluster-management.io/credentials="" cluster.open-cluster-management.io/type=awss3 -n local-cluster
+
+# Export the sts role to a variable
+export AWS_ARN=$(aws sts get-caller-identity --query "Arn" --output text)
+
+# Create a IAM role policy for the HCP operator
+cat <<EOF > hcp-operator-role-policy.json
+{
+	"Version": "2012-10-17",
+	"Statement": [
+    	{
+        	"Effect": "Allow",
+        	"Principal": {
+            	"AWS": "$AWS_ARN" 
+        	},
+        	"Action": "sts:AssumeRole"
+    	}
+	]
+}
+EOF
+
+# Create a IAM role for the HCP operator
+export HCP_OPERATOR_ROLE_ARN=$(aws iam create-role --role-name {{ openshift_cluster_name_suffix }}-hcp-operator-role --assume-role-policy-document file://hcp-operator-role-policy.json --query "Role.Arn" --output text)
+
+# Attach the IAM role policy to the HCP operator role
+aws iam attach-role-policy --role-name {{ openshift_cluster_name_suffix }}-hcp-operator-role --policy-arn arn:aws:iam::aws:policy/AmazonS3FullAccess
+
+# Create a IAM role policy for the HCP operator
+cat <<EOF > hcp-operator-role-policy-attachment.json
+{
+	"Version": "2012-10-17",
+	"Statement": [
+    	{
+        	"Sid": "EC2",
+        	"Effect": "Allow",
+        	"Action": [
+            	"ec2:CreateDhcpOptions",
+            	"ec2:DeleteSubnet",
+            	"ec2:ReplaceRouteTableAssociation",
+            	"ec2:DescribeAddresses",
+            	"ec2:DescribeInstances",
+            	"ec2:DeleteVpcEndpoints",
+            	"ec2:CreateNatGateway",
+            	"ec2:CreateVpc",
+            	"ec2:DescribeDhcpOptions",
+            	"ec2:AttachInternetGateway",
+            	"ec2:DeleteVpcEndpointServiceConfigurations",
+            	"ec2:DeleteRouteTable",
+            	"ec2:AssociateRouteTable",
+            	"ec2:DescribeInternetGateways",
+            	"ec2:DescribeAvailabilityZones",
+            	"ec2:CreateRoute",
+            	"ec2:CreateInternetGateway",
+            	"ec2:RevokeSecurityGroupEgress",
+            	"ec2:ModifyVpcAttribute",
+            	"ec2:DeleteInternetGateway",
+            	"ec2:DescribeVpcEndpointConnections",
+            	"ec2:RejectVpcEndpointConnections",
+            	"ec2:DescribeRouteTables",
+            	"ec2:ReleaseAddress",
+            	"ec2:AssociateDhcpOptions",
+            	"ec2:TerminateInstances",
+            	"ec2:CreateTags",
+            	"ec2:DeleteRoute",
+            	"ec2:CreateRouteTable",
+            	"ec2:DetachInternetGateway",
+            	"ec2:DescribeVpcEndpointServiceConfigurations",
+            	"ec2:DescribeNatGateways",
+            	"ec2:DisassociateRouteTable",
+            	"ec2:AllocateAddress",
+            	"ec2:DescribeSecurityGroups",
+            	"ec2:RevokeSecurityGroupIngress",
+            	"ec2:CreateVpcEndpoint",
+            	"ec2:DescribeVpcs",
+            	"ec2:DeleteSecurityGroup",
+            	"ec2:DeleteDhcpOptions",
+            	"ec2:DeleteNatGateway",
+            	"ec2:DescribeVpcEndpoints",
+            	"ec2:DeleteVpc",
+            	"ec2:CreateSubnet",
+            	"ec2:DescribeSubnets"
+        	],
+        	"Resource": "*"
+    	},
+    	{
+        	"Sid": "ELB",
+        	"Effect": "Allow",
+        	"Action": [
+            	"elasticloadbalancing:DeleteLoadBalancer",
+            	"elasticloadbalancing:DescribeLoadBalancers",
+            	"elasticloadbalancing:DescribeTargetGroups",
+            	"elasticloadbalancing:DeleteTargetGroup"
+        	],
+        	"Resource": "*"
+    	},
+    	{
+        	"Sid": "IAMPassRole",
+        	"Effect": "Allow",
+        	"Action": "iam:PassRole",
+        	"Resource": "arn:*:iam::*:role/*-worker-role",
+        	"Condition": {
+            	"ForAnyValue:StringEqualsIfExists": {
+                	"iam:PassedToService": "ec2.amazonaws.com"
+            	}
+        	}
+    	},
+    	{
+        	"Sid": "IAM",
+        	"Effect": "Allow",
+        	"Action": [
+            	"iam:CreateInstanceProfile",
+            	"iam:DeleteInstanceProfile",
+            	"iam:GetRole",
+            	"iam:UpdateAssumeRolePolicy",
+            	"iam:GetInstanceProfile",
+            	"iam:TagRole",
+            	"iam:RemoveRoleFromInstanceProfile",
+            	"iam:CreateRole",
+            	"iam:DeleteRole",
+            	"iam:PutRolePolicy",
+            	"iam:AddRoleToInstanceProfile",
+            	"iam:CreateOpenIDConnectProvider",
+            	"iam:TagOpenIDConnectProvider",
+            	"iam:ListOpenIDConnectProviders",
+            	"iam:DeleteRolePolicy",
+            	"iam:UpdateRole",
+            	"iam:DeleteOpenIDConnectProvider",
+            	"iam:GetRolePolicy"
+        	],
+        	"Resource": "*"
+    	},
+    	{
+        	"Sid": "Route53",
+        	"Effect": "Allow",
+        	"Action": [
+            	"route53:ListHostedZonesByVPC",
+            	"route53:CreateHostedZone",
+            	"route53:ListHostedZones",
+            	"route53:ChangeResourceRecordSets",
+            	"route53:ListResourceRecordSets",
+            	"route53:DeleteHostedZone",
+            	"route53:AssociateVPCWithHostedZone",
+            	"route53:ListHostedZonesByName"
+        	],
+        	"Resource": "*"
+    	},
+    	{
+        	"Sid": "S3",
+        	"Effect": "Allow",
+        	"Action": [
+            	"s3:ListAllMyBuckets",
+            	"s3:ListBucket",
+            	"s3:DeleteObject",
+            	"s3:DeleteBucket"
+        	],
+        	"Resource": "*"
+    	}
+	]
+}
+EOF
+
+# Attach the IAM role policy to the HCP operator role
+aws iam put-role-policy --role-name {{ openshift_cluster_name_suffix }}-hcp-operator-role --policy-name hcp-operator-role-policy-attachment --policy-document file://hcp-operator-role-policy-attachment.json
+
+# Get the STS credentials
+aws sts get-session-token --output json > sts-creds.json
+
+# Create a new project for the HCP clusters
+oc new-project {{ openshift_cluster_name_suffix }}-hcp1
+
+export CLUSTER_NAME={{ openshift_cluster_name_suffix }}-hcp1
+export INFRA_ID={{ openshift_cluster_name_suffix }}-hcp1
+export NAMESPACE={{ openshift_cluster_name_suffix }}-hcp1
+export BASE_DOMAIN={{ openshift_base_domain }}
+
+# Create a new HCP cluster
+hcp create cluster aws \
+	--role-arn $HCP_OPERATOR_ROLE_ARN \
+	--instance-type m5.large \
+	--region $AWS_REGION \
+	--auto-repair \
+	--generate-ssh \
+	--name $CLUSTER_NAME \
+	--infra-id $INFRA_ID \
+	--namespace $NAMESPACE \
+	--base-domain $BASE_DOMAIN \
+	--node-pool-replicas 1 \
+	--pull-secret {{ home_dir }}/pull-secret \
+	--release-image quay.io/openshift-release-dev/ocp-release:{{ openshift_version }}-x86_64 \
+	--endpoint-access=Public \
+	--infra-availability-policy SingleReplica  \
+	--control-plane-availability-policy SingleReplica \
+	--sts-creds {{ home_dir }}/sts-creds.json
