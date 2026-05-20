@@ -93,7 +93,8 @@
   - name: Get the Mirror Registry, OC and OPM Tarball
     get_url:
       url: "{{ item }}"
-      dest: "{{ home_dir }}/"
+      dest: "{{ home_dir }}/{{ item | basename }}"
+    creates: "{{ home_dir }}/{{ item | basename }}"
     loop: "{{ tarballs }}"
 
   - name: Unarchive Downloaded Tarballs
