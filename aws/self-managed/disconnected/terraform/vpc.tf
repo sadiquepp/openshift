@@ -7,6 +7,19 @@ locals {
   disconnected_vpc_name  = "${var.prefix_for_name}-disconnected"
   egress_vpc_name        = "${var.prefix_for_name}-egress"
   openshift_cluster_name = "${var.prefix_for_name}-${var.openshift_cluster_name_suffix}"
+
+  upi_ip_reservations = {
+    bootstrap = { subnet_index = 0, host_num = var.upi_node_host_numbers.bootstrap }
+    master0   = { subnet_index = 0, host_num = var.upi_node_host_numbers.master0 }
+    master1   = { subnet_index = 1, host_num = var.upi_node_host_numbers.master1 }
+    master2   = { subnet_index = 2, host_num = var.upi_node_host_numbers.master2 }
+    worker1   = { subnet_index = 0, host_num = var.upi_node_host_numbers.worker1 }
+    worker2   = { subnet_index = 1, host_num = var.upi_node_host_numbers.worker2 }
+    worker3   = { subnet_index = 2, host_num = var.upi_node_host_numbers.worker3 }
+    infra1    = { subnet_index = 0, host_num = var.upi_node_host_numbers.infra1 }
+    infra2    = { subnet_index = 1, host_num = var.upi_node_host_numbers.infra2 }
+    infra3    = { subnet_index = 2, host_num = var.upi_node_host_numbers.infra3 }
+  }
 }
 
 # ── Disconnected VPC ──────────────────────────────────────────────────────────
@@ -43,6 +56,17 @@ resource "aws_vpc" "egress" {
   tags = {
     Name = local.egress_vpc_name
   }
+}
+
+# ── UPI IP Reservations ──────────────────────────────────────────────────────
+
+resource "aws_ec2_subnet_cidr_reservation" "upi" {
+  for_each = local.upi_ip_reservations
+
+  subnet_id        = aws_subnet.disconnected[each.value.subnet_index].id
+  cidr_block       = "${cidrhost(var.disconnected_subnet_cidrs[each.value.subnet_index], each.value.host_num)}/32"
+  reservation_type = "explicit"
+  description      = "UPI ${each.key}"
 }
 
 resource "aws_subnet" "egress_public" {

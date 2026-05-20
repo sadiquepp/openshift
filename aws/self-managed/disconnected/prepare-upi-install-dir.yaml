@@ -189,18 +189,17 @@
         # Set to the VPC CIDR if the LB is within the disconnected VPC.
         loadbalancer_cidr = "{{ disconnected_vpc_cidr }}"
 
-        # Pre-reserved private IPs — reserve these in AWS VPC → Subnets →
-        # Actions → Edit IPv4 CIDR Reservation before running terraform apply.
-        bootstrap_private_ip = "{{ disconnected_subnet_id_a_cidr | regex_replace('\.[0-9]+/.*$', '.X') }}"
-        master0_private_ip   = "{{ disconnected_subnet_id_a_cidr | regex_replace('\.[0-9]+/.*$', '.X') }}"
-        master1_private_ip   = "{{ disconnected_subnet_id_b_cidr | regex_replace('\.[0-9]+/.*$', '.X') }}"
-        master2_private_ip   = "{{ disconnected_subnet_id_c_cidr | regex_replace('\.[0-9]+/.*$', '.X') }}"
-        worker1_private_ip   = "{{ disconnected_subnet_id_a_cidr | regex_replace('\.[0-9]+/.*$', '.X') }}"
-        worker2_private_ip   = "{{ disconnected_subnet_id_b_cidr | regex_replace('\.[0-9]+/.*$', '.X') }}"
-        worker3_private_ip   = "{{ disconnected_subnet_id_c_cidr | regex_replace('\.[0-9]+/.*$', '.X') }}"
-        infra1_private_ip    = "{{ disconnected_subnet_id_a_cidr | regex_replace('\.[0-9]+/.*$', '.X') }}"
-        infra2_private_ip    = "{{ disconnected_subnet_id_b_cidr | regex_replace('\.[0-9]+/.*$', '.X') }}"
-        infra3_private_ip    = "{{ disconnected_subnet_id_c_cidr | regex_replace('\.[0-9]+/.*$', '.X') }}"
+        # Pre-reserved private IPs (reserved via aws_ec2_subnet_cidr_reservation in Terraform)
+        bootstrap_private_ip = "{{ upi_bootstrap_ip }}"
+        master0_private_ip   = "{{ upi_master0_ip }}"
+        master1_private_ip   = "{{ upi_master1_ip }}"
+        master2_private_ip   = "{{ upi_master2_ip }}"
+        worker1_private_ip   = "{{ upi_worker1_ip }}"
+        worker2_private_ip   = "{{ upi_worker2_ip }}"
+        worker3_private_ip   = "{{ upi_worker3_ip }}"
+        infra1_private_ip    = "{{ upi_infra1_ip }}"
+        infra2_private_ip    = "{{ upi_infra2_ip }}"
+        infra3_private_ip    = "{{ upi_infra3_ip }}"
 
         # Set to false if you don't need dedicated infra nodes
         create_infra_nodes = false

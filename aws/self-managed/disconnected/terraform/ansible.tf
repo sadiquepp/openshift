@@ -42,5 +42,15 @@ resource "local_file" "ansible_vars" {
     disconnected_subnet_id_b_cidr   = aws_subnet.disconnected[1].cidr_block
     disconnected_subnet_id_c_cidr   = aws_subnet.disconnected[2].cidr_block
     egress_vpc_id                   = aws_vpc.egress.id
+    upi_bootstrap_ip = cidrhost(var.disconnected_subnet_cidrs[0], var.upi_node_host_numbers.bootstrap)
+    upi_master0_ip   = cidrhost(var.disconnected_subnet_cidrs[0], var.upi_node_host_numbers.master0)
+    upi_master1_ip   = cidrhost(var.disconnected_subnet_cidrs[1], var.upi_node_host_numbers.master1)
+    upi_master2_ip   = cidrhost(var.disconnected_subnet_cidrs[2], var.upi_node_host_numbers.master2)
+    upi_worker1_ip   = cidrhost(var.disconnected_subnet_cidrs[0], var.upi_node_host_numbers.worker1)
+    upi_worker2_ip   = cidrhost(var.disconnected_subnet_cidrs[1], var.upi_node_host_numbers.worker2)
+    upi_worker3_ip   = cidrhost(var.disconnected_subnet_cidrs[2], var.upi_node_host_numbers.worker3)
+    upi_infra1_ip    = cidrhost(var.disconnected_subnet_cidrs[0], var.upi_node_host_numbers.infra1)
+    upi_infra2_ip    = cidrhost(var.disconnected_subnet_cidrs[1], var.upi_node_host_numbers.infra2)
+    upi_infra3_ip    = cidrhost(var.disconnected_subnet_cidrs[2], var.upi_node_host_numbers.infra3)
   })
 }

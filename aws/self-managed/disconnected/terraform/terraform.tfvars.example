@@ -34,6 +34,23 @@ cross_region_endpoint_services = ["tagging"]
 cross_region_vpc_cidr          = "10.99.0.0/24"
 cross_region_subnet_cidr       = "10.99.0.0/26"
 
+# ── UPI Node IPs (host number within each subnet) ───────────────
+# bootstrap, master0, worker1, infra1 → subnet A (AZ1)
+# master1, worker2, infra2             → subnet B (AZ2)
+# master2, worker3, infra3             → subnet C (AZ3)
+# upi_node_host_numbers = {
+#   bootstrap = 99
+#   master0   = 100
+#   master1   = 100
+#   master2   = 100
+#   worker1   = 110
+#   worker2   = 110
+#   worker3   = 110
+#   infra1    = 120
+#   infra2    = 120
+#   infra3    = 120
+# }
+
 # ── Bastion EC2 ──────────────────────────────────────────────────
 ssh_private_key_path    = "~/.ssh/id_rsa"
 installer_ami           = "ami-04698733964af06d5"

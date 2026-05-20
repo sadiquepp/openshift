@@ -93,6 +93,40 @@ variable "cross_region_subnet_cidr" {
   default     = "10.99.0.0/26"
 }
 
+# ── UPI Node IPs ─────────────────────────────────────────────────────────────
+# Host number (last octet for /24 subnets) for each UPI node.
+# bootstrap, master0, worker1, infra1 → subnet A (AZ1)
+# master1, worker2, infra2             → subnet B (AZ2)
+# master2, worker3, infra3             → subnet C (AZ3)
+
+variable "upi_node_host_numbers" {
+  description = "Host number within its subnet for each UPI node IP reservation"
+  type = object({
+    bootstrap = number
+    master0   = number
+    master1   = number
+    master2   = number
+    worker1   = number
+    worker2   = number
+    worker3   = number
+    infra1    = number
+    infra2    = number
+    infra3    = number
+  })
+  default = {
+    bootstrap = 99
+    master0   = 100
+    master1   = 100
+    master2   = 100
+    worker1   = 110
+    worker2   = 110
+    worker3   = 110
+    infra1    = 120
+    infra2    = 120
+    infra3    = 120
+  }
+}
+
 # ── OpenShift Cluster ─────────────────────────────────────────────────────────
 
 variable "openshift_base_domain" {
