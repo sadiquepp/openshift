@@ -64,6 +64,11 @@ variable "subnet_id_az3" {
 variable "rhcos_ami_id" {
   description = "RHCOS AMI ID for the target OCP version and region. See Red Hat docs for the correct AMI per version/region."
   type        = string
+
+  validation {
+    condition     = can(regex("^ami-[0-9a-f]{8,17}$", var.rhcos_ami_id))
+    error_message = "rhcos_ami_id must be a valid AMI ID (e.g. ami-0123456789abcdef0). Update it in terraform.tfvars with the RHCOS AMI for your OCP version and region."
+  }
 }
 
 # ── Instance types ─────────────────────────────────────────────────────────────
