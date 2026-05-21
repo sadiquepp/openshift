@@ -1,9 +1,16 @@
 #!/bin/bash
-export BUCKET_NAME="self-managed-hcp-oidc-{{ openshift_cluster_name_suffix }}"
-export AWS_REGION="ap-southeast-1"
-
-# Configure aws access key and secret access key till we find out how to use instance roles
+# Configure aws access key and secret access key till we find out how to use instance roles before running this script
 # aws configure
+export BUCKET_NAME="self-managed-hcp-oidc-{{ openshift_cluster_name_suffix }}"
+export AWS_REGION="{{ aws_region }}"
+export CLUSTER_NAME={{ openshift_cluster_name_suffix }}-hcp1
+export INFRA_ID={{ openshift_cluster_name_suffix }}-hcp1
+export NAMESPACE={{ openshift_cluster_name_suffix }}-hcp1
+export BASE_DOMAIN={{ openshift_base_domain }}
+export KUBECONFIG={{ home_dir }}/install-dir-public/auth/kubeconfig
+# Export the sts role to a variable
+export AWS_ARN=$(aws sts get-caller-identity --query "Arn" --output text)
+export HCP_OPERATOR_ROLE_ARN=arn:aws:iam::{{ aws_account_number }}:role/{{ openshift_cluster_name_suffix }}-hcp-operator-role
 
 # Create the s3 bucket
 aws s3api create-bucket --bucket $BUCKET_NAME \
@@ -35,14 +42,10 @@ EOF
 aws s3api put-bucket-policy --bucket $BUCKET_NAME --policy file://bucket-policy.json
 
 # Create a Secret in the local-cluster namespace so the HyperShift operator will know how to use the bucket that we just created. Don’t forget the second command to apply the labels
-export KUBECONFIG={{ home_dir }}/install-dir/auth/kubeconfig
 oc create secret generic hypershift-operator-oidc-provider-s3-credentials --from-file=credentials=$HOME/.aws/credentials --from-literal=bucket=$BUCKET_NAME --from-literal=region=$AWS_REGION -n local-cluster
 
 # Apply the labels
 oc label secret hypershift-operator-oidc-provider-s3-credentials cluster.open-cluster-management.io/credentials="" cluster.open-cluster-management.io/type=awss3 -n local-cluster
-
-# Export the sts role to a variable
-export AWS_ARN=$(aws sts get-caller-identity --query "Arn" --output text)
 
 # Create a IAM role policy for the HCP operator
 cat <<EOF > hcp-operator-role-policy.json
@@ -211,15 +214,10 @@ aws sts get-session-token --output json > sts-creds.json
 # Create a new project for the HCP clusters
 oc new-project {{ openshift_cluster_name_suffix }}-hcp1
 
-export CLUSTER_NAME={{ openshift_cluster_name_suffix }}-hcp1
-export INFRA_ID={{ openshift_cluster_name_suffix }}-hcp1
-export NAMESPACE={{ openshift_cluster_name_suffix }}-hcp1
-export BASE_DOMAIN={{ openshift_base_domain }}
-
 # Create a new HCP cluster with SingleReplica availability policy
 #hcp create cluster aws \
 #	--role-arn $HCP_OPERATOR_ROLE_ARN \
-	--instance-type m5.large \
+#	--instance-type m5.large \
 #	--region $AWS_REGION \
 #	--auto-repair \
 #	--generate-ssh \
@@ -237,7 +235,6 @@ export BASE_DOMAIN={{ openshift_base_domain }}
 
 # Create a new HCP cluster with MultiReplica availability policy
 hcp create cluster aws \
-	--role-arn $HCP_OPERATOR_ROLE_ARN \
 	--instance-type m5.large \
 	--region $AWS_REGION \
 	--auto-repair \
@@ -246,13 +243,14 @@ hcp create cluster aws \
 	--infra-id $INFRA_ID \
 	--namespace $NAMESPACE \
 	--base-domain $BASE_DOMAIN \
-	--node-pool-replicas 3 \
+	--node-pool-replicas 1 \
 	--pull-secret {{ home_dir }}/pull-secret.txt \
 	--release-image quay.io/openshift-release-dev/ocp-release:{{ openshift_version }}-x86_64 \
 	--endpoint-access=Public \
 	--infra-availability-policy HighlyAvailable  \
 	--control-plane-availability-policy HighlyAvailable \
 	--zones "${AWS_REGION}a","${AWS_REGION}b","${AWS_REGION}c" \
+	--role-arn $HCP_OPERATOR_ROLE_ARN \
 	--sts-creds {{ home_dir }}/sts-creds.json
 
 # Delete the HCP Cluster

@@ -26,3 +26,7 @@ cli_binaries:
   - rosa
 
 aws_region: ap-southeast-1
+
+ssh_private_key_content: REPLACE_ME_WITH_SSH_PRIVATE_KEY
+hcp_private_zone_id: REPLACE_ME_WITH_HCP_PRIVATE_ZONE_ID
+hcp_public_zone_id: REPLACE_ME_WITH_HCP_PUBLIC_ZONE_ID
