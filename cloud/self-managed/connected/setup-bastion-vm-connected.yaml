@@ -122,6 +122,7 @@
 
   - name: Cloud-specific CCO/STS creation
     include_tasks: "tasks/cco/{{ cloud_provider }}.yaml"
+    when: not cco_dir_check.stat.exists
 
   - name: Copy install-config.yaml
     template:
