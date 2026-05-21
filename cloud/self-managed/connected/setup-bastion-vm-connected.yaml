@@ -105,6 +105,11 @@
     stat:
       path: "{{ home_dir }}/cco/manifests"
     register: cco_dir_check
+
+  - name: Check if install-dir already exists
+    stat:
+      path: "{{ home_dir }}/install-dir/manifests"
+    register: install_dir_check
     
   - name: Create credentials directory
     file:
@@ -125,6 +130,7 @@
     loop:
       - install-config.yaml
       - install-config-public.yaml
+      - create-self-managed-hcp.sh
 
   - name: Copy install-config into install directories
     copy:
@@ -135,6 +141,7 @@
     loop:
       - { src: install-config.yaml, dest: install-dir }
       - { src: install-config-public.yaml, dest: install-dir-public }
+    when: not install_dir_check.stat.exists
 
   - name: Generate Manifests
     shell: |
@@ -143,6 +150,7 @@
       - { dir: install-dir }
       - { dir: install-dir-public }
     environment: "{{ cloud_env }}"
+    when: not install_dir_check.stat.exists
 
   - name: Copy CCO credentials to install-dir/manifests
     copy:
@@ -152,6 +160,7 @@
     loop:
       - { dir: install-dir }
       - { dir: install-dir-public }
+    when: not install_dir_check.stat.exists
 
   - name: Copy CCO tls files to install-dir/
     copy:
@@ -161,6 +170,7 @@
     loop:
       - { dir: install-dir }
       - { dir: install-dir-public }
+    when: not install_dir_check.stat.exists
 
   - name: Take a backup of the install-dir
     community.general.archive:
