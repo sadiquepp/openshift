@@ -166,7 +166,9 @@ cat <<EOF > hcp-operator-role-policy-attachment.json
             	"iam:DeleteRolePolicy",
             	"iam:UpdateRole",
             	"iam:DeleteOpenIDConnectProvider",
-            	"iam:GetRolePolicy"
+            	"iam:GetRolePolicy",
+				"iam:ListAttachedRolePolicies",
+				"iam:ListRolePolicies"
         	],
         	"Resource": "*"
     	},
@@ -214,7 +216,26 @@ export INFRA_ID={{ openshift_cluster_name_suffix }}-hcp1
 export NAMESPACE={{ openshift_cluster_name_suffix }}-hcp1
 export BASE_DOMAIN={{ openshift_base_domain }}
 
-# Create a new HCP cluster
+# Create a new HCP cluster with SingleReplica availability policy
+#hcp create cluster aws \
+#	--role-arn $HCP_OPERATOR_ROLE_ARN \
+	--instance-type m5.large \
+#	--region $AWS_REGION \
+#	--auto-repair \
+#	--generate-ssh \
+#	--name $CLUSTER_NAME \
+#	--infra-id $INFRA_ID \
+#	--namespace $NAMESPACE \
+#	--base-domain $BASE_DOMAIN \
+#	--node-pool-replicas 1 \
+#	--pull-secret {{ home_dir }}/pull-secret.txt \
+#	--release-image quay.io/openshift-release-dev/ocp-release:{{ openshift_version }}-x86_64 \
+#	--endpoint-access=Public \
+#	--infra-availability-policy SingleReplica  \
+#	--control-plane-availability-policy SingleReplica \
+#	--sts-creds {{ home_dir }}/sts-creds.json
+
+# Create a new HCP cluster with MultiReplica availability policy
 hcp create cluster aws \
 	--role-arn $HCP_OPERATOR_ROLE_ARN \
 	--instance-type m5.large \
@@ -225,10 +246,20 @@ hcp create cluster aws \
 	--infra-id $INFRA_ID \
 	--namespace $NAMESPACE \
 	--base-domain $BASE_DOMAIN \
-	--node-pool-replicas 1 \
-	--pull-secret {{ home_dir }}/pull-secret \
+	--node-pool-replicas 3 \
+	--pull-secret {{ home_dir }}/pull-secret.txt \
 	--release-image quay.io/openshift-release-dev/ocp-release:{{ openshift_version }}-x86_64 \
 	--endpoint-access=Public \
-	--infra-availability-policy SingleReplica  \
-	--control-plane-availability-policy SingleReplica \
+	--infra-availability-policy HighlyAvailable  \
+	--control-plane-availability-policy HighlyAvailable \
+	--zones "${AWS_REGION}a","${AWS_REGION}b","${AWS_REGION}c" \
 	--sts-creds {{ home_dir }}/sts-creds.json
+
+# Delete the HCP Cluster
+#hcp destroy cluster aws \
+#  --name $CLUSTER_NAME \
+#  --sts-creds {{ home_dir }}/sts-creds.json \
+#  --role-arn $HCP_OPERATOR_ROLE_ARN \
+#  --base-domain $BASE_DOMAIN \
+#  --infra-id $INFRA_ID \
+#  --namespace $NAMESPACE
