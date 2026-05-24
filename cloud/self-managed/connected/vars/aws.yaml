@@ -29,3 +29,5 @@ aws_region: ap-southeast-1
 
 hcp_cluster_suffixes:
   - hcp1
+
+hcp_issuer_urls: {}

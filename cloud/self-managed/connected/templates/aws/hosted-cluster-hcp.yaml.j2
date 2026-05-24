@@ -36,6 +36,17 @@ metadata:
   namespace: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}
 type: Opaque
 ---
+apiVersion: v1
+data:
+  key: {{ hcp_sa_signing_keys[hcp_suffix] | b64encode }}
+kind: Secret
+metadata:
+  labels:
+    hypershift.openshift.io/safe-to-delete-with-cluster: "true"
+  name: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-sa-signing-key
+  namespace: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}
+type: Opaque
+---
 apiVersion: hypershift.openshift.io/v1beta1
 kind: HostedCluster
 metadata:
@@ -61,7 +72,7 @@ spec:
   fips: false
   infraID: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}
   infrastructureAvailabilityPolicy: HighlyAvailable
-  issuerURL: https://self-managed-hcp-oidc-{{ openshift_cluster_name_suffix }}.s3.{{ aws_region }}.amazonaws.com/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}
+  issuerURL: {{ hcp_issuer_urls[hcp_suffix] }}
   networking:
     clusterNetwork:
     - cidr: 10.132.0.0/14
@@ -114,6 +125,8 @@ spec:
   - service: OAuthServer
     servicePublishingStrategy:
       type: Route
+  serviceAccountSigningKey:
+    name: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-sa-signing-key
   sshKey:
     name: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-ssh-key
 status:

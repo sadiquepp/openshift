@@ -7,8 +7,8 @@
 # full set of OIDC provider + 7 roles per cluster. An empty list (default)
 # creates nothing.
 #
-# OIDC issuer URL pattern (from hosted-cluster-hcp.yaml.j2 line 65):
-#   https://self-managed-hcp-oidc-<prefix>.s3.<region>.amazonaws.com/<prefix>-<suffix>
+# OIDC issuer URL pattern (served via CloudFront):
+#   https://<cloudfront-domain>/<prefix>-<suffix>
 
 variable "hcp_cluster_suffixes" {
   description = "List of HCP cluster suffixes to create operator roles for (e.g. [\"hcp1\", \"hcp2\"]). Empty list disables role creation."
@@ -75,34 +75,19 @@ locals {
     }
   }
 
-  # Per-cluster metadata: OIDC issuer host, cluster name
+  # Per-cluster metadata: cluster name (issuer URLs computed after CloudFront is created)
   hcp_clusters = {
     for suffix in var.hcp_cluster_suffixes : suffix => {
       cluster_name = "${var.openshift_cluster_name_suffix}-${suffix}"
-      issuer_host  = "self-managed-hcp-oidc-${var.openshift_cluster_name_suffix}.s3.${var.aws_region}.amazonaws.com/${var.openshift_cluster_name_suffix}-${suffix}"
-      issuer_url   = "https://self-managed-hcp-oidc-${var.openshift_cluster_name_suffix}.s3.${var.aws_region}.amazonaws.com/${var.openshift_cluster_name_suffix}-${suffix}"
     }
   }
 
-  # Flatten: one entry per (cluster-suffix, role) combination
-  hcp_role_instances = merge([
-    for suffix, cluster in local.hcp_clusters : {
-      for role_key, role_def in local.hcp_operator_role_defs :
-      "${suffix}/${role_key}" => {
-        suffix           = suffix
-        cluster_name     = cluster.cluster_name
-        issuer_host      = cluster.issuer_host
-        role_name        = "${cluster.cluster_name}-${role_def.role_suffix}"
-        policy_arn       = role_def.policy_arn
-        service_accounts = role_def.service_accounts
-      }
-    }
-  ]...)
 }
 
-# ── OIDC S3 Bucket (shared by all clusters) ──────────────────────────────────
+# ── OIDC S3 Bucket (private, served via CloudFront) ──────────────────────────
 # One bucket hosts OIDC discovery docs for all HCP clusters under separate
 # path prefixes (e.g. /<prefix>-hcp1, /<prefix>-hcp2).
+# The bucket is completely private; public access is via CloudFront + OAC.
 
 resource "aws_s3_bucket" "hcp_oidc" {
   count  = local.hcp_enabled ? 1 : 0
@@ -118,12 +103,69 @@ resource "aws_s3_bucket_public_access_block" "hcp_oidc" {
   count  = local.hcp_enabled ? 1 : 0
   bucket = aws_s3_bucket.hcp_oidc[0].id
 
-  block_public_acls       = false
-  block_public_policy     = false
-  ignore_public_acls      = false
-  restrict_public_buckets = false
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
 }
 
+# ── CloudFront OAC + Distribution ────────────────────────────────────────────
+
+resource "aws_cloudfront_origin_access_control" "hcp_oidc" {
+  count = local.hcp_enabled ? 1 : 0
+
+  name                              = "${local.hcp_bucket_name}-oac"
+  origin_access_control_origin_type = "s3"
+  signing_behavior                  = "always"
+  signing_protocol                  = "sigv4"
+}
+
+resource "aws_cloudfront_distribution" "hcp_oidc" {
+  count   = local.hcp_enabled ? 1 : 0
+  enabled = true
+  comment = "OIDC endpoint for self-managed HCP clusters"
+
+  origin {
+    domain_name              = aws_s3_bucket.hcp_oidc[0].bucket_regional_domain_name
+    origin_id                = "s3-${local.hcp_bucket_name}"
+    origin_access_control_id = aws_cloudfront_origin_access_control.hcp_oidc[0].id
+  }
+
+  default_cache_behavior {
+    target_origin_id       = "s3-${local.hcp_bucket_name}"
+    viewer_protocol_policy = "https-only"
+    allowed_methods        = ["GET", "HEAD"]
+    cached_methods         = ["GET", "HEAD"]
+
+    forwarded_values {
+      query_string = false
+      cookies {
+        forward = "none"
+      }
+    }
+
+    min_ttl     = 0
+    default_ttl = 86400
+    max_ttl     = 31536000
+  }
+
+  restrictions {
+    geo_restriction {
+      restriction_type = "none"
+    }
+  }
+
+  viewer_certificate {
+    cloudfront_default_certificate = true
+  }
+
+  tags = {
+    Name            = "${local.hcp_bucket_name}-cf"
+    red-hat-managed = "true"
+  }
+}
+
+# Bucket policy: only allow CloudFront OAC to read objects
 resource "aws_s3_bucket_policy" "hcp_oidc" {
   count  = local.hcp_enabled ? 1 : 0
   bucket = aws_s3_bucket.hcp_oidc[0].id
@@ -133,10 +175,97 @@ resource "aws_s3_bucket_policy" "hcp_oidc" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
+      Sid       = "AllowCloudFrontOAC"
       Effect    = "Allow"
-      Principal = "*"
-      Action    = ["s3:PutObject", "s3:GetObject"]
+      Principal = { Service = "cloudfront.amazonaws.com" }
+      Action    = "s3:GetObject"
       Resource  = "${aws_s3_bucket.hcp_oidc[0].arn}/*"
+      Condition = {
+        StringEquals = {
+          "AWS:SourceArn" = aws_cloudfront_distribution.hcp_oidc[0].arn
+        }
+      }
+    }]
+  })
+}
+
+# ── CloudFront-derived locals ─────────────────────────────────────────────────
+
+locals {
+  hcp_cf_domain = local.hcp_enabled ? aws_cloudfront_distribution.hcp_oidc[0].domain_name : ""
+
+  hcp_cluster_issuer = {
+    for suffix, cluster in local.hcp_clusters : suffix => {
+      cluster_name = cluster.cluster_name
+      issuer_host  = "${local.hcp_cf_domain}/${cluster.cluster_name}"
+      issuer_url   = "https://${local.hcp_cf_domain}/${cluster.cluster_name}"
+    }
+  }
+
+  hcp_role_instances = merge([
+    for suffix, cluster in local.hcp_cluster_issuer : {
+      for role_key, role_def in local.hcp_operator_role_defs :
+      "${suffix}/${role_key}" => {
+        suffix           = suffix
+        cluster_name     = cluster.cluster_name
+        issuer_host      = cluster.issuer_host
+        role_name        = "${cluster.cluster_name}-${role_def.role_suffix}"
+        policy_arn       = role_def.policy_arn
+        service_accounts = role_def.service_accounts
+      }
+    }
+  ]...)
+}
+
+# ── Service Account Signing Key (one RSA key pair per cluster) ────────────────
+
+resource "tls_private_key" "hcp_sa" {
+  for_each  = local.hcp_clusters
+  algorithm = "RSA"
+  rsa_bits  = 4096
+}
+
+data "external" "hcp_jwk" {
+  for_each = local.hcp_clusters
+  program  = ["python3", "${path.module}/scripts/pem-to-jwk.py"]
+  query = {
+    public_key_pem = tls_private_key.hcp_sa[each.key].public_key_pem
+  }
+}
+
+# ── OIDC Discovery Documents (per cluster, uploaded to shared S3 bucket) ─────
+
+resource "aws_s3_object" "hcp_oidc_discovery" {
+  for_each = local.hcp_cluster_issuer
+
+  bucket       = aws_s3_bucket.hcp_oidc[0].id
+  key          = "${each.value.cluster_name}/.well-known/openid-configuration"
+  content_type = "application/json"
+
+  content = jsonencode({
+    issuer                                = each.value.issuer_url
+    jwks_uri                              = "${each.value.issuer_url}/openid/v1/jwks"
+    response_types_supported              = ["id_token"]
+    subject_types_supported               = ["public"]
+    id_token_signing_alg_values_supported = ["RS256"]
+  })
+}
+
+resource "aws_s3_object" "hcp_oidc_jwks" {
+  for_each = local.hcp_cluster_issuer
+
+  bucket       = aws_s3_bucket.hcp_oidc[0].id
+  key          = "${each.value.cluster_name}/openid/v1/jwks"
+  content_type = "application/json"
+
+  content = jsonencode({
+    keys = [{
+      use = "sig"
+      kty = "RSA"
+      kid = data.external.hcp_jwk[each.key].result.kid
+      alg = "RS256"
+      n   = data.external.hcp_jwk[each.key].result.n
+      e   = data.external.hcp_jwk[each.key].result.e
     }]
   })
 }
@@ -144,19 +273,19 @@ resource "aws_s3_bucket_policy" "hcp_oidc" {
 # ── OIDC Providers (one per cluster) ─────────────────────────────────────────
 
 data "tls_certificate" "hcp_oidc" {
-  for_each   = local.hcp_clusters
+  for_each   = local.hcp_cluster_issuer
   url        = each.value.issuer_url
-  depends_on = [aws_s3_bucket_policy.hcp_oidc]
+  depends_on = [aws_s3_object.hcp_oidc_discovery, aws_s3_object.hcp_oidc_jwks]
 }
 
 resource "aws_iam_openid_connect_provider" "hcp" {
-  for_each = local.hcp_clusters
+  for_each = local.hcp_cluster_issuer
 
   url             = each.value.issuer_url
   client_id_list  = ["openshift", "sts.amazonaws.com"]
   thumbprint_list = [data.tls_certificate.hcp_oidc[each.key].certificates[0].sha1_fingerprint]
 
-  depends_on = [aws_s3_bucket_policy.hcp_oidc]
+  depends_on = [aws_s3_object.hcp_oidc_discovery, aws_s3_object.hcp_oidc_jwks]
 
   tags = {
     Name            = each.value.cluster_name
@@ -321,6 +450,11 @@ resource "aws_route53_zone" "hcp_hypershift_local" {
 output "hcp_oidc_bucket_name" {
   description = "Name of the OIDC S3 bucket shared by all HCP clusters"
   value       = local.hcp_enabled ? aws_s3_bucket.hcp_oidc[0].id : null
+}
+
+output "hcp_cloudfront_domain" {
+  description = "CloudFront distribution domain serving the OIDC S3 bucket"
+  value       = local.hcp_enabled ? aws_cloudfront_distribution.hcp_oidc[0].domain_name : null
 }
 
 output "hcp_public_zone_id" {

@@ -52,6 +52,12 @@ resource "local_file" "ansible_vars" {
       hcp_private_zone_ids = {
         for suffix in var.hcp_cluster_suffixes : suffix => aws_route53_zone.hcp_private[suffix].zone_id
       }
+      hcp_sa_signing_keys = {
+        for suffix in var.hcp_cluster_suffixes : suffix => tls_private_key.hcp_sa[suffix].private_key_pem
+      }
+      hcp_issuer_urls = {
+        for suffix, cluster in local.hcp_cluster_issuer : suffix => cluster.issuer_url
+      }
     } : {}
   ))
 }
