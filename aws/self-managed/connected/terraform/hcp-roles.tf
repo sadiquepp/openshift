@@ -242,13 +242,21 @@ resource "aws_s3_object" "hcp_oidc_discovery" {
   key          = "${each.value.cluster_name}/.well-known/openid-configuration"
   content_type = "application/json"
 
-  content = jsonencode({
-    issuer                                = each.value.issuer_url
-    jwks_uri                              = "${each.value.issuer_url}/openid/v1/jwks"
-    response_types_supported              = ["id_token"]
-    subject_types_supported               = ["public"]
-    id_token_signing_alg_values_supported = ["RS256"]
-  })
+  content = <<-JSON
+{
+  "issuer": "${each.value.issuer_url}",
+  "jwks_uri": "${each.value.issuer_url}/openid/v1/jwks",
+  "response_types_supported": [
+    "id_token"
+  ],
+  "subject_types_supported": [
+    "public"
+  ],
+  "id_token_signing_alg_values_supported": [
+    "RS256"
+  ]
+}
+JSON
 }
 
 resource "aws_s3_object" "hcp_oidc_jwks" {
@@ -258,16 +266,20 @@ resource "aws_s3_object" "hcp_oidc_jwks" {
   key          = "${each.value.cluster_name}/openid/v1/jwks"
   content_type = "application/json"
 
-  content = jsonencode({
-    keys = [{
-      use = "sig"
-      kty = "RSA"
-      kid = data.external.hcp_jwk[each.key].result.kid
-      alg = "RS256"
-      n   = data.external.hcp_jwk[each.key].result.n
-      e   = data.external.hcp_jwk[each.key].result.e
-    }]
-  })
+  content = <<-JSON
+{
+  "keys": [
+    {
+      "use": "sig",
+      "kty": "RSA",
+      "kid": "${data.external.hcp_jwk[each.key].result.kid}",
+      "alg": "RS256",
+      "n": "${data.external.hcp_jwk[each.key].result.n}",
+      "e": "${data.external.hcp_jwk[each.key].result.e}"
+    }
+  ]
+}
+JSON
 }
 
 # ── OIDC Providers (one per cluster) ─────────────────────────────────────────
