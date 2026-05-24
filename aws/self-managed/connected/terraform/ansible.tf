@@ -58,6 +58,11 @@ resource "local_file" "ansible_vars" {
       hcp_issuer_urls = {
         for suffix, cluster in local.hcp_cluster_issuer : suffix => cluster.issuer_url
       }
-    } : {}
+    } : {
+      hcp_public_zone_id   = ""
+      hcp_private_zone_ids = {}
+      hcp_sa_signing_keys  = {}
+      hcp_issuer_urls      = {}
+    }
   ))
 }
