@@ -10,7 +10,7 @@ pem = inp["public_key_pem"]
 
 result = subprocess.run(
     ["openssl", "rsa", "-pubin", "-text", "-noout"],
-    input=pem.encode(), capture_output=True, text=True,
+    input=pem, capture_output=True, text=True,
 )
 
 lines = result.stdout.split("\n")
