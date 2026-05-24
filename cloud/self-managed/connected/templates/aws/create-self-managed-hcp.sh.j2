@@ -12,34 +12,39 @@ export KUBECONFIG={{ home_dir }}/install-dir-public/auth/kubeconfig
 export AWS_ARN=$(aws sts get-caller-identity --query "Arn" --output text)
 export HCP_OPERATOR_ROLE_ARN=arn:aws:iam::{{ aws_account_number }}:role/{{ openshift_cluster_name_suffix }}-hcp-operator-role
 
-# Create the s3 bucket
-aws s3api create-bucket --bucket $BUCKET_NAME \
-  --create-bucket-configuration LocationConstraint=$AWS_REGION \
-  --region $AWS_REGION
-
-  # Remove public access block from the s3 bucket
-  aws s3api delete-public-access-block --bucket $BUCKET_NAME
-
-# Create the bucket policy with envsubst
-cat <<EOF > bucket-policy.json
-{
-	"Version": "2012-10-17",
-	"Statement": [
-    	{
-        	"Effect": "Allow",
-        	"Principal": "*",
-        	"Action": [
-            	"s3:PutObject",
-            	"s3:GetObject"
-        	],
-        	"Resource": "arn:aws:s3:::${BUCKET_NAME}/*"
-    	}
-	]
-}
-EOF
-
-# Apply the bucket policy
-aws s3api put-bucket-policy --bucket $BUCKET_NAME --policy file://bucket-policy.json
+# ── Moved to Terraform (hcp-roles.tf) ──────────────────────────────────────
+# S3 bucket, public access block, and bucket policy are now created by
+# Terraform before the OIDC provider. The following lines are kept for
+# reference only.
+#
+# # Create the s3 bucket
+# aws s3api create-bucket --bucket $BUCKET_NAME \
+#   --create-bucket-configuration LocationConstraint=$AWS_REGION \
+#   --region $AWS_REGION
+#
+# # Remove public access block from the s3 bucket
+# aws s3api delete-public-access-block --bucket $BUCKET_NAME
+#
+# # Create the bucket policy with envsubst
+# cat <<EOF > bucket-policy.json
+# {
+# 	"Version": "2012-10-17",
+# 	"Statement": [
+#     	{
+#         	"Effect": "Allow",
+#         	"Principal": "*",
+#         	"Action": [
+#             	"s3:PutObject",
+#             	"s3:GetObject"
+#         	],
+#         	"Resource": "arn:aws:s3:::${BUCKET_NAME}/*"
+#     	}
+# 	]
+# }
+# EOF
+#
+# # Apply the bucket policy
+# aws s3api put-bucket-policy --bucket $BUCKET_NAME --policy file://bucket-policy.json
 
 # Create a Secret in the local-cluster namespace so the HyperShift operator will know how to use the bucket that we just created. Don’t forget the second command to apply the labels
 oc create secret generic hypershift-operator-oidc-provider-s3-credentials --from-file=credentials=$HOME/.aws/credentials --from-literal=bucket=$BUCKET_NAME --from-literal=region=$AWS_REGION -n local-cluster
@@ -251,6 +256,8 @@ hcp create cluster aws \
 	--control-plane-availability-policy HighlyAvailable \
 	--zones "${AWS_REGION}a","${AWS_REGION}b","${AWS_REGION}c" \
 	--role-arn $HCP_OPERATOR_ROLE_ARN \
+	--use-rosa-managed-policies \
+	--additional-tags red-hat-managed=true \
 	--sts-creds {{ home_dir }}/sts-creds.json
 
 # Delete the HCP Cluster

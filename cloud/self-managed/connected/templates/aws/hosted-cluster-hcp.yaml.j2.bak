@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}
+  name: {{ openshift_cluster_name_suffix }}-hcp1
 spec: {}
 status: {}
 ---
@@ -12,18 +12,19 @@ kind: Secret
 metadata:
   labels:
     hypershift.openshift.io/safe-to-delete-with-cluster: "true"
-  name: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-pull-secret
-  namespace: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}
+  name: {{ openshift_cluster_name_suffix }}-hcp1-pull-secret
+  namespace: {{ openshift_cluster_name_suffix }}-hcp1
 ---
 apiVersion: v1
 data:
+  id_rsa: {{ ssh_private_key_content | default('REPLACE_ME_WITH_SSH_PRIVATE_KEY') | b64encode }}
   id_rsa.pub: {{ ssh_public_key_for_ec2_and_openshit_node | b64encode }}
 kind: Secret
 metadata:
   labels:
     hypershift.openshift.io/safe-to-delete-with-cluster: "true"
-  name: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-ssh-key
-  namespace: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}
+  name: {{ openshift_cluster_name_suffix }}-hcp1-ssh-key
+  namespace: {{ openshift_cluster_name_suffix }}-hcp1
 ---
 apiVersion: v1
 data:
@@ -32,15 +33,15 @@ kind: Secret
 metadata:
   labels:
     hypershift.openshift.io/safe-to-delete-with-cluster: "true"
-  name: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-etcd-encryption-key
-  namespace: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}
+  name: {{ openshift_cluster_name_suffix }}-hcp1-etcd-encryption-key
+  namespace: {{ openshift_cluster_name_suffix }}-hcp1
 type: Opaque
 ---
 apiVersion: hypershift.openshift.io/v1beta1
 kind: HostedCluster
 metadata:
-  name: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}
-  namespace: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}
+  name: {{ openshift_cluster_name_suffix }}-hcp1
+  namespace: {{ openshift_cluster_name_suffix }}-hcp1
 spec:
   autoscaling: {}
   capabilities: {}
@@ -48,8 +49,8 @@ spec:
   controllerAvailabilityPolicy: HighlyAvailable
   dns:
     baseDomain: {{ openshift_base_domain }}
-    privateZoneID: {{ hcp_private_zone_ids[hcp_suffix] }}
-    publicZoneID: {{ hcp_public_zone_id }}
+    privateZoneID: {{ hcp_private_zone_id | default('REPLACE_ME_WITH_HCP_PRIVATE_ZONE_ID') }}
+    publicZoneID: {{ hcp_public_zone_id | default('REPLACE_ME_WITH_HCP_PUBLIC_ZONE_ID') }}
   etcd:
     managed:
       storage:
@@ -59,9 +60,9 @@ spec:
         type: PersistentVolume
     managementType: Managed
   fips: false
-  infraID: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}
+  infraID: {{ openshift_cluster_name_suffix }}-hcp1
   infrastructureAvailabilityPolicy: HighlyAvailable
-  issuerURL: https://self-managed-hcp-oidc-{{ openshift_cluster_name_suffix }}.s3.{{ aws_region }}.amazonaws.com/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}
+  issuerURL: https://self-managed-hcp-oidc-{{ openshift_cluster_name_suffix }}.s3.{{ aws_region }}.amazonaws.com/{{ openshift_cluster_name_suffix }}-hcp1
   networking:
     clusterNetwork:
     - cidr: 10.132.0.0/14
@@ -78,28 +79,26 @@ spec:
           id: {{ connected_subnet_id_a }}
         vpc: {{ connected_vpc_id }}
         zone: {{ aws_region }}a
-      endpointAccess: Private
+      endpointAccess: Public
       multiArch: false
       region: {{ aws_region }}
-      resourceTags:
-        red-hat-managed: "true"
       rolesRef:
-        controlPlaneOperatorARN: arn:aws:iam::{{ aws_account_number }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-control-plane-operator
-        imageRegistryARN: arn:aws:iam::{{ aws_account_number }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-openshift-image-registry
-        ingressARN: arn:aws:iam::{{ aws_account_number }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-openshift-ingress
-        kubeCloudControllerARN: arn:aws:iam::{{ aws_account_number }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-cloud-controller
-        networkARN: arn:aws:iam::{{ aws_account_number }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-cloud-network-config-controller
-        nodePoolManagementARN: arn:aws:iam::{{ aws_account_number }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-node-pool
-        storageARN: arn:aws:iam::{{ aws_account_number }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-aws-ebs-csi-driver-controller
+        controlPlaneOperatorARN: arn:aws:iam::{{ aws_account_number }}:role/{{ openshift_cluster_name_suffix }}-hcp1-control-plane-operator
+        imageRegistryARN: arn:aws:iam::{{ aws_account_number }}:role/{{ openshift_cluster_name_suffix }}-hcp1-openshift-image-registry
+        ingressARN: arn:aws:iam::{{ aws_account_number }}:role/{{ openshift_cluster_name_suffix }}-hcp1-openshift-ingress
+        kubeCloudControllerARN: arn:aws:iam::{{ aws_account_number }}:role/{{ openshift_cluster_name_suffix }}-hcp1-cloud-controller
+        networkARN: arn:aws:iam::{{ aws_account_number }}:role/{{ openshift_cluster_name_suffix }}-hcp1-cloud-network-config-controller
+        nodePoolManagementARN: arn:aws:iam::{{ aws_account_number }}:role/{{ openshift_cluster_name_suffix }}-hcp1-node-pool
+        storageARN: arn:aws:iam::{{ aws_account_number }}:role/{{ openshift_cluster_name_suffix }}-hcp1-aws-ebs-csi-driver-controller
     type: AWS
   pullSecret:
-    name: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-pull-secret
+    name: {{ openshift_cluster_name_suffix }}-hcp1-pull-secret
   release:
     image: quay.io/openshift-release-dev/ocp-release:{{ openshift_version }}-x86_64
   secretEncryption:
     aescbc:
       activeKey:
-        name: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-etcd-encryption-key
+        name: {{ openshift_cluster_name_suffix }}-hcp1-etcd-encryption-key
     type: aescbc
   services:
   - service: APIServer
@@ -115,7 +114,7 @@ spec:
     servicePublishingStrategy:
       type: Route
   sshKey:
-    name: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-ssh-key
+    name: {{ openshift_cluster_name_suffix }}-hcp1-ssh-key
 status:
   controlPlaneEndpoint:
     host: ""
@@ -124,11 +123,11 @@ status:
 apiVersion: hypershift.openshift.io/v1beta1
 kind: NodePool
 metadata:
-  name: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-{{ aws_region }}a
-  namespace: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}
+  name: {{ openshift_cluster_name_suffix }}-hcp1-{{ aws_region }}a
+  namespace: {{ openshift_cluster_name_suffix }}-hcp1
 spec:
   arch: amd64
-  clusterName: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}
+  clusterName: {{ openshift_cluster_name_suffix }}-hcp1
   management:
     autoRepair: true
     upgradeType: Replace
@@ -136,10 +135,8 @@ spec:
   nodeVolumeDetachTimeout: 0s
   platform:
     aws:
-      instanceProfile: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-worker
+      instanceProfile: {{ openshift_cluster_name_suffix }}-hcp1-worker
       instanceType: m5.large
-      resourceTags:
-        red-hat-managed: "true"
       rootVolume:
         size: 120
         type: gp3
@@ -155,11 +152,11 @@ status:
 apiVersion: hypershift.openshift.io/v1beta1
 kind: NodePool
 metadata:
-  name: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-{{ aws_region }}b
-  namespace: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}
+  name: {{ openshift_cluster_name_suffix }}-hcp1-{{ aws_region }}b
+  namespace: {{ openshift_cluster_name_suffix }}-hcp1
 spec:
   arch: amd64
-  clusterName: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}
+  clusterName: {{ openshift_cluster_name_suffix }}-hcp1
   management:
     autoRepair: true
     upgradeType: Replace
@@ -167,10 +164,8 @@ spec:
   nodeVolumeDetachTimeout: 0s
   platform:
     aws:
-      instanceProfile: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-worker
+      instanceProfile: {{ openshift_cluster_name_suffix }}-hcp1-worker
       instanceType: m5.large
-      resourceTags:
-        red-hat-managed: "true"
       rootVolume:
         size: 120
         type: gp3
@@ -186,11 +181,11 @@ status:
 apiVersion: hypershift.openshift.io/v1beta1
 kind: NodePool
 metadata:
-  name: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-{{ aws_region }}c
-  namespace: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}
+  name: {{ openshift_cluster_name_suffix }}-hcp1-{{ aws_region }}c
+  namespace: {{ openshift_cluster_name_suffix }}-hcp1
 spec:
   arch: amd64
-  clusterName: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}
+  clusterName: {{ openshift_cluster_name_suffix }}-hcp1
   management:
     autoRepair: true
     upgradeType: Replace
@@ -198,10 +193,8 @@ spec:
   nodeVolumeDetachTimeout: 0s
   platform:
     aws:
-      instanceProfile: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-worker
+      instanceProfile: {{ openshift_cluster_name_suffix }}-hcp1-worker
       instanceType: m5.large
-      resourceTags:
-        red-hat-managed: "true"
       rootVolume:
         size: 120
         type: gp3

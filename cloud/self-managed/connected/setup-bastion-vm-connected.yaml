@@ -133,6 +133,15 @@
       - install-config-public.yaml
       - create-self-managed-hcp.sh
 
+  - name: Render HCP cluster manifests
+    ansible.builtin.template:
+      src: "{{ cloud_provider }}/hosted-cluster-hcp.yaml.j2"
+      dest: "{{ home_dir }}/hosted-cluster-{{ hcp_suffix }}.yaml"
+    loop: "{{ hcp_cluster_suffixes }}"
+    loop_control:
+      loop_var: hcp_suffix
+    when: hcp_cluster_suffixes is defined
+
   - name: Copy install-config into install directories
     copy:
       src: "{{ home_dir }}/{{ item.src }}"

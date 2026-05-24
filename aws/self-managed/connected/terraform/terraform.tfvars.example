@@ -14,6 +14,17 @@ aws_region = "ap-southeast-1"
 # connected_private_subnet_cidrs = ["172.16.1.0/24", "172.16.2.0/24", "172.16.3.0/24"]
 # connected_public_subnet_cidrs  = ["172.16.4.0/24", "172.16.5.0/24", "172.16.6.0/24"]
 
+# ── OpenShift Compute ──────────────────────────────────────────────────────
+# compute_instance_type  = "m5.xlarge"
+# compute_replicas       = 3
+# control_plane_replicas = 3
+
+# ── Self-Managed HCP Operator Roles ──────────────────────────────────────────
+# List of HCP cluster suffixes. Each entry creates an OIDC provider + 7 roles.
+# Requires the OIDC S3 bucket to exist first.
+# hcp_cluster_suffixes = ["hcp1"]              # single cluster
+# hcp_cluster_suffixes = ["hcp1", "hcp2"]      # two clusters
+
 # ── Bastion EC2 ──────────────────────────────────────────────────────────────
 ssh_private_key_path    = "~/.ssh/id_rsa"
 installer_ami           = "ami-04698733964af06d5"

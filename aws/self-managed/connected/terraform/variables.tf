@@ -44,6 +44,26 @@ variable "openshift_cluster_name_suffix" {
   default     = "xx1"
 }
 
+# ── OpenShift Compute ────────────────────────────────────────────────────────
+
+variable "compute_instance_type" {
+  description = "Instance type for OpenShift compute (worker) nodes"
+  type        = string
+  default     = "m5.xlarge"
+}
+
+variable "compute_replicas" {
+  description = "Number of OpenShift compute (worker) node replicas"
+  type        = number
+  default     = 3
+}
+
+variable "control_plane_replicas" {
+  description = "Number of OpenShift control plane (master) node replicas"
+  type        = number
+  default     = 3
+}
+
 # ── Bastion EC2 ───────────────────────────────────────────────────────────────
 
 variable "ssh_public_key" {
