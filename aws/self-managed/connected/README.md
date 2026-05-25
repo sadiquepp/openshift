@@ -341,20 +341,33 @@ existing clusters. Re-run Ansible to render the new manifest on the bastion.
 
 ### Deploy an HCP Cluster
 
-After the environment is set up, SSH into the bastion and apply the rendered
-manifest against the management cluster:
+After the environment is set up, SSH into the bastion and apply the operator
+secrets first, then the cluster manifest.
 
 ```bash
 ssh ec2-user@$BASTION_IP
 
 export KUBECONFIG=~/install-dir-public/auth/kubeconfig
 
-# Apply the HostedCluster + NodePool manifest
+# 1. Create the OIDC S3 credentials secret (required for all HCP clusters)
+oc apply -f ~/hypershift-oidc-s3-secret.yaml
+
+# 2. Create the PrivateLink credentials secret (required for private HCP clusters)
+oc apply -f ~/hypershift-privatelink-secret.yaml
+
+# 3a. Deploy a public HCP cluster
 oc apply -f ~/hosted-cluster-hcp1.yaml
+
+# 3b. Or deploy a private (PrivateLink) HCP cluster instead
+oc apply -f ~/hosted-cluster-hcp1-pl.yaml
 
 # Watch the cluster come up
 oc get hostedcluster -n <prefix>-hcp1 -w
 ```
+
+> **Note:** The OIDC S3 and PrivateLink secrets are created once in the
+> `local-cluster` namespace. They are shared by all HCP clusters and do not
+> need to be re-applied when adding more clusters.
 
 ### Destroy an HCP Cluster
 
@@ -382,9 +395,18 @@ For each suffix (e.g. `hcp1` with prefix `ar1`):
 | IAM roles | `ar1-hcp1-control-plane-operator`, `ar1-hcp1-openshift-ingress`, etc. |
 | Worker role + instance profile | `ar1-hcp1-ROSA-Worker-Role` |
 
-### Rendered Manifest
+### Rendered Manifests
 
-Ansible renders `~/hosted-cluster-<suffix>.yaml` on the bastion containing:
+Ansible renders the following files on the bastion:
+
+| File | Description |
+|------|-------------|
+| `~/hypershift-oidc-s3-secret.yaml` | OIDC S3 bucket credentials secret (shared, apply once) |
+| `~/hypershift-privatelink-secret.yaml` | PrivateLink IAM user credentials secret (shared, apply once) |
+| `~/hosted-cluster-<suffix>.yaml` | HostedCluster + NodePools with `endpointAccess: Public` |
+| `~/hosted-cluster-<suffix>-pl.yaml` | HostedCluster + NodePools with `endpointAccess: Private` (PrivateLink) |
+
+Each cluster manifest contains:
 
 - **Namespace** (`<prefix>-<suffix>`)
 - **Secrets**: pull secret, SSH public key, etcd encryption key, SA signing key

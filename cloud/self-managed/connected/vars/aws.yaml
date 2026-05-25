@@ -31,3 +31,6 @@ hcp_cluster_suffixes:
   - hcp1
 
 hcp_issuer_urls: {}
+hcp_pl_access_key_id: ""
+hcp_pl_secret_access_key: ""
+hcp_oidc_bucket_name: ""

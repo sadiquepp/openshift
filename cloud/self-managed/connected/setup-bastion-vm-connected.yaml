@@ -133,7 +133,7 @@
       - install-config-public.yaml
       - create-self-managed-hcp.sh
 
-  - name: Render HCP cluster manifests
+  - name: Render HCP cluster manifests (public endpoint)
     ansible.builtin.template:
       src: "{{ cloud_provider }}/hosted-cluster-hcp.yaml.j2"
       dest: "{{ home_dir }}/hosted-cluster-{{ hcp_suffix }}.yaml"
@@ -141,6 +141,27 @@
     loop_control:
       loop_var: hcp_suffix
     when: hcp_cluster_suffixes is defined
+
+  - name: Render HCP cluster manifests (private endpoint / PrivateLink)
+    ansible.builtin.template:
+      src: "{{ cloud_provider }}/hosted-cluster-hcp-pl.yaml.j2"
+      dest: "{{ home_dir }}/hosted-cluster-{{ hcp_suffix }}-pl.yaml"
+    loop: "{{ hcp_cluster_suffixes }}"
+    loop_control:
+      loop_var: hcp_suffix
+    when: hcp_cluster_suffixes is defined
+
+  - name: Render HyperShift PrivateLink credentials secret
+    ansible.builtin.template:
+      src: "{{ cloud_provider }}/hypershift-privatelink-secret.yaml.j2"
+      dest: "{{ home_dir }}/hypershift-privatelink-secret.yaml"
+    when: hcp_cluster_suffixes is defined and hcp_cluster_suffixes | length > 0
+
+  - name: Render HyperShift OIDC S3 credentials secret
+    ansible.builtin.template:
+      src: "{{ cloud_provider }}/hypershift-oidc-s3-secret.yaml.j2"
+      dest: "{{ home_dir }}/hypershift-oidc-s3-secret.yaml"
+    when: hcp_cluster_suffixes is defined and hcp_cluster_suffixes | length > 0
 
   - name: Copy install-config into install directories
     copy:

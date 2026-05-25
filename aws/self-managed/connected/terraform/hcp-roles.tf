@@ -457,6 +457,51 @@ resource "aws_route53_zone" "hcp_hypershift_local" {
   }
 }
 
+# ── PrivateLink: IAM User + Access Key ────────────────────────────────────────
+# The HyperShift operator needs an IAM user with EC2/ELB permissions to
+# manage VPC endpoint service configurations for PrivateLink-based clusters.
+
+resource "aws_iam_user" "hcp_privatelink" {
+  count = local.hcp_enabled ? 1 : 0
+  name  = "hypershift-operator-pl"
+
+  tags = {
+    Name            = "hypershift-operator-pl"
+    red-hat-managed = "true"
+  }
+}
+
+resource "aws_iam_user_policy" "hcp_privatelink" {
+  count = local.hcp_enabled ? 1 : 0
+  name  = "hypershift-operator-privatelink"
+  user  = aws_iam_user.hcp_privatelink[0].name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "ec2:CreateVpcEndpointServiceConfiguration",
+        "ec2:DescribeVpcEndpointServiceConfigurations",
+        "ec2:DeleteVpcEndpointServiceConfigurations",
+        "ec2:DescribeVpcEndpointServicePermissions",
+        "ec2:ModifyVpcEndpointServicePermissions",
+        "ec2:RejectVpcEndpointConnections",
+        "ec2:DescribeVpcEndpointConnections",
+        "ec2:DescribeInstanceTypes",
+        "ec2:CreateTags",
+        "elasticloadbalancing:DescribeLoadBalancers",
+      ]
+      Resource = "*"
+    }]
+  })
+}
+
+resource "aws_iam_access_key" "hcp_privatelink" {
+  count = local.hcp_enabled ? 1 : 0
+  user  = aws_iam_user.hcp_privatelink[0].name
+}
+
 # ── Outputs ──────────────────────────────────────────────────────────────────
 
 output "hcp_oidc_bucket_name" {
