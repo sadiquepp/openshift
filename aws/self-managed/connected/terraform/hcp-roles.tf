@@ -349,7 +349,7 @@ resource "aws_iam_role_policy_attachment" "hcp_operator" {
 resource "aws_iam_role" "hcp_worker" {
   for_each = local.hcp_clusters
 
-  name = "${each.value.cluster_name}-worker"
+  name = "${each.value.cluster_name}-ROSA-Worker-Role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -361,7 +361,7 @@ resource "aws_iam_role" "hcp_worker" {
   })
 
   tags = {
-    Name                  = "${each.value.cluster_name}-worker"
+    Name                  = "${each.value.cluster_name}-ROSA-Worker-Role"
     red-hat-managed       = "true"
     rosa_hcp_policies     = "true"
     rosa_managed_policies = "true"
@@ -378,11 +378,11 @@ resource "aws_iam_role_policy_attachment" "hcp_worker" {
 resource "aws_iam_instance_profile" "hcp_worker" {
   for_each = local.hcp_clusters
 
-  name = "${each.value.cluster_name}-worker"
+  name = "${each.value.cluster_name}-ROSA-Worker-Role"
   role = aws_iam_role.hcp_worker[each.key].name
 
   tags = {
-    Name            = "${each.value.cluster_name}-worker"
+    Name            = "${each.value.cluster_name}-ROSA-Worker-Role"
     red-hat-managed = "true"
   }
 }

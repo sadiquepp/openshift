@@ -89,11 +89,12 @@ spec:
           id: {{ connected_subnet_id_a }}
         vpc: {{ connected_vpc_id }}
         zone: {{ aws_region }}a
-      endpointAccess: Private
+      endpointAccess: Public
       multiArch: false
       region: {{ aws_region }}
       resourceTags:
-        red-hat-managed: "true"
+      - key: red-hat-managed
+        value: "true"
       rolesRef:
         controlPlaneOperatorARN: arn:aws:iam::{{ aws_account_number }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-control-plane-operator
         imageRegistryARN: arn:aws:iam::{{ aws_account_number }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-openshift-image-registry
@@ -149,10 +150,11 @@ spec:
   nodeVolumeDetachTimeout: 0s
   platform:
     aws:
-      instanceProfile: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-worker
+      instanceProfile: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-ROSA-Worker-Role
       instanceType: m5.large
       resourceTags:
-        red-hat-managed: "true"
+      - key: red-hat-managed
+        value: "true"
       rootVolume:
         size: 120
         type: gp3
@@ -180,10 +182,11 @@ spec:
   nodeVolumeDetachTimeout: 0s
   platform:
     aws:
-      instanceProfile: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-worker
+      instanceProfile: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-ROSA-Worker-Role
       instanceType: m5.large
       resourceTags:
-        red-hat-managed: "true"
+      - key: red-hat-managed
+        value: "true"
       rootVolume:
         size: 120
         type: gp3
@@ -211,10 +214,11 @@ spec:
   nodeVolumeDetachTimeout: 0s
   platform:
     aws:
-      instanceProfile: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-worker
+      instanceProfile: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-ROSA-Worker-Role
       instanceType: m5.large
       resourceTags:
-        red-hat-managed: "true"
+      - key: red-hat-managed
+        value: "true"
       rootVolume:
         size: 120
         type: gp3
