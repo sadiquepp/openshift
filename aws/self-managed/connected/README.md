@@ -5,6 +5,10 @@ OpenShift clusters. This creates the network infrastructure, an IAM role,
 and a bastion EC2 instance pre-configured with the tools and STS credentials
 needed to run `openshift-install`.
 
+This environment also supports deploying **self-managed HCP (Hosted Control
+Planes)** clusters on the same VPC. See [HCP Clusters](#hcp-clusters-hosted-control-planes)
+for details.
+
 ## Architecture
 
 ```
@@ -73,8 +77,11 @@ connected/
 │   ├── vpc.tf                       # VPC, subnets, IGW, NAT GW, route tables, S3 endpoint
 │   ├── iam.tf                       # IAM role + instance profile for bastion EC2
 │   ├── ec2.tf                       # SSH key pair, security group, bastion EC2 instance
+│   ├── hcp-roles.tf                 # HCP: OIDC bucket, CloudFront, IAM roles, Route53 zones
 │   ├── ansible.tf                   # Generated Ansible inventory + vars
-│   └── outputs.tf                   # All outputs (VPC IDs, IPs, hosted zone, etc.)
+│   ├── outputs.tf                   # All outputs (VPC IDs, IPs, hosted zone, etc.)
+│   └── scripts/
+│       └── pem-to-jwk.py           # Converts RSA PEM to JWK (used by hcp-roles.tf)
 └── setup-bastion-ec2-connected.yaml # Ansible: install tools, STS, install-dir
 ```
 
@@ -202,6 +209,14 @@ To destroy:
 | `connected_private_subnet_cidrs` | `[172.16.1-3.0/24]` | Private subnet CIDRs (one per AZ) |
 | `connected_public_subnet_cidrs` | `[172.16.4-6.0/24]` | Public subnet CIDRs (one per AZ) |
 
+### OpenShift Compute
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `compute_instance_type` | `m5.xlarge` | Instance type for OCP compute nodes |
+| `compute_replicas` | `3` | Number of compute replicas |
+| `control_plane_replicas` | `3` | Number of control plane replicas |
+
 ### Bastion EC2
 
 | Variable | Default | Description |
@@ -210,6 +225,12 @@ To destroy:
 | `installer_instance_type` | `t2.medium` | Bastion instance type |
 | `installer_disk_size` | `50` | Root volume size in GB |
 | `ssh_private_key_path` | `~/.ssh/id_rsa` | Path to SSH private key |
+
+### HCP Clusters
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `hcp_cluster_suffixes` | `[]` | List of HCP cluster suffixes (e.g. `["hcp1", "hcp2"]`). Empty disables HCP. |
 
 ---
 
@@ -226,9 +247,150 @@ After `terraform apply`, these outputs are available:
 | `connected_public_subnet_ids` | Public subnet IDs |
 | `iam_role_arn` | IAM role ARN for the bastion |
 | `vpc_owner_aws_account_number` | AWS account number |
+| `hcp_oidc_bucket_name` | OIDC S3 bucket name (when HCP enabled) |
+| `hcp_cloudfront_domain` | CloudFront domain for OIDC endpoint (when HCP enabled) |
+| `hcp_public_zone_id` | Public Route53 zone ID (when HCP enabled) |
+| `hcp_private_zone_ids` | Per-cluster private Route53 zone IDs |
+| `hcp_operator_role_arns` | Per-cluster map of 7 operator role ARNs |
 
 These values are also automatically written to `ansible-vars.json` for use
 by the Ansible playbook.
+
+---
+
+## HCP Clusters (Hosted Control Planes)
+
+This environment supports deploying one or more self-managed HCP clusters on
+the same VPC used by the management IPI cluster. Terraform creates all the
+required AWS resources (OIDC, IAM, DNS, worker profiles), and Ansible renders
+per-cluster HostedCluster + NodePool manifests on the bastion.
+
+### How It Works
+
+When `hcp_cluster_suffixes` is set (e.g. `["hcp1", "hcp2"]`), Terraform
+creates the following resources **per cluster suffix**:
+
+| Resource | Purpose |
+|----------|---------|
+| OIDC S3 bucket (shared) | Stores OIDC discovery docs for all HCP clusters |
+| CloudFront distribution + OAC | Serves OIDC documents over HTTPS (bucket is private) |
+| OIDC provider | IAM OIDC provider pointing to the CloudFront issuer URL |
+| 7 operator IAM roles | ROSA managed policy roles for HostedCluster `rolesRef` |
+| Worker IAM role + instance profile | EC2 trust role with `ROSAWorkerInstancePolicy` |
+| Private Route53 zone | `<prefix>-<suffix>.<base_domain>` (fed as `privateZoneID`) |
+| Hypershift.local Route53 zone | `<prefix>-<suffix>.hypershift.local` (internal use) |
+| Ingress Route53 policy | Allows ingress operator to manage records in private + public zones |
+| RSA key pair (4096-bit) | Per-cluster service account signing key |
+| OIDC discovery + JWKS | `.well-known/openid-configuration` and `openid/v1/jwks` in S3 |
+
+The existing **public Route53 zone** for `openshift_base_domain` is looked up
+(not created) and its zone ID is passed as `publicZoneID`.
+
+### Architecture
+
+```
+                              CloudFront (HTTPS)
+                                    │
+                          ┌─────────▼─────────┐
+                          │   S3 Bucket        │
+                          │   (private, OAC)   │
+                          │                    │
+                          │  /<prefix>-hcp1/   │
+                          │    .well-known/    │
+                          │    openid/v1/jwks  │
+                          │  /<prefix>-hcp2/   │
+                          │    ...             │
+                          └────────────────────┘
+                                    │
+                    ┌───────────────┼───────────────┐
+                    │               │               │
+             OIDC Provider    OIDC Provider    OIDC Provider
+               (hcp1)           (hcp2)           (hcp3)
+                    │               │               │
+              7 IAM Roles     7 IAM Roles     7 IAM Roles
+            + Worker Role   + Worker Role   + Worker Role
+            + Route53 Zones + Route53 Zones + Route53 Zones
+```
+
+### Enable HCP
+
+Add the cluster suffixes to `terraform.tfvars`:
+
+```hcl
+hcp_cluster_suffixes = ["hcp1"]
+```
+
+Then run `terraform apply` and `deploy.sh` as usual. Ansible will render a
+`hosted-cluster-<suffix>.yaml` manifest for each suffix on the bastion.
+
+### Adding More HCP Clusters Later
+
+To add a new cluster (e.g. `hcp3`), simply append to the list and re-apply:
+
+```hcl
+hcp_cluster_suffixes = ["hcp1", "hcp2", "hcp3"]
+```
+
+```bash
+cd terraform
+terraform apply
+```
+
+Terraform will create only the new resources for `hcp3` without affecting
+existing clusters. Re-run Ansible to render the new manifest on the bastion.
+
+### Deploy an HCP Cluster
+
+After the environment is set up, SSH into the bastion and apply the rendered
+manifest against the management cluster:
+
+```bash
+ssh ec2-user@$BASTION_IP
+
+export KUBECONFIG=~/install-dir-public/auth/kubeconfig
+
+# Apply the HostedCluster + NodePool manifest
+oc apply -f ~/hosted-cluster-hcp1.yaml
+
+# Watch the cluster come up
+oc get hostedcluster -n <prefix>-hcp1 -w
+```
+
+### Destroy an HCP Cluster
+
+```bash
+# Delete the HostedCluster (this tears down the control plane + worker nodes)
+oc delete hostedcluster <prefix>-hcp1 -n <prefix>-hcp1
+
+# Delete the namespace
+oc delete namespace <prefix>-hcp1
+```
+
+To remove the IAM roles, Route53 zones, and OIDC resources, remove the suffix
+from `hcp_cluster_suffixes` in `terraform.tfvars` and run `terraform apply`.
+
+### Per-Cluster Resources Created by Terraform
+
+For each suffix (e.g. `hcp1` with prefix `ar1`):
+
+| Resource | Name |
+|----------|------|
+| OIDC S3 path | `ar1-hcp1/.well-known/openid-configuration`, `ar1-hcp1/openid/v1/jwks` |
+| OIDC issuer URL | `https://<cloudfront-domain>/ar1-hcp1` |
+| Private Route53 zone | `ar1-hcp1.example.com` |
+| Hypershift.local zone | `ar1-hcp1.hypershift.local` |
+| IAM roles | `ar1-hcp1-control-plane-operator`, `ar1-hcp1-openshift-ingress`, etc. |
+| Worker role + instance profile | `ar1-hcp1-worker` |
+
+### Rendered Manifest
+
+Ansible renders `~/hosted-cluster-<suffix>.yaml` on the bastion containing:
+
+- **Namespace** (`<prefix>-<suffix>`)
+- **Secrets**: pull secret, SSH public key, etcd encryption key, SA signing key
+- **HostedCluster**: with `issuerURL`, `rolesRef`, `privateZoneID`, `publicZoneID`,
+  `serviceAccountSigningKey`, and `secretEncryption` all pre-populated
+- **NodePools**: one per AZ (3 total), referencing the worker instance profile
 
 ---
 ## Access Bastion VNC Console for GUI Access
