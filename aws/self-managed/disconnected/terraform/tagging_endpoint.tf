@@ -1,6 +1,6 @@
 # ── Cross-region endpoints (us-east-1) ────────────────────────────────────────
 #
-# Global AWS services (IAM, Route53, Tagging) only support VPC interface
+# Global AWS services (Tagging) only support VPC interface
 # endpoints in us-east-1. To reach them from the disconnected VPC without
 # internet access we:
 #
