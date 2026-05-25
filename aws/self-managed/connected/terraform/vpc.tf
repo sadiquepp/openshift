@@ -43,10 +43,16 @@ resource "aws_subnet" "public" {
   cidr_block        = var.connected_public_subnet_cidrs[count.index]
   availability_zone = local.azs[count.index]
 
-  tags = {
-    Name                              = "${local.connected_vpc_name}-public-subnet-az${count.index + 1}"
-    "kubernetes.io/cluster/unmanaged" = "1"
-  }
+  tags = merge(
+    {
+      Name                          = "${local.connected_vpc_name}-public-subnet-az${count.index + 1}"
+      "kubernetes.io/cluster/dummy" = "shared"
+    },
+    {
+      for suffix, cluster in local.hcp_clusters :
+      "kubernetes.io/cluster/${cluster.cluster_name}" => "shared"
+    }
+  )
 }
 
 # ── Internet Gateway ──────────────────────────────────────────────────────────
