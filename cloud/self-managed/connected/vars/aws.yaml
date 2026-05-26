@@ -34,3 +34,5 @@ hcp_issuer_urls: {}
 hcp_pl_access_key_id: ""
 hcp_pl_secret_access_key: ""
 hcp_oidc_bucket_name: ""
+hcp_pvt_private_zone_ids: {}
+hcp_pvtpl_private_zone_ids: {}

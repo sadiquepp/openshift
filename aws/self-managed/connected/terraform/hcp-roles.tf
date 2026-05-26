@@ -82,6 +82,20 @@ locals {
     }
   }
 
+  # Private (PrivateLink) variants: one per cluster suffix, reuses roles/OIDC but gets its own DNS
+  hcp_pvt_clusters = {
+    for suffix in var.hcp_cluster_suffixes : suffix => {
+      cluster_name = "${var.openshift_cluster_name_suffix}-${suffix}-pvt"
+    }
+  }
+
+  # PublicAndPrivate variants
+  hcp_pvtpl_clusters = {
+    for suffix in var.hcp_cluster_suffixes : suffix => {
+      cluster_name = "${var.openshift_cluster_name_suffix}-${suffix}-pvtpl"
+    }
+  }
+
 }
 
 # ── OIDC S3 Bucket (private, served via CloudFront) ──────────────────────────
@@ -407,6 +421,8 @@ resource "aws_iam_role_policy" "hcp_ingress_route53" {
         Action = ["route53:ChangeResourceRecordSets"]
         Resource = [
           aws_route53_zone.hcp_private[each.key].arn,
+          aws_route53_zone.hcp_pvt_private[each.key].arn,
+          aws_route53_zone.hcp_pvtpl_private[each.key].arn,
           data.aws_route53_zone.public[0].arn,
         ]
       },
@@ -444,6 +460,68 @@ data "aws_route53_zone" "public" {
 # 3. Per-cluster hypershift.local private zone (used internally by HyperShift).
 resource "aws_route53_zone" "hcp_hypershift_local" {
   for_each = local.hcp_clusters
+
+  name = "${each.value.cluster_name}.hypershift.local"
+
+  vpc {
+    vpc_id = aws_vpc.connected.id
+  }
+
+  tags = {
+    Name            = "${each.value.cluster_name}-hypershift-local"
+    red-hat-managed = "true"
+  }
+}
+
+# 4. Private (PrivateLink) variant zones (private + hypershift.local per -pvt cluster).
+resource "aws_route53_zone" "hcp_pvt_private" {
+  for_each = local.hcp_pvt_clusters
+
+  name = "${each.value.cluster_name}.${var.openshift_base_domain}"
+
+  vpc {
+    vpc_id = aws_vpc.connected.id
+  }
+
+  tags = {
+    Name            = "${each.value.cluster_name}-private-zone"
+    red-hat-managed = "true"
+  }
+}
+
+resource "aws_route53_zone" "hcp_pvt_hypershift_local" {
+  for_each = local.hcp_pvt_clusters
+
+  name = "${each.value.cluster_name}.hypershift.local"
+
+  vpc {
+    vpc_id = aws_vpc.connected.id
+  }
+
+  tags = {
+    Name            = "${each.value.cluster_name}-hypershift-local"
+    red-hat-managed = "true"
+  }
+}
+
+# 5. PublicAndPrivate variant zones (private + hypershift.local per -pvtpl cluster).
+resource "aws_route53_zone" "hcp_pvtpl_private" {
+  for_each = local.hcp_pvtpl_clusters
+
+  name = "${each.value.cluster_name}.${var.openshift_base_domain}"
+
+  vpc {
+    vpc_id = aws_vpc.connected.id
+  }
+
+  tags = {
+    Name            = "${each.value.cluster_name}-private-zone"
+    red-hat-managed = "true"
+  }
+}
+
+resource "aws_route53_zone" "hcp_pvtpl_hypershift_local" {
+  for_each = local.hcp_pvtpl_clusters
 
   name = "${each.value.cluster_name}.hypershift.local"
 

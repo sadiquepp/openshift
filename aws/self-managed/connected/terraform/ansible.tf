@@ -61,6 +61,12 @@ resource "local_file" "ansible_vars" {
       hcp_pl_access_key_id     = aws_iam_access_key.hcp_privatelink[0].id
       hcp_pl_secret_access_key = aws_iam_access_key.hcp_privatelink[0].secret
       hcp_oidc_bucket_name     = aws_s3_bucket.hcp_oidc[0].id
+      hcp_pvt_private_zone_ids = {
+        for suffix in var.hcp_cluster_suffixes : suffix => aws_route53_zone.hcp_pvt_private[suffix].zone_id
+      }
+      hcp_pvtpl_private_zone_ids = {
+        for suffix in var.hcp_cluster_suffixes : suffix => aws_route53_zone.hcp_pvtpl_private[suffix].zone_id
+      }
     } : {
       hcp_public_zone_id       = ""
       hcp_private_zone_ids     = {}
@@ -69,6 +75,8 @@ resource "local_file" "ansible_vars" {
       hcp_pl_access_key_id     = ""
       hcp_pl_secret_access_key = ""
       hcp_oidc_bucket_name     = ""
+      hcp_pvt_private_zone_ids   = {}
+      hcp_pvtpl_private_zone_ids = {}
     }
   ))
 }

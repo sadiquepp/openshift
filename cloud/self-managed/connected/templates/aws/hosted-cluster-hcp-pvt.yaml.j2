@@ -1,7 +1,8 @@
+{% set pvt = hcp_suffix ~ '-pvt' %}
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}
+  name: {{ openshift_cluster_name_suffix }}-{{ pvt }}
 spec: {}
 status: {}
 ---
@@ -12,8 +13,8 @@ kind: Secret
 metadata:
   labels:
     hypershift.openshift.io/safe-to-delete-with-cluster: "true"
-  name: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-pull-secret
-  namespace: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}
+  name: {{ openshift_cluster_name_suffix }}-{{ pvt }}-pull-secret
+  namespace: {{ openshift_cluster_name_suffix }}-{{ pvt }}
 ---
 apiVersion: v1
 data:
@@ -22,8 +23,8 @@ kind: Secret
 metadata:
   labels:
     hypershift.openshift.io/safe-to-delete-with-cluster: "true"
-  name: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-ssh-key
-  namespace: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}
+  name: {{ openshift_cluster_name_suffix }}-{{ pvt }}-ssh-key
+  namespace: {{ openshift_cluster_name_suffix }}-{{ pvt }}
 ---
 apiVersion: v1
 data:
@@ -32,8 +33,8 @@ kind: Secret
 metadata:
   labels:
     hypershift.openshift.io/safe-to-delete-with-cluster: "true"
-  name: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-etcd-encryption-key
-  namespace: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}
+  name: {{ openshift_cluster_name_suffix }}-{{ pvt }}-etcd-encryption-key
+  namespace: {{ openshift_cluster_name_suffix }}-{{ pvt }}
 type: Opaque
 ---
 apiVersion: v1
@@ -43,15 +44,15 @@ kind: Secret
 metadata:
   labels:
     hypershift.openshift.io/safe-to-delete-with-cluster: "true"
-  name: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-sa-signing-key
-  namespace: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}
+  name: {{ openshift_cluster_name_suffix }}-{{ pvt }}-sa-signing-key
+  namespace: {{ openshift_cluster_name_suffix }}-{{ pvt }}
 type: Opaque
 ---
 apiVersion: hypershift.openshift.io/v1beta1
 kind: HostedCluster
 metadata:
-  name: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}
-  namespace: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}
+  name: {{ openshift_cluster_name_suffix }}-{{ pvt }}
+  namespace: {{ openshift_cluster_name_suffix }}-{{ pvt }}
 spec:
   autoscaling: {}
   capabilities: {}
@@ -59,7 +60,7 @@ spec:
   controllerAvailabilityPolicy: HighlyAvailable
   dns:
     baseDomain: {{ openshift_base_domain }}
-    privateZoneID: {{ hcp_private_zone_ids[hcp_suffix] }}
+    privateZoneID: {{ hcp_pvt_private_zone_ids[hcp_suffix] }}
     publicZoneID: {{ hcp_public_zone_id }}
   etcd:
     managed:
@@ -70,7 +71,7 @@ spec:
         type: PersistentVolume
     managementType: Managed
   fips: false
-  infraID: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}
+  infraID: {{ openshift_cluster_name_suffix }}-{{ pvt }}
   infrastructureAvailabilityPolicy: HighlyAvailable
   issuerURL: {{ hcp_issuer_urls[hcp_suffix] }}
   networking:
@@ -105,13 +106,13 @@ spec:
         storageARN: arn:aws:iam::{{ aws_account_number }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-aws-ebs-csi-driver-controller
     type: AWS
   pullSecret:
-    name: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-pull-secret
+    name: {{ openshift_cluster_name_suffix }}-{{ pvt }}-pull-secret
   release:
     image: quay.io/openshift-release-dev/ocp-release:{{ openshift_version }}-x86_64
   secretEncryption:
     aescbc:
       activeKey:
-        name: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-etcd-encryption-key
+        name: {{ openshift_cluster_name_suffix }}-{{ pvt }}-etcd-encryption-key
     type: aescbc
   services:
   - service: APIServer
@@ -127,9 +128,9 @@ spec:
     servicePublishingStrategy:
       type: Route
   serviceAccountSigningKey:
-    name: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-sa-signing-key
+    name: {{ openshift_cluster_name_suffix }}-{{ pvt }}-sa-signing-key
   sshKey:
-    name: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-ssh-key
+    name: {{ openshift_cluster_name_suffix }}-{{ pvt }}-ssh-key
 status:
   controlPlaneEndpoint:
     host: ""
@@ -138,11 +139,11 @@ status:
 apiVersion: hypershift.openshift.io/v1beta1
 kind: NodePool
 metadata:
-  name: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-{{ aws_region }}a
-  namespace: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}
+  name: {{ openshift_cluster_name_suffix }}-{{ pvt }}-{{ aws_region }}a
+  namespace: {{ openshift_cluster_name_suffix }}-{{ pvt }}
 spec:
   arch: amd64
-  clusterName: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}
+  clusterName: {{ openshift_cluster_name_suffix }}-{{ pvt }}
   management:
     autoRepair: true
     upgradeType: Replace
@@ -170,11 +171,11 @@ status:
 apiVersion: hypershift.openshift.io/v1beta1
 kind: NodePool
 metadata:
-  name: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-{{ aws_region }}b
-  namespace: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}
+  name: {{ openshift_cluster_name_suffix }}-{{ pvt }}-{{ aws_region }}b
+  namespace: {{ openshift_cluster_name_suffix }}-{{ pvt }}
 spec:
   arch: amd64
-  clusterName: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}
+  clusterName: {{ openshift_cluster_name_suffix }}-{{ pvt }}
   management:
     autoRepair: true
     upgradeType: Replace
@@ -202,11 +203,11 @@ status:
 apiVersion: hypershift.openshift.io/v1beta1
 kind: NodePool
 metadata:
-  name: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-{{ aws_region }}c
-  namespace: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}
+  name: {{ openshift_cluster_name_suffix }}-{{ pvt }}-{{ aws_region }}c
+  namespace: {{ openshift_cluster_name_suffix }}-{{ pvt }}
 spec:
   arch: amd64
-  clusterName: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}
+  clusterName: {{ openshift_cluster_name_suffix }}-{{ pvt }}
   management:
     autoRepair: true
     upgradeType: Replace

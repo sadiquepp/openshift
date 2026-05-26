@@ -144,8 +144,17 @@
 
   - name: Render HCP cluster manifests (private endpoint / PrivateLink)
     ansible.builtin.template:
-      src: "{{ cloud_provider }}/hosted-cluster-hcp-pl.yaml.j2"
-      dest: "{{ home_dir }}/hosted-cluster-{{ hcp_suffix }}-pl.yaml"
+      src: "{{ cloud_provider }}/hosted-cluster-hcp-pvt.yaml.j2"
+      dest: "{{ home_dir }}/hosted-cluster-{{ hcp_suffix }}-pvt.yaml"
+    loop: "{{ hcp_cluster_suffixes }}"
+    loop_control:
+      loop_var: hcp_suffix
+    when: hcp_cluster_suffixes is defined
+
+  - name: Render HCP cluster manifests (PublicAndPrivate endpoint / PrivateLink)
+    ansible.builtin.template:
+      src: "{{ cloud_provider }}/hosted-cluster-hcp-pvtpl.yaml.j2"
+      dest: "{{ home_dir }}/hosted-cluster-{{ hcp_suffix }}-pvtpl.yaml"
     loop: "{{ hcp_cluster_suffixes }}"
     loop_control:
       loop_var: hcp_suffix

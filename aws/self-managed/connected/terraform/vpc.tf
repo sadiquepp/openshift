@@ -51,6 +51,14 @@ resource "aws_subnet" "public" {
     {
       for suffix, cluster in local.hcp_clusters :
       "kubernetes.io/cluster/${cluster.cluster_name}" => "shared"
+    },
+    {
+      for suffix, cluster in local.hcp_pvt_clusters :
+      "kubernetes.io/cluster/${cluster.cluster_name}" => "shared"
+    },
+    {
+      for suffix, cluster in local.hcp_pvtpl_clusters :
+      "kubernetes.io/cluster/${cluster.cluster_name}" => "shared"
     }
   )
 }
