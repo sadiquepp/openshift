@@ -352,31 +352,45 @@ export KUBECONFIG=~/install-dir-public/auth/kubeconfig
 # 1. Create the OIDC S3 credentials secret (required for all HCP clusters)
 oc apply -f ~/hypershift-oidc-s3-secret.yaml
 
-# 2. Create the PrivateLink credentials secret (required for private HCP clusters)
+# 2. Create the PrivateLink credentials secret (required for pvt and pvtpl HCP clusters)
 oc apply -f ~/hypershift-privatelink-secret.yaml
 
 # 3a. Deploy a public HCP cluster
 oc apply -f ~/hosted-cluster-hcp1.yaml
 
-# 3b. Or deploy a private (PrivateLink) HCP cluster instead
-oc apply -f ~/hosted-cluster-hcp1-pl.yaml
+# 3b. Or deploy a private (PrivateLink) HCP cluster
+oc apply -f ~/hosted-cluster-hcp1-pvt.yaml
 
-# Watch the cluster come up
-oc get hostedcluster -n <prefix>-hcp1 -w
+# 3c. Or deploy a PublicAndPrivate (PrivateLink) HCP cluster
+oc apply -f ~/hosted-cluster-hcp1-pvtpl.yaml
+
+# Watch the cluster come up (namespace matches the variant deployed)
+oc get hostedcluster -n <prefix>-hcp1 -w       # public
+oc get hostedcluster -n <prefix>-hcp1-pvt -w    # private
+oc get hostedcluster -n <prefix>-hcp1-pvtpl -w  # public+private
 ```
 
 > **Note:** The OIDC S3 and PrivateLink secrets are created once in the
 > `local-cluster` namespace. They are shared by all HCP clusters and do not
 > need to be re-applied when adding more clusters.
+>
+> All three variants can coexist simultaneously -- each has its own namespace,
+> infraID, and Route53 zones while reusing the same IAM roles, OIDC provider,
+> SA signing key, and worker instance profile.
 
 ### Destroy an HCP Cluster
 
 ```bash
 # Delete the HostedCluster (this tears down the control plane + worker nodes)
-oc delete hostedcluster <prefix>-hcp1 -n <prefix>-hcp1
+# Use the namespace matching the variant you deployed:
+oc delete hostedcluster <prefix>-hcp1 -n <prefix>-hcp1             # public
+oc delete hostedcluster <prefix>-hcp1-pvt -n <prefix>-hcp1-pvt     # private
+oc delete hostedcluster <prefix>-hcp1-pvtpl -n <prefix>-hcp1-pvtpl # public+private
 
 # Delete the namespace
-oc delete namespace <prefix>-hcp1
+oc delete namespace <prefix>-hcp1         # public
+oc delete namespace <prefix>-hcp1-pvt     # private
+oc delete namespace <prefix>-hcp1-pvtpl   # public+private
 ```
 
 To remove the IAM roles, Route53 zones, and OIDC resources, remove the suffix
@@ -390,10 +404,13 @@ For each suffix (e.g. `hcp1` with prefix `ar1`):
 |----------|------|
 | OIDC S3 path | `ar1-hcp1/.well-known/openid-configuration`, `ar1-hcp1/openid/v1/jwks` |
 | OIDC issuer URL | `https://<cloudfront-domain>/ar1-hcp1` |
-| Private Route53 zone | `ar1-hcp1.example.com` |
-| Hypershift.local zone | `ar1-hcp1.hypershift.local` |
-| IAM roles | `ar1-hcp1-control-plane-operator`, `ar1-hcp1-openshift-ingress`, etc. |
-| Worker role + instance profile | `ar1-hcp1-ROSA-Worker-Role` |
+| Private Route53 zone (public) | `ar1-hcp1.example.com` |
+| Private Route53 zone (pvt) | `ar1-hcp1-pvt.example.com` |
+| Private Route53 zone (pvtpl) | `ar1-hcp1-pvtpl.example.com` |
+| Hypershift.local zones | `ar1-hcp1.hypershift.local`, `ar1-hcp1-pvt.hypershift.local`, `ar1-hcp1-pvtpl.hypershift.local` |
+| IAM roles (shared) | `ar1-hcp1-control-plane-operator`, `ar1-hcp1-openshift-ingress`, etc. |
+| Worker role + instance profile (shared) | `ar1-hcp1-ROSA-Worker-Role` |
+| PrivateLink IAM user (shared) | `hypershift-operator-pl` |
 
 ### Rendered Manifests
 
@@ -404,15 +421,19 @@ Ansible renders the following files on the bastion:
 | `~/hypershift-oidc-s3-secret.yaml` | OIDC S3 bucket credentials secret (shared, apply once) |
 | `~/hypershift-privatelink-secret.yaml` | PrivateLink IAM user credentials secret (shared, apply once) |
 | `~/hosted-cluster-<suffix>.yaml` | HostedCluster + NodePools with `endpointAccess: Public` |
-| `~/hosted-cluster-<suffix>-pl.yaml` | HostedCluster + NodePools with `endpointAccess: Private` (PrivateLink) |
+| `~/hosted-cluster-<suffix>-pvt.yaml` | HostedCluster + NodePools with `endpointAccess: Private` |
+| `~/hosted-cluster-<suffix>-pvtpl.yaml` | HostedCluster + NodePools with `endpointAccess: PublicAndPrivate` |
 
 Each cluster manifest contains:
 
-- **Namespace** (`<prefix>-<suffix>`)
+- **Namespace** (`<prefix>-<suffix>` for public, `<prefix>-<suffix>-pvt` for private, `<prefix>-<suffix>-pvtpl` for public+private)
 - **Secrets**: pull secret, SSH public key, etcd encryption key, SA signing key
 - **HostedCluster**: with `issuerURL`, `rolesRef`, `privateZoneID`, `publicZoneID`,
   `serviceAccountSigningKey`, and `secretEncryption` all pre-populated
-- **NodePools**: one per AZ (3 total), referencing the worker instance profile
+- **NodePools**: one per AZ (3 total), referencing the shared worker instance profile
+
+The `-pvt` and `-pvtpl` variants reuse the same IAM roles, OIDC provider,
+SA signing key, and worker instance profile as the base public variant.
 
 ### ROSA Managed Policy Compatibility
 
@@ -430,7 +451,8 @@ custom domains, Terraform attaches an additional inline policy
 (`self-managed-ingress-route53`) to the ingress operator role granting
 `route53:ChangeResourceRecordSets` on:
 
-- The cluster's **private** hosted zone (`<prefix>-<suffix>.<base_domain>`)
+- The cluster's **private** hosted zones (`<prefix>-<suffix>.<base_domain>`,
+  `<prefix>-<suffix>-pvt.<base_domain>`, `<prefix>-<suffix>-pvtpl.<base_domain>`)
 - The **public** hosted zone for `<base_domain>`
 
 The `hypershift.local` zone is intentionally excluded -- it is already
