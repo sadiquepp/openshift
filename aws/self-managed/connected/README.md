@@ -231,6 +231,10 @@ To destroy:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `hcp_cluster_suffixes` | `[]` | List of HCP cluster suffixes (e.g. `["hcp1", "hcp2"]`). Empty disables HCP. |
+| `hcp_separate_vpc` | `false` | When true, create a separate VPC for HCP worker nodes. |
+| `hcp_vpc_cidr` | `172.17.0.0/16` | CIDR for the HCP VPC (only when `hcp_separate_vpc = true`). |
+| `hcp_private_subnet_cidrs` | `[172.17.1-3.0/24]` | Private subnet CIDRs for HCP VPC. |
+| `hcp_public_subnet_cidrs` | `[172.17.4-6.0/24]` | Public subnet CIDRs for HCP VPC. |
 
 ---
 
@@ -260,10 +264,16 @@ by the Ansible playbook.
 
 ## HCP Clusters (Hosted Control Planes)
 
-This environment supports deploying one or more self-managed HCP clusters on
-the same VPC used by the management IPI cluster. Terraform creates all the
-required AWS resources (OIDC, IAM, DNS, worker profiles), and Ansible renders
-per-cluster HostedCluster + NodePool manifests on the bastion.
+This environment supports deploying one or more self-managed HCP clusters.
+HCP worker nodes can be placed in either:
+
+- The **main connected VPC** (same VPC as the management cluster), or
+- A **separate HCP VPC** (`hcp_separate_vpc = true`)
+
+Terraform creates all the required AWS resources (OIDC, IAM, DNS, worker
+profiles), and Ansible renders per-cluster HostedCluster + NodePool manifests
+on the bastion. The management cluster (HyperShift control plane) always
+runs in the connected VPC regardless of where workers are placed.
 
 ### How It Works
 
@@ -294,22 +304,29 @@ The existing **public Route53 zone** for `openshift_base_domain` is looked up
                           ┌─────────▼─────────┐
                           │   S3 Bucket        │
                           │   (private, OAC)   │
-                          │                    │
                           │  /<prefix>-hcp1/   │
                           │    .well-known/    │
                           │    openid/v1/jwks  │
-                          │  /<prefix>-hcp2/   │
-                          │    ...             │
                           └────────────────────┘
                                     │
-                    ┌───────────────┼───────────────┐
-                    │               │               │
-             OIDC Provider    OIDC Provider    OIDC Provider
-               (hcp1)           (hcp2)           (hcp3)
-                    │               │               │
-              7 IAM Roles     7 IAM Roles     7 IAM Roles
-            + Worker Role   + Worker Role   + Worker Role
-            + Route53 Zones + Route53 Zones + Route53 Zones
+                             OIDC Provider(s)
+                              + 7 IAM Roles
+                              + Worker Role
+                                    │
+        ┌───────────────────────────┴───────────────────────────┐
+        │                                                       │
+  Connected VPC (172.16.0.0/16)                   HCP VPC (172.17.0.0/16)
+  ┌─────────────────────────────┐         ┌─────────────────────────────┐
+  │ Management cluster          │         │ (optional, hcp_separate_vpc)│
+  │  + HyperShift control plane │         │                             │
+  │                             │         │  Private subnets (AZ1-3)    │
+  │  Private subnets (AZ1-3)    │         │  Public subnets  (AZ1-3)    │
+  │  Public subnets  (AZ1-3)    │         │  IGW + NAT + S3 endpoint    │
+  │                             │         │                             │
+  │  HCP workers (default)      │         │  HCP workers (separate)     │
+  └─────────────────────────────┘         └─────────────────────────────┘
+        │                                                       │
+        └────── Route53 private zones associated with both VPCs ┘
 ```
 
 ### Enable HCP
@@ -320,8 +337,20 @@ Add the cluster suffixes to `terraform.tfvars`:
 hcp_cluster_suffixes = ["hcp1"]
 ```
 
-Then run `terraform apply` and `deploy.sh` as usual. Ansible will render a
-`hosted-cluster-<suffix>.yaml` manifest for each suffix on the bastion.
+To deploy HCP workers into a **separate VPC** instead of the connected VPC,
+also set:
+
+```hcl
+hcp_separate_vpc = true
+
+# Optional: customise CIDRs (defaults shown)
+# hcp_vpc_cidr             = "172.17.0.0/16"
+# hcp_private_subnet_cidrs = ["172.17.1.0/24", "172.17.2.0/24", "172.17.3.0/24"]
+# hcp_public_subnet_cidrs  = ["172.17.4.0/24", "172.17.5.0/24", "172.17.6.0/24"]
+```
+
+Then run `terraform apply` and `deploy.sh` as usual. Ansible will render
+manifests for each suffix on the bastion.
 
 ### Adding More HCP Clusters Later
 
@@ -355,14 +384,17 @@ oc apply -f ~/hypershift-oidc-s3-secret.yaml
 # 2. Create the PrivateLink credentials secret (required for pvt and pvtpl HCP clusters)
 oc apply -f ~/hypershift-privatelink-secret.yaml
 
-# 3a. Deploy a public HCP cluster
-oc apply -f ~/hosted-cluster-hcp1.yaml
-
-# 3b. Or deploy a private (PrivateLink) HCP cluster
-oc apply -f ~/hosted-cluster-hcp1-pvt.yaml
-
-# 3c. Or deploy a PublicAndPrivate (PrivateLink) HCP cluster
-oc apply -f ~/hosted-cluster-hcp1-pvtpl.yaml
+# 3. Deploy an HCP cluster (pick ONE manifest per cluster suffix):
+#
+#    ── Connected VPC (172.16.0.0/16) ──────────────────────────────
+oc apply -f ~/hosted-cluster-hcp1.yaml           # Public
+oc apply -f ~/hosted-cluster-hcp1-pvt.yaml       # Private
+oc apply -f ~/hosted-cluster-hcp1-pvtpl.yaml     # PublicAndPrivate
+#
+#    ── Separate HCP VPC (172.17.0.0/16, requires hcp_separate_vpc = true) ──
+oc apply -f ~/hosted-cluster-hcp1-vpc.yaml       # Public
+oc apply -f ~/hosted-cluster-hcp1-vpc-pvt.yaml   # Private
+oc apply -f ~/hosted-cluster-hcp1-vpc-pvtpl.yaml # PublicAndPrivate
 
 # Watch the cluster come up (namespace matches the variant deployed)
 oc get hostedcluster -n <prefix>-hcp1 -w       # public
@@ -416,13 +448,18 @@ For each suffix (e.g. `hcp1` with prefix `ar1`):
 
 Ansible renders the following files on the bastion:
 
-| File | Description |
-|------|-------------|
-| `~/hypershift-oidc-s3-secret.yaml` | OIDC S3 bucket credentials secret (shared, apply once) |
-| `~/hypershift-privatelink-secret.yaml` | PrivateLink IAM user credentials secret (shared, apply once) |
-| `~/hosted-cluster-<suffix>.yaml` | HostedCluster + NodePools with `endpointAccess: Public` |
-| `~/hosted-cluster-<suffix>-pvt.yaml` | HostedCluster + NodePools with `endpointAccess: Private` |
-| `~/hosted-cluster-<suffix>-pvtpl.yaml` | HostedCluster + NodePools with `endpointAccess: PublicAndPrivate` |
+| File | VPC | endpointAccess |
+|------|-----|----------------|
+| `~/hypershift-oidc-s3-secret.yaml` | -- | OIDC S3 bucket credentials (shared, apply once) |
+| `~/hypershift-privatelink-secret.yaml` | -- | PrivateLink IAM credentials (shared, apply once) |
+| `~/hosted-cluster-<suffix>.yaml` | Connected | Public |
+| `~/hosted-cluster-<suffix>-pvt.yaml` | Connected | Private |
+| `~/hosted-cluster-<suffix>-pvtpl.yaml` | Connected | PublicAndPrivate |
+| `~/hosted-cluster-<suffix>-vpc.yaml` | HCP VPC | Public |
+| `~/hosted-cluster-<suffix>-vpc-pvt.yaml` | HCP VPC | Private |
+| `~/hosted-cluster-<suffix>-vpc-pvtpl.yaml` | HCP VPC | PublicAndPrivate |
+
+> The `-vpc` manifests are only rendered when `hcp_separate_vpc = true`.
 
 Each cluster manifest contains:
 
