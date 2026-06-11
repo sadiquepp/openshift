@@ -31,6 +31,12 @@ hcp_cluster_suffixes:
   - hcp1
 
 hcp_issuer_urls: {}
+hcp_separate_vpc: false
+hcp_vpc_id: ""
+hcp_vpc_cidr: ""
+hcp_subnet_id_a: ""
+hcp_subnet_id_b: ""
+hcp_subnet_id_c: ""
 hcp_pl_access_key_id: ""
 hcp_pl_secret_access_key: ""
 hcp_oidc_bucket_name: ""

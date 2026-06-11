@@ -46,6 +46,12 @@ resource "local_file" "ansible_vars" {
       compute_replicas                           = var.compute_replicas
       control_plane_replicas                     = var.control_plane_replicas
       hcp_cluster_suffixes                       = var.hcp_cluster_suffixes
+      hcp_separate_vpc                            = var.hcp_separate_vpc
+      hcp_vpc_id                                 = local.hcp_vpc_enabled ? aws_vpc.hcp[0].id : ""
+      hcp_vpc_cidr                               = local.hcp_vpc_enabled ? aws_vpc.hcp[0].cidr_block : ""
+      hcp_subnet_id_a                            = local.hcp_vpc_enabled ? aws_subnet.hcp_private[0].id : ""
+      hcp_subnet_id_b                            = local.hcp_vpc_enabled ? aws_subnet.hcp_private[1].id : ""
+      hcp_subnet_id_c                            = local.hcp_vpc_enabled ? aws_subnet.hcp_private[2].id : ""
     },
     local.hcp_enabled ? {
       hcp_public_zone_id = data.aws_route53_zone.public[0].zone_id

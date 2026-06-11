@@ -1,0 +1,234 @@
+{% set pvt = hcp_suffix ~ '-pvt' %}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ openshift_cluster_name_suffix }}-{{ pvt }}
+spec: {}
+status: {}
+---
+apiVersion: v1
+data:
+  .dockerconfigjson: {{ pull_secret | b64encode }}
+kind: Secret
+metadata:
+  labels:
+    hypershift.openshift.io/safe-to-delete-with-cluster: "true"
+  name: {{ openshift_cluster_name_suffix }}-{{ pvt }}-pull-secret
+  namespace: {{ openshift_cluster_name_suffix }}-{{ pvt }}
+---
+apiVersion: v1
+data:
+  id_rsa.pub: {{ ssh_public_key_for_ec2_and_openshit_node | b64encode }}
+kind: Secret
+metadata:
+  labels:
+    hypershift.openshift.io/safe-to-delete-with-cluster: "true"
+  name: {{ openshift_cluster_name_suffix }}-{{ pvt }}-ssh-key
+  namespace: {{ openshift_cluster_name_suffix }}-{{ pvt }}
+---
+apiVersion: v1
+data:
+  key: {{ lookup('pipe', 'openssl rand -base64 32') }}
+kind: Secret
+metadata:
+  labels:
+    hypershift.openshift.io/safe-to-delete-with-cluster: "true"
+  name: {{ openshift_cluster_name_suffix }}-{{ pvt }}-etcd-encryption-key
+  namespace: {{ openshift_cluster_name_suffix }}-{{ pvt }}
+type: Opaque
+---
+apiVersion: v1
+data:
+  key: {{ hcp_sa_signing_keys[hcp_suffix] | b64encode }}
+kind: Secret
+metadata:
+  labels:
+    hypershift.openshift.io/safe-to-delete-with-cluster: "true"
+  name: {{ openshift_cluster_name_suffix }}-{{ pvt }}-sa-signing-key
+  namespace: {{ openshift_cluster_name_suffix }}-{{ pvt }}
+type: Opaque
+---
+apiVersion: hypershift.openshift.io/v1beta1
+kind: HostedCluster
+metadata:
+  name: {{ openshift_cluster_name_suffix }}-{{ pvt }}
+  namespace: {{ openshift_cluster_name_suffix }}-{{ pvt }}
+spec:
+  autoscaling: {}
+  capabilities: {}
+  configuration: {}
+  controllerAvailabilityPolicy: HighlyAvailable
+  dns:
+    baseDomain: {{ openshift_base_domain }}
+    privateZoneID: {{ hcp_pvt_private_zone_ids[hcp_suffix] }}
+    publicZoneID: {{ hcp_public_zone_id }}
+  etcd:
+    managed:
+      storage:
+        persistentVolume:
+          size: 8Gi
+          storageClassName: gp3-csi
+        type: PersistentVolume
+    managementType: Managed
+  fips: false
+  infraID: {{ openshift_cluster_name_suffix }}-{{ pvt }}
+  infrastructureAvailabilityPolicy: HighlyAvailable
+  issuerURL: {{ hcp_issuer_urls[hcp_suffix] }}
+  networking:
+    clusterNetwork:
+    - cidr: 10.132.0.0/14
+    machineNetwork:
+    - cidr: {{ hcp_vpc_cidr }}
+    networkType: OVNKubernetes
+    serviceNetwork:
+    - cidr: 172.31.0.0/16
+  olmCatalogPlacement: management
+  platform:
+    aws:
+      cloudProviderConfig:
+        subnet:
+          id: {{ hcp_subnet_id_a }}
+        vpc: {{ hcp_vpc_id }}
+        zone: {{ aws_region }}a
+      endpointAccess: Private
+      multiArch: false
+      region: {{ aws_region }}
+      resourceTags:
+      - key: red-hat-managed
+        value: "true"
+      rolesRef:
+        controlPlaneOperatorARN: arn:aws:iam::{{ aws_account_number }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-control-plane-operator
+        imageRegistryARN: arn:aws:iam::{{ aws_account_number }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-openshift-image-registry
+        ingressARN: arn:aws:iam::{{ aws_account_number }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-openshift-ingress
+        kubeCloudControllerARN: arn:aws:iam::{{ aws_account_number }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-cloud-controller
+        networkARN: arn:aws:iam::{{ aws_account_number }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-cloud-network-config-controller
+        nodePoolManagementARN: arn:aws:iam::{{ aws_account_number }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-node-pool
+        storageARN: arn:aws:iam::{{ aws_account_number }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-aws-ebs-csi-driver-controller
+    type: AWS
+  pullSecret:
+    name: {{ openshift_cluster_name_suffix }}-{{ pvt }}-pull-secret
+  release:
+    image: quay.io/openshift-release-dev/ocp-release:{{ openshift_version }}-x86_64
+  secretEncryption:
+    aescbc:
+      activeKey:
+        name: {{ openshift_cluster_name_suffix }}-{{ pvt }}-etcd-encryption-key
+    type: aescbc
+  services:
+  - service: APIServer
+    servicePublishingStrategy:
+      type: LoadBalancer
+  - service: Ignition
+    servicePublishingStrategy:
+      type: Route
+  - service: Konnectivity
+    servicePublishingStrategy:
+      type: Route
+  - service: OAuthServer
+    servicePublishingStrategy:
+      type: Route
+  serviceAccountSigningKey:
+    name: {{ openshift_cluster_name_suffix }}-{{ pvt }}-sa-signing-key
+  sshKey:
+    name: {{ openshift_cluster_name_suffix }}-{{ pvt }}-ssh-key
+status:
+  controlPlaneEndpoint:
+    host: ""
+    port: 0
+---
+apiVersion: hypershift.openshift.io/v1beta1
+kind: NodePool
+metadata:
+  name: {{ openshift_cluster_name_suffix }}-{{ pvt }}-{{ aws_region }}a
+  namespace: {{ openshift_cluster_name_suffix }}-{{ pvt }}
+spec:
+  arch: amd64
+  clusterName: {{ openshift_cluster_name_suffix }}-{{ pvt }}
+  management:
+    autoRepair: true
+    upgradeType: Replace
+  nodeDrainTimeout: 0s
+  nodeVolumeDetachTimeout: 0s
+  platform:
+    aws:
+      instanceProfile: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-ROSA-Worker-Role
+      instanceType: m5.large
+      resourceTags:
+      - key: red-hat-managed
+        value: "true"
+      rootVolume:
+        size: 120
+        type: gp3
+      subnet:
+        id: {{ hcp_subnet_id_a }}
+    type: AWS
+  release:
+    image: quay.io/openshift-release-dev/ocp-release:{{ openshift_version }}-x86_64
+  replicas: 1
+status:
+  replicas: 0
+---
+apiVersion: hypershift.openshift.io/v1beta1
+kind: NodePool
+metadata:
+  name: {{ openshift_cluster_name_suffix }}-{{ pvt }}-{{ aws_region }}b
+  namespace: {{ openshift_cluster_name_suffix }}-{{ pvt }}
+spec:
+  arch: amd64
+  clusterName: {{ openshift_cluster_name_suffix }}-{{ pvt }}
+  management:
+    autoRepair: true
+    upgradeType: Replace
+  nodeDrainTimeout: 0s
+  nodeVolumeDetachTimeout: 0s
+  platform:
+    aws:
+      instanceProfile: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-ROSA-Worker-Role
+      instanceType: m5.large
+      resourceTags:
+      - key: red-hat-managed
+        value: "true"
+      rootVolume:
+        size: 120
+        type: gp3
+      subnet:
+        id: {{ hcp_subnet_id_b }}
+    type: AWS
+  release:
+    image: quay.io/openshift-release-dev/ocp-release:{{ openshift_version }}-x86_64
+  replicas: 1
+status:
+  replicas: 0
+---
+apiVersion: hypershift.openshift.io/v1beta1
+kind: NodePool
+metadata:
+  name: {{ openshift_cluster_name_suffix }}-{{ pvt }}-{{ aws_region }}c
+  namespace: {{ openshift_cluster_name_suffix }}-{{ pvt }}
+spec:
+  arch: amd64
+  clusterName: {{ openshift_cluster_name_suffix }}-{{ pvt }}
+  management:
+    autoRepair: true
+    upgradeType: Replace
+  nodeDrainTimeout: 0s
+  nodeVolumeDetachTimeout: 0s
+  platform:
+    aws:
+      instanceProfile: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-ROSA-Worker-Role
+      instanceType: m5.large
+      resourceTags:
+      - key: red-hat-managed
+        value: "true"
+      rootVolume:
+        size: 120
+        type: gp3
+      subnet:
+        id: {{ hcp_subnet_id_c }}
+    type: AWS
+  release:
+    image: quay.io/openshift-release-dev/ocp-release:{{ openshift_version }}-x86_64
+  replicas: 1
+status:
+  replicas: 0
+---

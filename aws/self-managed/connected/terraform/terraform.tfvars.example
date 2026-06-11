@@ -21,9 +21,15 @@ aws_region = "ap-southeast-1"
 
 # ── Self-Managed HCP Operator Roles ──────────────────────────────────────────
 # List of HCP cluster suffixes. Each entry creates an OIDC provider + 7 roles.
-# Requires the OIDC S3 bucket to exist first.
 # hcp_cluster_suffixes = ["hcp1"]              # single cluster
 # hcp_cluster_suffixes = ["hcp1", "hcp2"]      # two clusters
+
+# ── HCP Separate VPC (optional) ─────────────────────────────────────────────
+# Deploy HCP clusters into a separate VPC instead of the main connected VPC.
+# hcp_separate_vpc         = true
+# hcp_vpc_cidr             = "172.17.0.0/16"
+# hcp_private_subnet_cidrs = ["172.17.1.0/24", "172.17.2.0/24", "172.17.3.0/24"]
+# hcp_public_subnet_cidrs  = ["172.17.4.0/24", "172.17.5.0/24", "172.17.6.0/24"]
 
 # ── Bastion EC2 ──────────────────────────────────────────────────────────────
 ssh_private_key_path    = "~/.ssh/id_rsa"

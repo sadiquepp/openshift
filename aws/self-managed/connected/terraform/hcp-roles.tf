@@ -434,19 +434,29 @@ resource "aws_iam_role_policy" "hcp_ingress_route53" {
 
 # 1. Per-cluster private hosted zone: <cluster_name>.<base_domain>
 #    Zone ID is fed into the HostedCluster manifest as privateZoneID.
+#    When using a separate HCP VPC, the zone is created in the HCP VPC and
+#    then associated with the connected VPC so the management cluster can
+#    also resolve HCP cluster DNS.
 resource "aws_route53_zone" "hcp_private" {
   for_each = local.hcp_clusters
 
   name = "${each.value.cluster_name}.${var.openshift_base_domain}"
 
   vpc {
-    vpc_id = aws_vpc.connected.id
+    vpc_id = local.resolved_hcp_vpc_id
   }
 
   tags = {
     Name            = "${each.value.cluster_name}-private-zone"
     red-hat-managed = "true"
   }
+}
+
+resource "aws_route53_zone_association" "hcp_private_connected" {
+  for_each = local.hcp_vpc_enabled ? local.hcp_clusters : {}
+
+  zone_id = aws_route53_zone.hcp_private[each.key].zone_id
+  vpc_id  = aws_vpc.connected.id
 }
 
 # 2. Look up the existing public hosted zone for openshift_base_domain.
@@ -464,13 +474,20 @@ resource "aws_route53_zone" "hcp_hypershift_local" {
   name = "${each.value.cluster_name}.hypershift.local"
 
   vpc {
-    vpc_id = aws_vpc.connected.id
+    vpc_id = local.resolved_hcp_vpc_id
   }
 
   tags = {
     Name            = "${each.value.cluster_name}-hypershift-local"
     red-hat-managed = "true"
   }
+}
+
+resource "aws_route53_zone_association" "hcp_hypershift_local_connected" {
+  for_each = local.hcp_vpc_enabled ? local.hcp_clusters : {}
+
+  zone_id = aws_route53_zone.hcp_hypershift_local[each.key].zone_id
+  vpc_id  = aws_vpc.connected.id
 }
 
 # 4. Private (PrivateLink) variant zones (private + hypershift.local per -pvt cluster).
@@ -480,7 +497,7 @@ resource "aws_route53_zone" "hcp_pvt_private" {
   name = "${each.value.cluster_name}.${var.openshift_base_domain}"
 
   vpc {
-    vpc_id = aws_vpc.connected.id
+    vpc_id = local.resolved_hcp_vpc_id
   }
 
   tags = {
@@ -489,19 +506,33 @@ resource "aws_route53_zone" "hcp_pvt_private" {
   }
 }
 
+resource "aws_route53_zone_association" "hcp_pvt_private_connected" {
+  for_each = local.hcp_vpc_enabled ? local.hcp_pvt_clusters : {}
+
+  zone_id = aws_route53_zone.hcp_pvt_private[each.key].zone_id
+  vpc_id  = aws_vpc.connected.id
+}
+
 resource "aws_route53_zone" "hcp_pvt_hypershift_local" {
   for_each = local.hcp_pvt_clusters
 
   name = "${each.value.cluster_name}.hypershift.local"
 
   vpc {
-    vpc_id = aws_vpc.connected.id
+    vpc_id = local.resolved_hcp_vpc_id
   }
 
   tags = {
     Name            = "${each.value.cluster_name}-hypershift-local"
     red-hat-managed = "true"
   }
+}
+
+resource "aws_route53_zone_association" "hcp_pvt_hypershift_local_connected" {
+  for_each = local.hcp_vpc_enabled ? local.hcp_pvt_clusters : {}
+
+  zone_id = aws_route53_zone.hcp_pvt_hypershift_local[each.key].zone_id
+  vpc_id  = aws_vpc.connected.id
 }
 
 # 5. PublicAndPrivate variant zones (private + hypershift.local per -pvtpl cluster).
@@ -511,7 +542,7 @@ resource "aws_route53_zone" "hcp_pvtpl_private" {
   name = "${each.value.cluster_name}.${var.openshift_base_domain}"
 
   vpc {
-    vpc_id = aws_vpc.connected.id
+    vpc_id = local.resolved_hcp_vpc_id
   }
 
   tags = {
@@ -520,19 +551,34 @@ resource "aws_route53_zone" "hcp_pvtpl_private" {
   }
 }
 
+resource "aws_route53_zone_association" "hcp_pvtpl_private_connected" {
+  for_each = local.hcp_vpc_enabled ? local.hcp_pvtpl_clusters : {}
+
+  zone_id = aws_route53_zone.hcp_pvtpl_private[each.key].zone_id
+  vpc_id  = aws_vpc.connected.id
+}
+
 resource "aws_route53_zone" "hcp_pvtpl_hypershift_local" {
   for_each = local.hcp_pvtpl_clusters
 
   name = "${each.value.cluster_name}.hypershift.local"
 
   vpc {
-    vpc_id = aws_vpc.connected.id
+    vpc_id = local.resolved_hcp_vpc_id
   }
 
   tags = {
     Name            = "${each.value.cluster_name}-hypershift-local"
     red-hat-managed = "true"
   }
+}
+
+resource "aws_route53_zone_association" "hcp_pvtpl_hypershift_local_connected" {
+  for_each = local.hcp_vpc_enabled ? local.hcp_pvtpl_clusters : {}
+
+  zone_id = aws_route53_zone.hcp_pvtpl_hypershift_local[each.key].zone_id
+  vpc_id  = aws_vpc.connected.id
+}
 }
 
 # ── PrivateLink: IAM User + Access Key ────────────────────────────────────────

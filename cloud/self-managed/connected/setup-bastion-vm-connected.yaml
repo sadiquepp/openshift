@@ -160,6 +160,33 @@
       loop_var: hcp_suffix
     when: hcp_cluster_suffixes is defined
 
+  - name: Render HCP cluster manifests for separate VPC (public endpoint)
+    ansible.builtin.template:
+      src: "{{ cloud_provider }}/hosted-cluster-hcp-vpc.yaml.j2"
+      dest: "{{ home_dir }}/hosted-cluster-{{ hcp_suffix }}-vpc.yaml"
+    loop: "{{ hcp_cluster_suffixes }}"
+    loop_control:
+      loop_var: hcp_suffix
+    when: hcp_cluster_suffixes is defined and hcp_separate_vpc | default(false)
+
+  - name: Render HCP cluster manifests for separate VPC (private endpoint)
+    ansible.builtin.template:
+      src: "{{ cloud_provider }}/hosted-cluster-hcp-vpc-pvt.yaml.j2"
+      dest: "{{ home_dir }}/hosted-cluster-{{ hcp_suffix }}-vpc-pvt.yaml"
+    loop: "{{ hcp_cluster_suffixes }}"
+    loop_control:
+      loop_var: hcp_suffix
+    when: hcp_cluster_suffixes is defined and hcp_separate_vpc | default(false)
+
+  - name: Render HCP cluster manifests for separate VPC (PublicAndPrivate endpoint)
+    ansible.builtin.template:
+      src: "{{ cloud_provider }}/hosted-cluster-hcp-vpc-pvtpl.yaml.j2"
+      dest: "{{ home_dir }}/hosted-cluster-{{ hcp_suffix }}-vpc-pvtpl.yaml"
+    loop: "{{ hcp_cluster_suffixes }}"
+    loop_control:
+      loop_var: hcp_suffix
+    when: hcp_cluster_suffixes is defined and hcp_separate_vpc | default(false)
+
   - name: Render HyperShift PrivateLink credentials secret
     ansible.builtin.template:
       src: "{{ cloud_provider }}/hypershift-privatelink-secret.yaml.j2"
