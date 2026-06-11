@@ -579,7 +579,6 @@ resource "aws_route53_zone_association" "hcp_pvtpl_hypershift_local_connected" {
   zone_id = aws_route53_zone.hcp_pvtpl_hypershift_local[each.key].zone_id
   vpc_id  = aws_vpc.connected.id
 }
-}
 
 # ── PrivateLink: IAM User + Access Key ────────────────────────────────────────
 # The HyperShift operator needs an IAM user with EC2/ELB permissions to
