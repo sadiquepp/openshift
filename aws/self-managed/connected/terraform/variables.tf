@@ -94,3 +94,31 @@ variable "installer_disk_size" {
   type        = number
   default     = 50
 }
+
+# ── HCP Cross-Account ────────────────────────────────────────────────────────
+
+variable "hcp_xacct_cluster_suffixes" {
+  description = "List of HCP cluster suffixes to deploy into a separate AWS account (e.g. [\"hcp3\"]). Resources (VPC, IAM, OIDC, Route53) are created in the HCP account via assume_role. Must not overlap with hcp_cluster_suffixes."
+  type        = list(string)
+  default     = []
+}
+
+variable "hcp_account_role_arn" {
+  description = "ARN of the IAM role to assume in the HCP account (e.g. arn:aws:iam::123456789012:role/TerraformHCPRole). Required when hcp_xacct_cluster_suffixes is non-empty."
+  type        = string
+  default     = ""
+}
+
+check "hcp_xacct_requires_role_arn" {
+  assert {
+    condition     = length(var.hcp_xacct_cluster_suffixes) == 0 || var.hcp_account_role_arn != ""
+    error_message = "hcp_account_role_arn must be set when hcp_xacct_cluster_suffixes is non-empty."
+  }
+}
+
+check "hcp_no_suffix_overlap" {
+  assert {
+    condition     = length(setintersection(toset(var.hcp_cluster_suffixes), toset(var.hcp_xacct_cluster_suffixes))) == 0
+    error_message = "hcp_cluster_suffixes and hcp_xacct_cluster_suffixes must not overlap."
+  }
+}

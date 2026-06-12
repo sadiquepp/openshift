@@ -58,9 +58,9 @@ spec:
   configuration: {}
   controllerAvailabilityPolicy: HighlyAvailable
   dns:
-    baseDomain: {{ openshift_base_domain }}
+    baseDomain: {{ hcp_base_domains[hcp_suffix] }}
     privateZoneID: {{ hcp_private_zone_ids[hcp_suffix] }}
-    publicZoneID: {{ hcp_public_zone_id }}
+    publicZoneID: {{ hcp_public_zone_ids[hcp_suffix] }}
   etcd:
     managed:
       storage:
@@ -96,13 +96,13 @@ spec:
       - key: red-hat-managed
         value: "true"
       rolesRef:
-        controlPlaneOperatorARN: arn:aws:iam::{{ aws_account_number }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-control-plane-operator
-        imageRegistryARN: arn:aws:iam::{{ aws_account_number }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-openshift-image-registry
-        ingressARN: arn:aws:iam::{{ aws_account_number }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-openshift-ingress
-        kubeCloudControllerARN: arn:aws:iam::{{ aws_account_number }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-cloud-controller
-        networkARN: arn:aws:iam::{{ aws_account_number }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-cloud-network-config-controller
-        nodePoolManagementARN: arn:aws:iam::{{ aws_account_number }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-node-pool
-        storageARN: arn:aws:iam::{{ aws_account_number }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-aws-ebs-csi-driver-controller
+        controlPlaneOperatorARN: arn:aws:iam::{{ hcp_account_numbers[hcp_suffix] }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-control-plane-operator
+        imageRegistryARN: arn:aws:iam::{{ hcp_account_numbers[hcp_suffix] }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-openshift-image-registry
+        ingressARN: arn:aws:iam::{{ hcp_account_numbers[hcp_suffix] }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-openshift-ingress
+        kubeCloudControllerARN: arn:aws:iam::{{ hcp_account_numbers[hcp_suffix] }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-cloud-controller
+        networkARN: arn:aws:iam::{{ hcp_account_numbers[hcp_suffix] }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-cloud-network-config-controller
+        nodePoolManagementARN: arn:aws:iam::{{ hcp_account_numbers[hcp_suffix] }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-node-pool
+        storageARN: arn:aws:iam::{{ hcp_account_numbers[hcp_suffix] }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-aws-ebs-csi-driver-controller
     type: AWS
   pullSecret:
     name: {{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-pull-secret

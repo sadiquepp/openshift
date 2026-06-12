@@ -164,40 +164,40 @@
     ansible.builtin.template:
       src: "{{ cloud_provider }}/hosted-cluster-hcp-vpc.yaml.j2"
       dest: "{{ home_dir }}/hosted-cluster-{{ hcp_suffix }}-vpc.yaml"
-    loop: "{{ hcp_cluster_suffixes }}"
+    loop: "{{ hcp_vpc_suffixes | default([]) }}"
     loop_control:
       loop_var: hcp_suffix
-    when: hcp_cluster_suffixes is defined and hcp_separate_vpc | default(false)
+    when: hcp_vpc_suffixes is defined and hcp_vpc_suffixes | length > 0
 
   - name: Render HCP cluster manifests for separate VPC (private endpoint)
     ansible.builtin.template:
       src: "{{ cloud_provider }}/hosted-cluster-hcp-vpc-pvt.yaml.j2"
       dest: "{{ home_dir }}/hosted-cluster-{{ hcp_suffix }}-vpc-pvt.yaml"
-    loop: "{{ hcp_cluster_suffixes }}"
+    loop: "{{ hcp_vpc_suffixes | default([]) }}"
     loop_control:
       loop_var: hcp_suffix
-    when: hcp_cluster_suffixes is defined and hcp_separate_vpc | default(false)
+    when: hcp_vpc_suffixes is defined and hcp_vpc_suffixes | length > 0
 
   - name: Render HCP cluster manifests for separate VPC (PublicAndPrivate endpoint)
     ansible.builtin.template:
       src: "{{ cloud_provider }}/hosted-cluster-hcp-vpc-pvtpl.yaml.j2"
       dest: "{{ home_dir }}/hosted-cluster-{{ hcp_suffix }}-vpc-pvtpl.yaml"
-    loop: "{{ hcp_cluster_suffixes }}"
+    loop: "{{ hcp_vpc_suffixes | default([]) }}"
     loop_control:
       loop_var: hcp_suffix
-    when: hcp_cluster_suffixes is defined and hcp_separate_vpc | default(false)
+    when: hcp_vpc_suffixes is defined and hcp_vpc_suffixes | length > 0
 
   - name: Render HyperShift PrivateLink credentials secret
     ansible.builtin.template:
       src: "{{ cloud_provider }}/hypershift-privatelink-secret.yaml.j2"
       dest: "{{ home_dir }}/hypershift-privatelink-secret.yaml"
-    when: hcp_cluster_suffixes is defined and hcp_cluster_suffixes | length > 0
+    when: (hcp_cluster_suffixes is defined and hcp_cluster_suffixes | length > 0) or (hcp_xacct_cluster_suffixes is defined and hcp_xacct_cluster_suffixes | length > 0)
 
   - name: Render HyperShift OIDC S3 credentials secret
     ansible.builtin.template:
       src: "{{ cloud_provider }}/hypershift-oidc-s3-secret.yaml.j2"
       dest: "{{ home_dir }}/hypershift-oidc-s3-secret.yaml"
-    when: hcp_cluster_suffixes is defined and hcp_cluster_suffixes | length > 0
+    when: (hcp_cluster_suffixes is defined and hcp_cluster_suffixes | length > 0) or (hcp_xacct_cluster_suffixes is defined and hcp_xacct_cluster_suffixes | length > 0)
 
   - name: Copy install-config into install directories
     copy:

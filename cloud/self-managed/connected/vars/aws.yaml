@@ -30,13 +30,18 @@ aws_region: ap-southeast-1
 hcp_cluster_suffixes:
   - hcp1
 
+hcp_xacct_cluster_suffixes: []
+hcp_vpc_suffixes: []
 hcp_issuer_urls: {}
+hcp_account_numbers: {}
+hcp_base_domains: {}
+hcp_public_zone_ids: {}
 hcp_separate_vpc: false
-hcp_vpc_id: ""
-hcp_vpc_cidr: ""
-hcp_subnet_id_a: ""
-hcp_subnet_id_b: ""
-hcp_subnet_id_c: ""
+hcp_vpc_ids: {}
+hcp_vpc_cidrs: {}
+hcp_subnet_ids_a: {}
+hcp_subnet_ids_b: {}
+hcp_subnet_ids_c: {}
 hcp_pl_access_key_id: ""
 hcp_pl_secret_access_key: ""
 hcp_oidc_bucket_name: ""

@@ -16,4 +16,27 @@ provider "aws" {
   region = var.aws_region
 }
 
+provider "aws" {
+  alias  = "hcp"
+  region = var.aws_region
+}
+
+provider "aws" {
+  alias  = "xacct"
+  region = var.aws_region
+
+  assume_role {
+    role_arn     = var.hcp_account_role_arn != "" ? var.hcp_account_role_arn : null
+    session_name = var.hcp_account_role_arn != "" ? "terraform-hcp-xacct" : null
+  }
+}
+
 data "aws_caller_identity" "current" {}
+
+data "aws_caller_identity" "hcp" {
+  provider = aws.hcp
+}
+
+data "aws_caller_identity" "xacct" {
+  provider = aws.xacct
+}

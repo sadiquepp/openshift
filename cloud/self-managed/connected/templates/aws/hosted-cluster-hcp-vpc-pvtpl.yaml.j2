@@ -59,9 +59,9 @@ spec:
   configuration: {}
   controllerAvailabilityPolicy: HighlyAvailable
   dns:
-    baseDomain: {{ openshift_base_domain }}
+    baseDomain: {{ hcp_base_domains[hcp_suffix] }}
     privateZoneID: {{ hcp_pvtpl_private_zone_ids[hcp_suffix] }}
-    publicZoneID: {{ hcp_public_zone_id }}
+    publicZoneID: {{ hcp_public_zone_ids[hcp_suffix] }}
   etcd:
     managed:
       storage:
@@ -78,7 +78,7 @@ spec:
     clusterNetwork:
     - cidr: 10.132.0.0/14
     machineNetwork:
-    - cidr: {{ hcp_vpc_cidr }}
+    - cidr: {{ hcp_vpc_cidrs[hcp_suffix] }}
     networkType: OVNKubernetes
     serviceNetwork:
     - cidr: 172.31.0.0/16
@@ -87,8 +87,8 @@ spec:
     aws:
       cloudProviderConfig:
         subnet:
-          id: {{ hcp_subnet_id_a }}
-        vpc: {{ hcp_vpc_id }}
+          id: {{ hcp_subnet_ids_a[hcp_suffix] }}
+        vpc: {{ hcp_vpc_ids[hcp_suffix] }}
         zone: {{ aws_region }}a
       endpointAccess: PublicAndPrivate
       multiArch: false
@@ -97,13 +97,13 @@ spec:
       - key: red-hat-managed
         value: "true"
       rolesRef:
-        controlPlaneOperatorARN: arn:aws:iam::{{ aws_account_number }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-control-plane-operator
-        imageRegistryARN: arn:aws:iam::{{ aws_account_number }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-openshift-image-registry
-        ingressARN: arn:aws:iam::{{ aws_account_number }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-openshift-ingress
-        kubeCloudControllerARN: arn:aws:iam::{{ aws_account_number }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-cloud-controller
-        networkARN: arn:aws:iam::{{ aws_account_number }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-cloud-network-config-controller
-        nodePoolManagementARN: arn:aws:iam::{{ aws_account_number }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-node-pool
-        storageARN: arn:aws:iam::{{ aws_account_number }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-aws-ebs-csi-driver-controller
+        controlPlaneOperatorARN: arn:aws:iam::{{ hcp_account_numbers[hcp_suffix] }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-control-plane-operator
+        imageRegistryARN: arn:aws:iam::{{ hcp_account_numbers[hcp_suffix] }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-openshift-image-registry
+        ingressARN: arn:aws:iam::{{ hcp_account_numbers[hcp_suffix] }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-openshift-ingress
+        kubeCloudControllerARN: arn:aws:iam::{{ hcp_account_numbers[hcp_suffix] }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-cloud-controller
+        networkARN: arn:aws:iam::{{ hcp_account_numbers[hcp_suffix] }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-cloud-network-config-controller
+        nodePoolManagementARN: arn:aws:iam::{{ hcp_account_numbers[hcp_suffix] }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-node-pool
+        storageARN: arn:aws:iam::{{ hcp_account_numbers[hcp_suffix] }}:role/{{ openshift_cluster_name_suffix }}-{{ hcp_suffix }}-aws-ebs-csi-driver-controller
     type: AWS
   pullSecret:
     name: {{ openshift_cluster_name_suffix }}-{{ pl }}-pull-secret
@@ -160,7 +160,7 @@ spec:
         size: 120
         type: gp3
       subnet:
-        id: {{ hcp_subnet_id_a }}
+        id: {{ hcp_subnet_ids_a[hcp_suffix] }}
     type: AWS
   release:
     image: quay.io/openshift-release-dev/ocp-release:{{ openshift_version }}-x86_64
@@ -192,7 +192,7 @@ spec:
         size: 120
         type: gp3
       subnet:
-        id: {{ hcp_subnet_id_b }}
+        id: {{ hcp_subnet_ids_b[hcp_suffix] }}
     type: AWS
   release:
     image: quay.io/openshift-release-dev/ocp-release:{{ openshift_version }}-x86_64
@@ -224,7 +224,7 @@ spec:
         size: 120
         type: gp3
       subnet:
-        id: {{ hcp_subnet_id_c }}
+        id: {{ hcp_subnet_ids_c[hcp_suffix] }}
     type: AWS
   release:
     image: quay.io/openshift-release-dev/ocp-release:{{ openshift_version }}-x86_64

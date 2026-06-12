@@ -19,17 +19,46 @@ aws_region = "ap-southeast-1"
 # compute_replicas       = 3
 # control_plane_replicas = 3
 
-# ── Self-Managed HCP Operator Roles ──────────────────────────────────────────
-# List of HCP cluster suffixes. Each entry creates an OIDC provider + 7 roles.
+# ── Self-Managed HCP Operator Roles (same account) ────────────────────────────
+# Clusters listed here deploy into the management account's VPC.
+# Each entry creates an OIDC provider + 7 roles in the management account.
 # hcp_cluster_suffixes = ["hcp1"]              # single cluster
 # hcp_cluster_suffixes = ["hcp1", "hcp2"]      # two clusters
 
-# ── HCP Separate VPC (optional) ─────────────────────────────────────────────
-# Deploy HCP clusters into a separate VPC instead of the main connected VPC.
+# ── HCP Separate VPC (optional, same account) ─────────────────────────────────
+# Deploy same-account HCP clusters into a separate VPC instead of the
+# main connected VPC. Only affects hcp_cluster_suffixes clusters.
 # hcp_separate_vpc         = true
 # hcp_vpc_cidr             = "172.17.0.0/16"
 # hcp_private_subnet_cidrs = ["172.17.1.0/24", "172.17.2.0/24", "172.17.3.0/24"]
 # hcp_public_subnet_cidrs  = ["172.17.4.0/24", "172.17.5.0/24", "172.17.6.0/24"]
+
+# ── HCP Cross-Account (optional) ──────────────────────────────────────────────
+# Clusters listed here deploy into a separate AWS account. A dedicated VPC,
+# IAM roles, OIDC providers, Route53 zones, and DNS delegation are created
+# in the HCP account automatically. Suffixes must NOT overlap with
+# hcp_cluster_suffixes — each suffix belongs to exactly one account.
+#
+# Prerequisites:
+#   1. Create TerraformHCPRole in HCP account with trust policy for the
+#      management account's bastion instance role (see README)
+#   2. Add sts:AssumeRole permission to bastion instance role
+#
+# hcp_xacct_cluster_suffixes     = ["hcp3"]
+# hcp_account_role_arn           = "arn:aws:iam::123456789012:role/TerraformHCPRole"
+# hcp_xacct_vpc_cidr             = "172.18.0.0/16"
+# hcp_xacct_private_subnet_cidrs = ["172.18.1.0/24", "172.18.2.0/24", "172.18.3.0/24"]
+# hcp_xacct_public_subnet_cidrs  = ["172.18.4.0/24", "172.18.5.0/24", "172.18.6.0/24"]
+
+# ── All three modes can coexist ────────────────────────────────────────────────
+# Example: hcp1/hcp2 in the connected VPC (same account),
+#          hcp3 in a separate VPC (same account),
+#          hcp4 in a separate VPC (different account).
+#
+# hcp_cluster_suffixes           = ["hcp1", "hcp2", "hcp3"]
+# hcp_separate_vpc               = true                        # hcp1-3 get -vpc manifests
+# hcp_xacct_cluster_suffixes     = ["hcp4"]
+# hcp_account_role_arn           = "arn:aws:iam::123456789012:role/TerraformHCPRole"
 
 # ── Bastion EC2 ──────────────────────────────────────────────────────────────
 ssh_private_key_path    = "~/.ssh/id_rsa"

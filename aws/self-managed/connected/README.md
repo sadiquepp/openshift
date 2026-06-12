@@ -13,10 +13,10 @@ for details.
 
 ```
                    ┌──────────────────────────────────────────────────┐
-                   │        Connected VPC (172.16.0.0/16)            │
+                   │        Connected VPC (172.16.0.0/16)             │
                    │                                                  │
                    │  ┌──────────────────────────────────────────┐    │
-  Internet ◄─ IGW ◄┤  │  Public Subnets (AZ1, AZ2, AZ3)         │    │
+  Internet ◄─ IGW ◄┤  │  Public Subnets (AZ1, AZ2, AZ3)          │    │
                    │  │  172.16.4-6.0/24                         │    │
                    │  │                                          │    │
                    │  │  ┌──────────────┐    ┌───────────┐       │    │
@@ -28,7 +28,7 @@ for details.
                    │  └────────────────────────────┼─────────────┘    │
                    │                               │                  │
                    │  ┌────────────────────────────┼─────────────┐    │
-                   │  │  Private Subnets (AZ1, AZ2, AZ3)        │    │
+                   │  │  Private Subnets (AZ1, AZ2, AZ3)         │    │
                    │  │  172.16.1-3.0/24                         │    │
                    │  │                                          │    │
                    │  │  OCP cluster nodes route to internet     │    │
@@ -72,12 +72,13 @@ connected/
 ├── deploy.sh                    # Environment setup script
 ├── README.md                    # This file
 ├── terraform/
-│   ├── main.tf                      # Provider configuration
+│   ├── main.tf                      # Provider configuration (default + aws.hcp alias)
 │   ├── variables.tf                 # All input variables
 │   ├── vpc.tf                       # VPC, subnets, IGW, NAT GW, route tables, S3 endpoint
 │   ├── iam.tf                       # IAM role + instance profile for bastion EC2
 │   ├── ec2.tf                       # SSH key pair, security group, bastion EC2 instance
-│   ├── hcp-roles.tf                 # HCP: OIDC bucket, CloudFront, IAM roles, Route53 zones
+│   ├── hcp-roles.tf                 # HCP: OIDC bucket, CloudFront, IAM roles, Route53 zones, DNS delegation
+│   ├── hcp-vpc.tf                   # HCP: optional separate VPC (same-account or cross-account)
 │   ├── ansible.tf                   # Generated Ansible inventory + vars
 │   ├── outputs.tf                   # All outputs (VPC IDs, IPs, hosted zone, etc.)
 │   └── scripts/
@@ -226,15 +227,25 @@ To destroy:
 | `installer_disk_size` | `50` | Root volume size in GB |
 | `ssh_private_key_path` | `~/.ssh/id_rsa` | Path to SSH private key |
 
-### HCP Clusters
+### HCP Clusters (Same Account)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `hcp_cluster_suffixes` | `[]` | List of HCP cluster suffixes (e.g. `["hcp1", "hcp2"]`). Empty disables HCP. |
-| `hcp_separate_vpc` | `false` | When true, create a separate VPC for HCP worker nodes. |
-| `hcp_vpc_cidr` | `172.17.0.0/16` | CIDR for the HCP VPC (only when `hcp_separate_vpc = true`). |
-| `hcp_private_subnet_cidrs` | `[172.17.1-3.0/24]` | Private subnet CIDRs for HCP VPC. |
-| `hcp_public_subnet_cidrs` | `[172.17.4-6.0/24]` | Public subnet CIDRs for HCP VPC. |
+| `hcp_cluster_suffixes` | `[]` | List of HCP cluster suffixes for same-account deployment (e.g. `["hcp1", "hcp2"]`). |
+| `hcp_separate_vpc` | `false` | When true, create a separate VPC for same-account HCP workers. |
+| `hcp_vpc_cidr` | `172.17.0.0/16` | CIDR for the same-account HCP VPC. |
+| `hcp_private_subnet_cidrs` | `[172.17.1-3.0/24]` | Private subnet CIDRs for same-account HCP VPC. |
+| `hcp_public_subnet_cidrs` | `[172.17.4-6.0/24]` | Public subnet CIDRs for same-account HCP VPC. |
+
+### HCP Clusters (Cross Account)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `hcp_xacct_cluster_suffixes` | `[]` | List of HCP cluster suffixes for cross-account deployment. Must not overlap with `hcp_cluster_suffixes`. |
+| `hcp_account_role_arn` | `""` | ARN of TerraformHCPRole in HCP account. Required when `hcp_xacct_cluster_suffixes` is non-empty. |
+| `hcp_xacct_vpc_cidr` | `172.18.0.0/16` | CIDR for the cross-account HCP VPC. |
+| `hcp_xacct_private_subnet_cidrs` | `[172.18.1-3.0/24]` | Private subnet CIDRs for cross-account HCP VPC. |
+| `hcp_xacct_public_subnet_cidrs` | `[172.18.4-6.0/24]` | Public subnet CIDRs for cross-account HCP VPC. |
 
 ---
 
@@ -253,9 +264,12 @@ After `terraform apply`, these outputs are available:
 | `vpc_owner_aws_account_number` | AWS account number |
 | `hcp_oidc_bucket_name` | OIDC S3 bucket name (when HCP enabled) |
 | `hcp_cloudfront_domain` | CloudFront domain for OIDC endpoint (when HCP enabled) |
-| `hcp_public_zone_id` | Public Route53 zone ID (when HCP enabled) |
+| `hcp_public_zone_ids` | Per-cluster public Route53 zone IDs |
+| `hcp_account_numbers` | Per-cluster AWS account IDs where HCP resources live |
+| `hcp_base_domains` | Per-cluster base domains (delegated subdomains for cross-account) |
 | `hcp_private_zone_ids` | Per-cluster private Route53 zone IDs |
-| `hcp_operator_role_arns` | Per-cluster map of 7 operator role ARNs |
+| `hcp_operator_role_arns` | Per-cluster map of 7 operator role ARNs (same-account) |
+| `hcp_xacct_operator_role_arns` | Per-cluster map of 7 operator role ARNs (cross-account) |
 
 These values are also automatically written to `ansible-vars.json` for use
 by the Ansible playbook.
@@ -265,20 +279,30 @@ by the Ansible playbook.
 ## HCP Clusters (Hosted Control Planes)
 
 This environment supports deploying one or more self-managed HCP clusters.
-HCP worker nodes can be placed in either:
+HCP worker nodes can be placed in:
 
 - The **main connected VPC** (same VPC as the management cluster), or
-- A **separate HCP VPC** (`hcp_separate_vpc = true`)
+- A **separate HCP VPC** in the same account (`hcp_separate_vpc = true`), or
+- A **separate HCP VPC in a different AWS account** (`hcp_xacct_cluster_suffixes`)
 
-Terraform creates all the required AWS resources (OIDC, IAM, DNS, worker
-profiles), and Ansible renders per-cluster HostedCluster + NodePool manifests
-on the bastion. The management cluster (HyperShift control plane) always
-runs in the connected VPC regardless of where workers are placed.
+**All three modes coexist.** Use two separate suffix lists to assign clusters
+to different deployment targets:
+
+- `hcp_cluster_suffixes` → IAM roles, OIDC, and zones created in the **management account**
+- `hcp_xacct_cluster_suffixes` → IAM roles, OIDC, and zones created in the **HCP account**
+
+Suffixes must not overlap. S3, CloudFront, and SA keys are shared in the
+management account (CloudFront is globally accessible). Terraform creates
+all the required AWS resources, and Ansible renders per-cluster HostedCluster
++ NodePool manifests on the bastion. The management cluster (HyperShift
+control plane) always runs in the connected VPC regardless of where workers
+are placed. Communication between control plane and workers uses the
+Konnectivity tunnel.
 
 ### How It Works
 
-When `hcp_cluster_suffixes` is set (e.g. `["hcp1", "hcp2"]`), Terraform
-creates the following resources **per cluster suffix**:
+When `hcp_cluster_suffixes` or `hcp_xacct_cluster_suffixes` is set,
+Terraform creates the following resources **per cluster suffix**:
 
 | Resource | Purpose |
 |----------|---------|
@@ -293,8 +317,11 @@ creates the following resources **per cluster suffix**:
 | RSA key pair (4096-bit) | Per-cluster service account signing key |
 | OIDC discovery + JWKS | `.well-known/openid-configuration` and `openid/v1/jwks` in S3 |
 
-The existing **public Route53 zone** for `openshift_base_domain` is looked up
-(not created) and its zone ID is passed as `publicZoneID`.
+For **same-account** deployments, the existing public Route53 zone for
+`openshift_base_domain` is looked up and its zone ID is shared as
+`publicZoneID`. For **cross-account** deployments, a delegated public
+subdomain zone (`<suffix>.<base_domain>`) is created per cluster in the HCP
+account, with NS delegation records in the management account.
 
 ### Architecture
 
@@ -315,19 +342,23 @@ The existing **public Route53 zone** for `openshift_base_domain` is looked up
                                     │
         ┌───────────────────────────┴───────────────────────────┐
         │                                                       │
-  Connected VPC (172.16.0.0/16)                   HCP VPC (172.17.0.0/16)
+  Connected VPC (172.16.0.0/16)              HCP VPC (same-acct / cross-acct)
   ┌─────────────────────────────┐         ┌─────────────────────────────┐
-  │ Management cluster          │         │ (optional, hcp_separate_vpc)│
+  │ Management cluster          │         │ (same or different account) │
   │  + HyperShift control plane │         │                             │
   │                             │         │  Private subnets (AZ1-3)    │
-  │  Private subnets (AZ1-3)    │         │  Public subnets  (AZ1-3)    │
-  │  Public subnets  (AZ1-3)    │         │  IGW + NAT + S3 endpoint    │
-  │                             │         │                             │
+  │  Private subnets (AZ1-3)    │  Konnek │  Public subnets  (AZ1-3)    │
+  │  Public subnets  (AZ1-3)    │◄───────►│  IGW + NAT + S3 endpoint    │
+  │                             │  tivity │                             │
   │  HCP workers (default)      │         │  HCP workers (separate)     │
   └─────────────────────────────┘         └─────────────────────────────┘
-        │                                                       │
-        └────── Route53 private zones associated with both VPCs ┘
+  Management Account                      HCP Account (cross-account)
 ```
+
+> For same-account separate VPC, Route53 private zones are associated with
+> both VPCs. For cross-account, the Konnectivity tunnel handles all
+> control-plane-to-worker communication; no Route53 zone associations are
+> needed across accounts.
 
 ### Enable HCP
 
@@ -337,8 +368,7 @@ Add the cluster suffixes to `terraform.tfvars`:
 hcp_cluster_suffixes = ["hcp1"]
 ```
 
-To deploy HCP workers into a **separate VPC** instead of the connected VPC,
-also set:
+To deploy HCP workers into a **separate VPC** (same account), also set:
 
 ```hcl
 hcp_separate_vpc = true
@@ -352,12 +382,135 @@ hcp_separate_vpc = true
 Then run `terraform apply` and `deploy.sh` as usual. Ansible will render
 manifests for each suffix on the bastion.
 
-### Adding More HCP Clusters Later
+### Cross-Account HCP Deployment
 
-To add a new cluster (e.g. `hcp3`), simply append to the list and re-apply:
+To deploy HCP clusters into a **different AWS account**, list the suffixes
+in `hcp_xacct_cluster_suffixes` (not `hcp_cluster_suffixes`). The VPC,
+IAM roles, OIDC, Route53 zones, and DNS delegation are created in the HCP
+account via `sts:AssumeRole`. Same-account and cross-account suffixes
+coexist in a single `terraform apply`.
+
+#### Prerequisites
+
+**1. Create `TerraformHCPRole` in the HCP account** with a trust policy
+allowing the management account's bastion instance role to assume it:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Principal": {
+      "AWS": "arn:aws:iam::<MANAGEMENT_ACCOUNT_ID>:role/<BASTION_INSTANCE_ROLE>"
+    },
+    "Action": "sts:AssumeRole"
+  }]
+}
+```
+
+Attach permissions for VPC, IAM, Route53, S3, CloudFront, and EC2 to this
+role (or `AdministratorAccess` for testing).
+
+```bash
+# In the HCP account:
+aws iam create-role \
+  --role-name TerraformHCPRole \
+  --assume-role-policy-document file://trust-policy.json
+
+aws iam attach-role-policy \
+  --role-name TerraformHCPRole \
+  --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+```
+
+**2. Add `sts:AssumeRole` permission** to the bastion's instance role in the
+management account:
+
+```json
+{
+  "Effect": "Allow",
+  "Action": "sts:AssumeRole",
+  "Resource": "arn:aws:iam::<HCP_ACCOUNT_ID>:role/TerraformHCPRole"
+}
+```
+
+#### Configuration
 
 ```hcl
+# Same-account clusters (connected VPC or separate VPC)
+hcp_cluster_suffixes = ["hcp1", "hcp2"]
+
+# Cross-account clusters (VPC created automatically in HCP account)
+hcp_xacct_cluster_suffixes = ["hcp3"]
+hcp_account_role_arn       = "arn:aws:iam::123456789012:role/TerraformHCPRole"
+
+# Optional: customise cross-account VPC CIDRs
+# hcp_xacct_vpc_cidr             = "172.18.0.0/16"
+# hcp_xacct_private_subnet_cidrs = ["172.18.1.0/24", "172.18.2.0/24", "172.18.3.0/24"]
+# hcp_xacct_public_subnet_cidrs  = ["172.18.4.0/24", "172.18.5.0/24", "172.18.6.0/24"]
+```
+
+#### How DNS Delegation Works
+
+For each cross-account cluster suffix, Terraform:
+
+1. Creates a **public hosted zone** `<suffix>.<base_domain>` in the HCP
+   account (e.g. `hcp3.aws.example.com`)
+2. Creates **NS records** in the management account's parent zone
+   (`aws.example.com`) pointing to the delegated zone's name servers
+3. Sets `baseDomain` in the HostedCluster manifests to the delegated subdomain
+
+This allows the HCP account's ingress operator to freely manage DNS records
+within the delegated zone without cross-account Route53 permissions.
+
+```
+Management Account                    HCP Account
+┌──────────────────────┐     NS      ┌────────────────────────────┐
+│ aws.example.com      │─delegation─►│ hcp3.aws.example.com       │
+│ (public zone)        │             │ (public zone)              │
+│                      │             │                            │
+│ hcp3.aws.example.com │             │ *.apps.ar1-hcp3.hcp3....   │
+│   NS → HCP account   │             │ api.ar1-hcp3.hcp3....      │
+└──────────────────────┘             └────────────────────────────┘
+```
+
+#### Deployment
+
+Cross-account clusters use the `-vpc` manifests:
+
+```bash
+oc apply -f ~/hosted-cluster-hcp3-vpc.yaml       # Public
+oc apply -f ~/hosted-cluster-hcp3-vpc-pvt.yaml   # Private
+oc apply -f ~/hosted-cluster-hcp3-vpc-pvtpl.yaml # PublicAndPrivate
+```
+
+### Coexistence Example
+
+All three deployment modes can be active simultaneously:
+
+```hcl
+# hcp1, hcp2 → same account, connected or separate VPC
+hcp_cluster_suffixes = ["hcp1", "hcp2"]
+hcp_separate_vpc     = true
+
+# hcp3 → different account
+hcp_xacct_cluster_suffixes = ["hcp3"]
+hcp_account_role_arn       = "arn:aws:iam::123456789012:role/TerraformHCPRole"
+```
+
+This produces manifests for:
+- `hcp1`/`hcp2`: connected VPC manifests + same-account `-vpc` manifests (roles in management account)
+- `hcp3`: `-vpc` manifests only (roles in HCP account, VPC in HCP account)
+
+### Adding More HCP Clusters Later
+
+To add a new cluster, append to the appropriate list and re-apply:
+
+```hcl
+# Same account
 hcp_cluster_suffixes = ["hcp1", "hcp2", "hcp3"]
+
+# Cross account
+hcp_xacct_cluster_suffixes = ["hcp4", "hcp5"]
 ```
 
 ```bash
@@ -365,8 +518,8 @@ cd terraform
 terraform apply
 ```
 
-Terraform will create only the new resources for `hcp3` without affecting
-existing clusters. Re-run Ansible to render the new manifest on the bastion.
+Terraform will create only the new resources without affecting existing
+clusters. Re-run Ansible to render the new manifests on the bastion.
 
 ### Deploy an HCP Cluster
 
@@ -426,7 +579,8 @@ oc delete namespace <prefix>-hcp1-pvtpl   # public+private
 ```
 
 To remove the IAM roles, Route53 zones, and OIDC resources, remove the suffix
-from `hcp_cluster_suffixes` in `terraform.tfvars` and run `terraform apply`.
+from `hcp_cluster_suffixes` or `hcp_xacct_cluster_suffixes` in
+`terraform.tfvars` and run `terraform apply`.
 
 ### Per-Cluster Resources Created by Terraform
 
@@ -459,7 +613,10 @@ Ansible renders the following files on the bastion:
 | `~/hosted-cluster-<suffix>-vpc-pvt.yaml` | HCP VPC | Private |
 | `~/hosted-cluster-<suffix>-vpc-pvtpl.yaml` | HCP VPC | PublicAndPrivate |
 
-> The `-vpc` manifests are only rendered when `hcp_separate_vpc = true`.
+> The `-vpc` manifests are rendered for suffixes in `hcp_vpc_suffixes` --
+> which combines `hcp_cluster_suffixes` (when `hcp_separate_vpc = true`)
+> and all `hcp_xacct_cluster_suffixes` (always, since cross-account clusters
+> always deploy into a separate VPC in the HCP account).
 
 Each cluster manifest contains:
 
