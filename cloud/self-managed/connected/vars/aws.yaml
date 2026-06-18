@@ -47,3 +47,8 @@ hcp_pl_secret_access_key: ""
 hcp_oidc_bucket_name: ""
 hcp_pvt_private_zone_ids: {}
 hcp_pvtpl_private_zone_ids: {}
+
+letsencrypt_enabled: false
+letsencrypt_cert_pem: ""
+letsencrypt_key_pem: ""
+letsencrypt_issuer_pem: ""

@@ -187,6 +187,25 @@
       loop_var: hcp_suffix
     when: hcp_vpc_suffixes is defined and hcp_vpc_suffixes | length > 0
 
+  - name: Render Let's Encrypt API certificate secret
+    ansible.builtin.template:
+      src: "{{ cloud_provider }}/letsencrypt-api-cert-secret.yaml.j2"
+      dest: "{{ home_dir }}/letsencrypt-api-cert-secret.yaml"
+    when: letsencrypt_enabled | default(false) | bool
+
+  - name: Render Let's Encrypt Ingress certificate secret
+    ansible.builtin.template:
+      src: "{{ cloud_provider }}/letsencrypt-ingress-cert-secret.yaml.j2"
+      dest: "{{ home_dir }}/letsencrypt-ingress-cert-secret.yaml"
+    when: letsencrypt_enabled | default(false) | bool
+
+  - name: Render Let's Encrypt cert apply script
+    ansible.builtin.template:
+      src: "{{ cloud_provider }}/apply-letsencrypt-certs.sh.j2"
+      dest: "{{ home_dir }}/apply-letsencrypt-certs.sh"
+      mode: "0755"
+    when: letsencrypt_enabled | default(false) | bool
+
   - name: Render HyperShift PrivateLink credentials secret
     ansible.builtin.template:
       src: "{{ cloud_provider }}/hypershift-privatelink-secret.yaml.j2"

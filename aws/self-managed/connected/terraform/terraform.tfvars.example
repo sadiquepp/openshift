@@ -60,6 +60,12 @@ aws_region = "ap-southeast-1"
 # hcp_xacct_cluster_suffixes     = ["hcp4"]
 # hcp_account_role_arn           = "arn:aws:iam::123456789012:role/TerraformHCPRole"
 
+# ── Let's Encrypt Certificates (optional) ────────────────────────────────────
+# Generate a TLS certificate for API and Ingress (public cluster only).
+# Uses DNS-01 challenge against the Route53 public zone for validation.
+# letsencrypt_enabled = true
+# letsencrypt_email   = "admin@example.com"
+
 # ── Bastion EC2 ──────────────────────────────────────────────────────────────
 ssh_private_key_path    = "~/.ssh/id_rsa"
 installer_ami           = "ami-04698733964af06d5"

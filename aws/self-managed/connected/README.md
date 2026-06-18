@@ -699,6 +699,77 @@ Kubernetes Secret and referenced by the HostedCluster's
 `spec.serviceAccountSigningKey`.
 
 ---
+
+## Let's Encrypt Certificates (Optional)
+
+Terraform can automatically generate Let's Encrypt TLS certificates for the
+**public** connected OCP cluster's API and Ingress endpoints using the ACME
+provider with DNS-01 challenge via Route53. The certificates, Kubernetes
+Secrets, and an apply script are rendered on the bastion by Ansible.
+
+### Prerequisites
+
+- A **public Route53 hosted zone** for `openshift_base_domain` (same zone
+  required for the public cluster install)
+- The bastion's IAM role must have `route53:GetChange` and
+  `route53:ChangeResourceRecordSets` on the public zone (already granted
+  by the default setup)
+
+### Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `letsencrypt_enabled` | `false` | Enable Let's Encrypt certificate generation |
+| `letsencrypt_email` | `""` | ACME registration email (required when enabled) |
+
+### Enable
+
+Add to `terraform.tfvars`:
+
+```hcl
+letsencrypt_enabled = true
+letsencrypt_email   = "admin@example.com"
+```
+
+Then run `terraform apply` and re-run `deploy.sh`. Terraform generates a
+single certificate with two SANs:
+
+- `api.<cluster_name>.<base_domain>`
+- `*.apps.<cluster_name>.<base_domain>`
+
+### Apply to Cluster
+
+After the playbook completes, the bastion has three files:
+
+| File | Description |
+|------|-------------|
+| `~/letsencrypt-api-cert-secret.yaml` | TLS Secret for `openshift-config` namespace |
+| `~/letsencrypt-ingress-cert-secret.yaml` | TLS Secret for `openshift-ingress` namespace |
+| `~/apply-letsencrypt-certs.sh` | Script to apply secrets and patch APIServer + IngressController |
+
+Run the script after the cluster is up:
+
+```bash
+ssh ec2-user@$BASTION_IP
+export KUBECONFIG=~/install-dir-public/auth/kubeconfig
+./apply-letsencrypt-certs.sh
+```
+
+The script:
+1. Creates TLS Secrets in `openshift-config` and `openshift-ingress`
+2. Patches `apiserver/cluster` with a `namedCertificate` for the API hostname
+3. Patches `ingresscontroller/default` with the ingress certificate
+
+API server pods will restart automatically (takes a few minutes).
+
+### Renewal
+
+Let's Encrypt certificates are valid for 90 days. Re-running `terraform apply`
+will auto-renew when the certificate has fewer than 30 days remaining
+(`min_days_remaining = 30`). After renewal, re-run the Ansible playbook to
+update the secrets on the bastion, then re-run `./apply-letsencrypt-certs.sh`.
+
+---
 ## Access Bastion VNC Console for GUI Access
 ```bash
 sudo su - vncuser

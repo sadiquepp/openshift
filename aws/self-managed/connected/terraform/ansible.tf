@@ -49,6 +49,10 @@ resource "local_file" "ansible_vars" {
       hcp_xacct_cluster_suffixes               = var.hcp_xacct_cluster_suffixes
       hcp_separate_vpc                         = var.hcp_separate_vpc
       hcp_vpc_suffixes                         = local.hcp_vpc_suffixes
+      letsencrypt_enabled                      = var.letsencrypt_enabled
+      letsencrypt_cert_pem                     = var.letsencrypt_enabled ? acme_certificate.cluster[0].certificate_pem : ""
+      letsencrypt_key_pem                      = var.letsencrypt_enabled ? acme_certificate.cluster[0].private_key_pem : ""
+      letsencrypt_issuer_pem                   = var.letsencrypt_enabled ? acme_certificate.cluster[0].issuer_pem : ""
     },
     local.hcp_enabled ? {
       hcp_account_numbers        = local.hcp_account_numbers
