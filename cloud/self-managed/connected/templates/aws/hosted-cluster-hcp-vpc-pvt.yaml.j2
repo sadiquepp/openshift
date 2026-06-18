@@ -70,6 +70,7 @@ spec:
           storageClassName: gp3-csi
         type: PersistentVolume
     managementType: Managed
+  channel: stable-{{ openshift_major_version }}
   fips: false
   infraID: {{ openshift_cluster_name_suffix }}-{{ pvt }}
   infrastructureAvailabilityPolicy: HighlyAvailable
