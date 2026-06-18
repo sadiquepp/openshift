@@ -739,13 +739,14 @@ single certificate with two SANs:
 
 ### Apply to Cluster
 
-After the playbook completes, the bastion has three files:
+After the playbook completes, the bastion has four files:
 
 | File | Description |
 |------|-------------|
+| `~/letsencrypt-ca-bundle.pem` | Let's Encrypt issuer CA (for cluster trust store) |
 | `~/letsencrypt-api-cert-secret.yaml` | TLS Secret for `openshift-config` namespace |
 | `~/letsencrypt-ingress-cert-secret.yaml` | TLS Secret for `openshift-ingress` namespace |
-| `~/apply-letsencrypt-certs.sh` | Script to apply secrets and patch APIServer + IngressController |
+| `~/apply-letsencrypt-certs.sh` | Script to apply everything per Red Hat docs |
 
 Run the script after the cluster is up:
 
@@ -755,12 +756,22 @@ export KUBECONFIG=~/install-dir-public/auth/kubeconfig
 ./apply-letsencrypt-certs.sh
 ```
 
-The script:
-1. Creates TLS Secrets in `openshift-config` and `openshift-ingress`
-2. Patches `apiserver/cluster` with a `namedCertificate` for the API hostname
-3. Patches `ingresscontroller/default` with the ingress certificate
+The script follows the [Red Hat official procedure](https://docs.redhat.com/en/documentation/openshift_container_platform/4.21/html/security_and_compliance/configuring-certificates):
 
-API server pods will restart automatically (takes a few minutes).
+1. Creates a CA ConfigMap (`letsencrypt-ca`) in `openshift-config` and patches
+   `proxy/cluster` with `trustedCA` so internal components trust the CA
+2. Creates TLS Secrets in `openshift-config` and `openshift-ingress`
+3. Patches `apiserver/cluster` with a `namedCertificate` for the API hostname
+4. Patches `ingresscontroller/default` with the ingress certificate
+
+After the API server pods restart (a few minutes), update your kubeconfig:
+
+```bash
+oc login -u kubeadmin -p <password> https://api.<cluster>.<domain>:6443
+oc config view --flatten > ~/kubeconfig-letsencrypt
+export KUBECONFIG=~/kubeconfig-letsencrypt
+oc get co
+```
 
 ### Renewal
 
