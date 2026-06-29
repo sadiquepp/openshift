@@ -54,5 +54,5 @@ cross_region_subnet_cidr       = "10.99.0.0/26"
 # ── Bastion EC2 ──────────────────────────────────────────────────
 ssh_private_key_path    = "~/.ssh/id_rsa"
 installer_ami           = "ami-04698733964af06d5"
-installer_instance_type = "t2.large"
+installer_instance_type = "c6i.large"
 installer_disk_size     = 100

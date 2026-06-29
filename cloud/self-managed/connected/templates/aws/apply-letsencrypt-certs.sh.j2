@@ -64,14 +64,32 @@ oc patch ingresscontroller default -n openshift-ingress-operator --type=merge -p
 echo ""
 echo "============================================================"
 echo "  Done. API server pods will restart (takes a few minutes)."
-echo ""
-echo "  After kube-apiserver rollout completes, update kubeconfig:"
-echo ""
-echo "    oc login -u kubeadmin -p <password> https://${API_FQDN}:6443"
-echo "    oc config view --flatten > \${HOME}/kubeconfig-letsencrypt"
-echo "    export KUBECONFIG=\${HOME}/kubeconfig-letsencrypt"
-echo ""
-echo "  Verify:"
-echo "    oc get co"
-echo "    curl -v https://${API_FQDN}:6443 2>&1 | grep issuer"
 echo "============================================================"
+echo ""
+
+# ── Step 6: Update kubeconfig CA trust ────────────────────────────────────────
+# The original kubeconfig uses client-certificate auth (system:admin).
+# We keep that but replace the embedded self-signed CA with the system CA bundle
+# which includes Let's Encrypt ISRG Root X1.
+KUBECONFIG_FILE="${KUBECONFIG:-${HOME}/.kube/config}"
+if [ -f "$KUBECONFIG_FILE" ]; then
+  echo "=== Updating kubeconfig to trust Let's Encrypt CA ==="
+  cp "$KUBECONFIG_FILE" "${KUBECONFIG_FILE}.bak"
+  sed -i '/certificate-authority-data:/d' "$KUBECONFIG_FILE"
+  KUBE_CLUSTER=$(KUBECONFIG="$KUBECONFIG_FILE" oc config view --minify --raw -o jsonpath='{.clusters[0].name}' 2>/dev/null || true)
+  if [ -n "$KUBE_CLUSTER" ]; then
+    KUBECONFIG="$KUBECONFIG_FILE" oc config set-cluster "$KUBE_CLUSTER" \
+      --certificate-authority=/etc/pki/tls/certs/ca-bundle.crt
+    echo "  Kubeconfig updated: ${KUBECONFIG_FILE}"
+    echo "  Backup saved:       ${KUBECONFIG_FILE}.bak"
+  fi
+  echo ""
+  echo "  Wait for kube-apiserver rollout, then verify:"
+  echo "    oc get co"
+else
+  echo ""
+  echo "  Could not find kubeconfig at: ${KUBECONFIG_FILE}"
+  echo "  After API server restarts, manually update your kubeconfig:"
+  echo "    sed -i '/certificate-authority-data:/d' <your-kubeconfig>"
+  echo "    oc config set-cluster <cluster> --certificate-authority=/etc/pki/tls/certs/ca-bundle.crt"
+fi

@@ -69,5 +69,5 @@ aws_region = "ap-southeast-1"
 # ── Bastion EC2 ──────────────────────────────────────────────────────────────
 ssh_private_key_path    = "~/.ssh/id_rsa"
 installer_ami           = "ami-04698733964af06d5"
-# installer_instance_type = "t2.medium"
+# installer_instance_type = "c6i.large"
 # installer_disk_size     = 50
