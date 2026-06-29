@@ -764,12 +764,14 @@ The script follows the [Red Hat official procedure](https://docs.redhat.com/en/d
 3. Patches `apiserver/cluster` with a `namedCertificate` for the API hostname
 4. Patches `ingresscontroller/default` with the ingress certificate
 
-After the API server pods restart (a few minutes), update your kubeconfig:
+The script also updates your kubeconfig by removing the embedded self-signed
+CA (`certificate-authority-data`). Without it, `oc` falls back to the system
+root CA pool which includes Let's Encrypt ISRG Root X1. A backup of the
+original kubeconfig is saved as `<kubeconfig>.bak`.
+
+After the API server pods restart (a few minutes), verify:
 
 ```bash
-oc login -u kubeadmin -p <password> https://api.<cluster>.<domain>:6443
-oc config view --flatten > ~/kubeconfig-letsencrypt
-export KUBECONFIG=~/kubeconfig-letsencrypt
 oc get co
 ```
 
