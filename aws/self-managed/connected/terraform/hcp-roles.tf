@@ -477,7 +477,7 @@ resource "aws_iam_role_policy" "hcp_ingress_route53" {
           aws_route53_zone.hcp_private[each.key].arn,
           aws_route53_zone.hcp_pvt_private[each.key].arn,
           aws_route53_zone.hcp_pvtpl_private[each.key].arn,
-          data.aws_route53_zone.public[0].arn,
+          aws_route53_zone.hcp_public_subdomain[0].arn,
         ]
       },
     ]
@@ -490,7 +490,7 @@ resource "aws_route53_zone" "hcp_private" {
   provider = aws.hcp
   for_each = local.hcp_clusters
 
-  name = "${each.value.cluster_name}.${var.openshift_base_domain}"
+  name = "${each.value.cluster_name}.hcp.${var.openshift_base_domain}"
 
   vpc {
     vpc_id = local.hcp_sep_vpc_enabled ? aws_vpc.hcp[0].id : aws_vpc.connected.id
@@ -509,10 +509,33 @@ resource "aws_route53_zone_association" "hcp_private_connected" {
   vpc_id  = aws_vpc.connected.id
 }
 
+# Look up the parent base domain public zone for NS delegation
 data "aws_route53_zone" "public" {
   count        = local.hcp_enabled ? 1 : 0
   name         = var.openshift_base_domain
   private_zone = false
+}
+
+# Public subdomain zone: hcp.<base_domain> — all HCP clusters live under this
+resource "aws_route53_zone" "hcp_public_subdomain" {
+  provider = aws.hcp
+  count    = local.hcp_enabled ? 1 : 0
+
+  name = "hcp.${var.openshift_base_domain}"
+
+  tags = {
+    Name            = "hcp-public-subdomain"
+    red-hat-managed = "true"
+  }
+}
+
+resource "aws_route53_record" "hcp_public_subdomain_ns" {
+  count   = local.hcp_enabled ? 1 : 0
+  zone_id = data.aws_route53_zone.public[0].zone_id
+  name    = "hcp.${var.openshift_base_domain}"
+  type    = "NS"
+  ttl     = 300
+  records = aws_route53_zone.hcp_public_subdomain[0].name_servers
 }
 
 resource "aws_route53_zone" "hcp_hypershift_local" {
@@ -544,7 +567,7 @@ resource "aws_route53_zone" "hcp_pvt_private" {
   provider = aws.hcp
   for_each = local.hcp_pvt_clusters
 
-  name = "${each.value.cluster_name}.${var.openshift_base_domain}"
+  name = "${each.value.cluster_name}.hcp.${var.openshift_base_domain}"
 
   vpc {
     vpc_id = local.hcp_sep_vpc_enabled ? aws_vpc.hcp[0].id : aws_vpc.connected.id
@@ -592,7 +615,7 @@ resource "aws_route53_zone" "hcp_pvtpl_private" {
   provider = aws.hcp
   for_each = local.hcp_pvtpl_clusters
 
-  name = "${each.value.cluster_name}.${var.openshift_base_domain}"
+  name = "${each.value.cluster_name}.hcp.${var.openshift_base_domain}"
 
   vpc {
     vpc_id = local.hcp_sep_vpc_enabled ? aws_vpc.hcp[0].id : aws_vpc.connected.id
@@ -775,7 +798,7 @@ resource "aws_route53_zone" "hcp_xacct_private" {
   provider = aws.xacct
   for_each = local.hcp_xacct_clusters
 
-  name = "${each.value.cluster_name}.${each.key}.${var.openshift_base_domain}"
+  name = "${each.value.cluster_name}.${each.key}.hcp.${var.openshift_base_domain}"
 
   vpc {
     vpc_id = aws_vpc.hcp_xacct[0].id
@@ -807,7 +830,7 @@ resource "aws_route53_zone" "hcp_xacct_pvt_private" {
   provider = aws.xacct
   for_each = local.hcp_xacct_pvt_clusters
 
-  name = "${each.value.cluster_name}.${each.key}.${var.openshift_base_domain}"
+  name = "${each.value.cluster_name}.${each.key}.hcp.${var.openshift_base_domain}"
 
   vpc {
     vpc_id = aws_vpc.hcp_xacct[0].id
@@ -839,7 +862,7 @@ resource "aws_route53_zone" "hcp_xacct_pvtpl_private" {
   provider = aws.xacct
   for_each = local.hcp_xacct_pvtpl_clusters
 
-  name = "${each.value.cluster_name}.${each.key}.${var.openshift_base_domain}"
+  name = "${each.value.cluster_name}.${each.key}.hcp.${var.openshift_base_domain}"
 
   vpc {
     vpc_id = aws_vpc.hcp_xacct[0].id
@@ -875,7 +898,7 @@ resource "aws_route53_zone" "hcp_public_delegated" {
   provider = aws.xacct
   for_each = local.hcp_xacct_clusters
 
-  name = "${each.key}.${var.openshift_base_domain}"
+  name = "${each.key}.hcp.${var.openshift_base_domain}"
 
   tags = {
     Name            = "${each.key}-delegated-public-zone"
@@ -883,17 +906,12 @@ resource "aws_route53_zone" "hcp_public_delegated" {
   }
 }
 
-data "aws_route53_zone" "parent_public" {
-  count        = local.hcp_xacct_enabled ? 1 : 0
-  name         = var.openshift_base_domain
-  private_zone = false
-}
-
+# Cross-account NS delegation goes into the hcp.<base_domain> zone (not the parent)
 resource "aws_route53_record" "hcp_ns_delegation" {
   for_each = local.hcp_xacct_clusters
 
-  zone_id = data.aws_route53_zone.parent_public[0].zone_id
-  name    = "${each.key}.${var.openshift_base_domain}"
+  zone_id = aws_route53_zone.hcp_public_subdomain[0].zone_id
+  name    = "${each.key}.hcp.${var.openshift_base_domain}"
   type    = "NS"
   ttl     = 300
   records = aws_route53_zone.hcp_public_delegated[each.key].name_servers
@@ -984,7 +1002,7 @@ resource "aws_iam_user_policy" "hcp_external_dns" {
           "route53:ListResourceRecordSets"
         ]
         Resource = [
-          "arn:aws:route53:::hostedzone/${data.aws_route53_zone.public[0].zone_id}"
+          "arn:aws:route53:::hostedzone/${aws_route53_zone.hcp_public_subdomain[0].zone_id}"
         ]
       }
     ]
@@ -1008,13 +1026,13 @@ locals {
   )
 
   hcp_base_domains = merge(
-    { for suffix in var.hcp_cluster_suffixes : suffix => var.openshift_base_domain },
-    { for suffix in var.hcp_xacct_cluster_suffixes : suffix => "${suffix}.${var.openshift_base_domain}" }
+    { for suffix in var.hcp_cluster_suffixes : suffix => "hcp.${var.openshift_base_domain}" },
+    { for suffix in var.hcp_xacct_cluster_suffixes : suffix => "${suffix}.hcp.${var.openshift_base_domain}" }
   )
 
   hcp_public_zone_ids = merge(
-    length(var.hcp_cluster_suffixes) > 0 ? {
-      for suffix in var.hcp_cluster_suffixes : suffix => data.aws_route53_zone.public[0].zone_id
+    local.hcp_enabled ? {
+      for suffix in var.hcp_cluster_suffixes : suffix => aws_route53_zone.hcp_public_subdomain[0].zone_id
     } : {},
     {
       for suffix in var.hcp_xacct_cluster_suffixes : suffix => aws_route53_zone.hcp_public_delegated[suffix].zone_id
