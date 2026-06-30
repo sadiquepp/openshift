@@ -44,6 +44,8 @@ hcp_subnet_ids_b: {}
 hcp_subnet_ids_c: {}
 hcp_pl_access_key_id: ""
 hcp_pl_secret_access_key: ""
+hcp_ext_dns_access_key_id: ""
+hcp_ext_dns_secret_access_key: ""
 hcp_oidc_bucket_name: ""
 hcp_pvt_private_zone_ids: {}
 hcp_pvtpl_private_zone_ids: {}

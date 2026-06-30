@@ -510,7 +510,7 @@ resource "aws_route53_zone_association" "hcp_private_connected" {
 }
 
 data "aws_route53_zone" "public" {
-  count        = length(var.hcp_cluster_suffixes) > 0 ? 1 : 0
+  count        = local.hcp_enabled ? 1 : 0
   name         = var.openshift_base_domain
   private_zone = false
 }
@@ -945,6 +945,56 @@ resource "aws_iam_access_key" "hcp_privatelink" {
   provider = aws.hcp
   count    = local.hcp_enabled ? 1 : 0
   user     = aws_iam_user.hcp_privatelink[0].name
+}
+
+# ── External DNS IAM User (management account) ───────────────────────────────
+
+resource "aws_iam_user" "hcp_external_dns" {
+  provider = aws.hcp
+  count    = local.hcp_enabled ? 1 : 0
+  name     = "hypershift-operator-external-dns"
+
+  tags = {
+    Name            = "hypershift-operator-external-dns"
+    red-hat-managed = "true"
+  }
+}
+
+resource "aws_iam_user_policy" "hcp_external_dns" {
+  provider = aws.hcp
+  count    = local.hcp_enabled ? 1 : 0
+  name     = "hypershift-operator-external-dns"
+  user     = aws_iam_user.hcp_external_dns[0].name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "route53:ListHostedZones",
+          "route53:ListHostedZonesByName"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "route53:ChangeResourceRecordSets",
+          "route53:ListResourceRecordSets"
+        ]
+        Resource = [
+          "arn:aws:route53:::hostedzone/${data.aws_route53_zone.public[0].zone_id}"
+        ]
+      }
+    ]
+  })
+}
+
+resource "aws_iam_access_key" "hcp_external_dns" {
+  provider = aws.hcp
+  count    = local.hcp_enabled ? 1 : 0
+  user     = aws_iam_user.hcp_external_dns[0].name
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════

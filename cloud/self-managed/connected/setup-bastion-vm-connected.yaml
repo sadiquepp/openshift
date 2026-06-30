@@ -224,6 +224,12 @@
       dest: "{{ home_dir }}/hypershift-oidc-s3-secret.yaml"
     when: (hcp_cluster_suffixes is defined and hcp_cluster_suffixes | length > 0) or (hcp_xacct_cluster_suffixes is defined and hcp_xacct_cluster_suffixes | length > 0)
 
+  - name: Render HyperShift External DNS credentials secret
+    ansible.builtin.template:
+      src: "{{ cloud_provider }}/hypershift-external-dns-secret.yaml.j2"
+      dest: "{{ home_dir }}/hypershift-external-dns-secret.yaml"
+    when: (hcp_cluster_suffixes is defined and hcp_cluster_suffixes | length > 0) or (hcp_xacct_cluster_suffixes is defined and hcp_xacct_cluster_suffixes | length > 0)
+
   - name: Copy install-config into install directories
     copy:
       src: "{{ home_dir }}/{{ item.src }}"
