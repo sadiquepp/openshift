@@ -118,7 +118,9 @@ spec:
   services:
   - service: APIServer
     servicePublishingStrategy:
-      type: LoadBalancer
+      type: Route
+      route:
+        hostname: api-{{ openshift_cluster_name_suffix }}-{{ pl }}.{{ hcp_base_domains[hcp_suffix] }}
   - service: Ignition
     servicePublishingStrategy:
       type: Route
@@ -128,6 +130,8 @@ spec:
   - service: OAuthServer
     servicePublishingStrategy:
       type: Route
+      route:
+        hostname: oauth-{{ openshift_cluster_name_suffix }}-{{ pl }}.{{ hcp_base_domains[hcp_suffix] }}
   serviceAccountSigningKey:
     name: {{ openshift_cluster_name_suffix }}-{{ pl }}-sa-signing-key
   sshKey:
