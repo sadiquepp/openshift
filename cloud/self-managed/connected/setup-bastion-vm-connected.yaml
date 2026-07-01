@@ -212,22 +212,10 @@
       mode: "0755"
     when: letsencrypt_enabled | default(false) | bool
 
-  - name: Render HyperShift PrivateLink credentials secret
+  - name: Render HyperShift OIDC S3, PrivateLink, and External DNS credentials secrets
     ansible.builtin.template:
-      src: "{{ cloud_provider }}/hypershift-privatelink-secret.yaml.j2"
-      dest: "{{ home_dir }}/hypershift-privatelink-secret.yaml"
-    when: (hcp_cluster_suffixes is defined and hcp_cluster_suffixes | length > 0) or (hcp_xacct_cluster_suffixes is defined and hcp_xacct_cluster_suffixes | length > 0)
-
-  - name: Render HyperShift OIDC S3 credentials secret
-    ansible.builtin.template:
-      src: "{{ cloud_provider }}/hypershift-oidc-s3-secret.yaml.j2"
-      dest: "{{ home_dir }}/hypershift-oidc-s3-secret.yaml"
-    when: (hcp_cluster_suffixes is defined and hcp_cluster_suffixes | length > 0) or (hcp_xacct_cluster_suffixes is defined and hcp_xacct_cluster_suffixes | length > 0)
-
-  - name: Render HyperShift External DNS credentials secret
-    ansible.builtin.template:
-      src: "{{ cloud_provider }}/hypershift-external-dns-secret.yaml.j2"
-      dest: "{{ home_dir }}/hypershift-external-dns-secret.yaml"
+      src: "{{ cloud_provider }}/hypershift-secrets.yaml.j2"
+      dest: "{{ home_dir }}/hypershift-secrets.yaml"
     when: (hcp_cluster_suffixes is defined and hcp_cluster_suffixes | length > 0) or (hcp_xacct_cluster_suffixes is defined and hcp_xacct_cluster_suffixes | length > 0)
 
   - name: Copy install-config into install directories
