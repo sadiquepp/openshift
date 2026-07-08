@@ -120,10 +120,6 @@
       - "{{ home_dir }}/install-dir-public"
       - "{{ cco_dir }}"
 
-  - name: Cloud-specific CCO/STS creation
-    include_tasks: "tasks/cco/{{ cloud_provider }}.yaml"
-    when: not cco_dir_check.stat.exists
-
   - name: Copy install-config.yaml
     template:
       src: "{{ cloud_provider }}/{{ item }}.j2"
@@ -131,7 +127,16 @@
     loop:
       - install-config.yaml
       - install-config-public.yaml
-      - create-self-managed-hcp.sh
+      
+ -  name: Copy HCP script (AWS only)
+    template:
+      src: "{{ cloud_provider }}/create-self-managed-hcp.sh.j2"
+      dest: "{{ home_dir }}/create-self-managed-hcp.sh"
+    when: cloud_provider == 'aws'
+
+  - name: Cloud-specific CCO/STS creation
+    include_tasks: "tasks/cco/{{ cloud_provider }}.yaml"
+    when: not cco_dir_check.stat.exists
 
   - name: Render HCP cluster manifests (public endpoint)
     ansible.builtin.template:

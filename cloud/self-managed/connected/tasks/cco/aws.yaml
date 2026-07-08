@@ -13,6 +13,8 @@
       --credentials-requests \
       --cloud=aws \
       --to={{ cco_dir }}/credrequests \
+      --included \
+      --install-config={{ home_dir }}/install-config-public.yaml \
       ${RELEASE_IMAGE}
   when: not cco_dir_check.stat.exists
   

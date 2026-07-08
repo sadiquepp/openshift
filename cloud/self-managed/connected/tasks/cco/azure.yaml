@@ -16,6 +16,8 @@
       --credentials-requests \
       --cloud=azure \
       --to={{ cco_dir }}/credrequests \
+      --install-config={{ home_dir }}/install-config-public.yaml \
+      --included \
       ${RELEASE_IMAGE}
 
 - name: Create all CCO files for Azure
