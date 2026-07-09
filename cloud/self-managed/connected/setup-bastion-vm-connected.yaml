@@ -127,12 +127,12 @@
     loop:
       - install-config.yaml
       - install-config-public.yaml
-      
- -  name: Copy HCP script (AWS only)
-    template:
-      src: "{{ cloud_provider }}/create-self-managed-hcp.sh.j2"
+
+  -  name: Copy HCP script (AWS only)
+     template:
+       src: "{{ cloud_provider }}/create-self-managed-hcp.sh.j2"
       dest: "{{ home_dir }}/create-self-managed-hcp.sh"
-    when: cloud_provider == 'aws'
+     when: cloud_provider == 'aws'
 
   - name: Cloud-specific CCO/STS creation
     include_tasks: "tasks/cco/{{ cloud_provider }}.yaml"
