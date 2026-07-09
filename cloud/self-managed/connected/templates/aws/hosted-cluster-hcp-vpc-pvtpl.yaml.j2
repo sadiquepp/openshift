@@ -120,7 +120,7 @@ spec:
     servicePublishingStrategy:
       type: Route
       route:
-        hostname: api-{{ openshift_cluster_name_suffix }}-{{ pl }}.{{ hcp_base_domains[hcp_suffix] }}
+        hostname: api-{{ openshift_cluster_name_suffix }}-{{ pl }}.{{ hcp_base_domains[hcp_suffix] | regex_replace('^' + hcp_suffix + '\\.', '') }}
   - service: Ignition
     servicePublishingStrategy:
       type: Route
@@ -131,7 +131,7 @@ spec:
     servicePublishingStrategy:
       type: Route
       route:
-        hostname: oauth-{{ openshift_cluster_name_suffix }}-{{ pl }}.{{ hcp_base_domains[hcp_suffix] }}
+        hostname: oauth-{{ openshift_cluster_name_suffix }}-{{ pl }}.{{ hcp_base_domains[hcp_suffix] | regex_replace('^' + hcp_suffix + '\\.', '') }}
   serviceAccountSigningKey:
     name: {{ openshift_cluster_name_suffix }}-{{ pl }}-sa-signing-key
   sshKey:
