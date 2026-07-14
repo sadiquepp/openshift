@@ -25,13 +25,6 @@ controlPlane:
         type: io1
       metadataService:
         authentication: Required
-      subnets:
-      - {{ disconnected_subnet_id_a }}
-      - {{ disconnected_subnet_id_b }}
-      - {{ disconnected_subnet_id_c }}
-      serviceEndpoints:
-        - name: sts
-          url: https://sts.{{ aws_region }}.amazonaws.com
 metadata:
   creationTimestamp: null
   name: {{ openshift_cluster_name }}
