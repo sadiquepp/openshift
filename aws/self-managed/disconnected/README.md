@@ -369,11 +369,11 @@ CA in `additionalTrustBundle`.
 ```bash
 ssh ec2-user@$BASTION_IP
 
-# 1. Run the one-time HCP operator setup (creates OIDC secret, operator role)
-./create-self-managed-hcp.sh
+# 1. Create the secrets for the HCP clusters
+export KUBECONFIG=~/install-dir/auth/kubeconfig
+oc apply -f ~/hypershift-secrets.yaml
 
 # 2. Apply the HostedCluster CR
-export KUBECONFIG=~/install-dir/auth/kubeconfig
 oc apply -f ~/hosted-cluster-hcp1-pvt.yaml
 ```
 
