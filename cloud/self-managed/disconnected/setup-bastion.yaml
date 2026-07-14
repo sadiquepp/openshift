@@ -234,6 +234,12 @@
       - "{{ cco_dir }}"
     when: not install_dir_check.stat.exists
 
+  - name: Copy install-config.yaml
+    template:
+      src: "{{ cloud_provider }}/install-config.yaml.j2"
+      dest: "{{ home_dir }}/install-config.yaml"
+    when: not install_dir_check.stat.exists
+
   - name: Extract ccoutils
     shell: |
       cd {{ cco_dir }}
@@ -254,18 +260,14 @@
       RELEASE_IMAGE=$({{ home_dir }}/openshift-install version | awk '/release image/ {print $3}')
       oc adm release extract --credentials-requests \
       --cloud={{ cloud_provider }} \
+      --included \
+      --install-config={{ home_dir }}/install-config.yaml \
       --to={{ cco_dir }}/credrequests \
       ${RELEASE_IMAGE}
     when: not cco_dir_check.stat.exists
 
   - name: Cloud-specific CCO/STS creation
     include_tasks: "tasks/cco/{{ cloud_provider }}.yaml"
-
-  - name: Copy install-config.yaml
-    template:
-      src: "{{ cloud_provider }}/install-config.yaml.j2"
-      dest: "{{ home_dir }}/install-config.yaml"
-    when: not install_dir_check.stat.exists
 
   - name: Read Quay Root CA
     slurp:
