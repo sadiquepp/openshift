@@ -32,9 +32,25 @@ mirror_operators:
 
 rosa_token: REPLACE ME WITH ROSA TOKEN
 aws_region: ap-southeast-1
+aws_account_number: "123456789012"
 oidc_config_id: place-holder-if-not-passed-via-parameter
 vpc_owner_aws_account_number: 12345
 aws_account_number_to_share_with: 12345
 hypershift_local_hosted_zone_id: abcde
 rosa_shared_vpc_hosted_zone_id: abcde
 rosa_shared_vpc_cluster_domain: example.com
+
+disconnected_vpc_id: vpc-xxxxxxxxx
+disconnected_vpc_cidr: 10.0.0.0/16
+disconnected_subnet_id_a: subnet-xxxxxxxxx
+disconnected_subnet_id_b: subnet-xxxxxxxxx
+disconnected_subnet_id_c: subnet-xxxxxxxxx
+
+hcp_cluster_suffixes: []
+hcp_issuer_urls: {}
+hcp_account_numbers: {}
+hcp_base_domains: {}
+hcp_public_zone_ids: {}
+hcp_pvt_private_zone_ids: {}
+hcp_sa_signing_keys: {}
+ssh_public_key_for_ec2_and_openshit_node: ""

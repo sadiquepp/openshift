@@ -1,0 +1,214 @@
+#!/bin/bash
+export BUCKET_NAME="self-managed-hcp-oidc-{{ openshift_cluster_name_suffix }}"
+export AWS_REGION="{{ aws_region }}"
+export CLUSTER_NAME={{ openshift_cluster_name_suffix }}-hcp1
+export INFRA_ID={{ openshift_cluster_name_suffix }}-hcp1
+export NAMESPACE={{ openshift_cluster_name_suffix }}-hcp1
+export BASE_DOMAIN={{ openshift_base_domain }}
+export KUBECONFIG={{ home_dir }}/install-dir/auth/kubeconfig
+export AWS_ARN=$(aws sts get-caller-identity --query "Arn" --output text)
+export HCP_OPERATOR_ROLE_ARN=arn:aws:iam::{{ aws_account_number }}:role/{{ openshift_cluster_name_suffix }}-hcp-operator-role
+
+# Create a Secret in the local-cluster namespace for the HyperShift operator OIDC bucket
+oc create secret generic hypershift-operator-oidc-provider-s3-credentials --from-file=credentials=$HOME/.aws/credentials --from-literal=bucket=$BUCKET_NAME --from-literal=region=$AWS_REGION -n local-cluster
+
+# Apply the labels
+oc label secret hypershift-operator-oidc-provider-s3-credentials cluster.open-cluster-management.io/credentials="" cluster.open-cluster-management.io/type=awss3 -n local-cluster
+
+# Create IAM role trust policy for the HCP operator
+cat <<EOF > hcp-operator-role-policy.json
+{
+	"Version": "2012-10-17",
+	"Statement": [
+    	{
+        	"Effect": "Allow",
+        	"Principal": {
+            	"AWS": "$AWS_ARN" 
+        	},
+        	"Action": "sts:AssumeRole"
+    	}
+	]
+}
+EOF
+
+# Create IAM role for the HCP operator
+export HCP_OPERATOR_ROLE_ARN=$(aws iam create-role --role-name {{ openshift_cluster_name_suffix }}-hcp-operator-role --assume-role-policy-document file://hcp-operator-role-policy.json --query "Role.Arn" --output text)
+
+# Attach S3 full access to the HCP operator role
+aws iam attach-role-policy --role-name {{ openshift_cluster_name_suffix }}-hcp-operator-role --policy-arn arn:aws:iam::aws:policy/AmazonS3FullAccess
+
+# Create IAM inline policy for the HCP operator
+cat <<EOF > hcp-operator-role-policy-attachment.json
+{
+	"Version": "2012-10-17",
+	"Statement": [
+    	{
+        	"Sid": "EC2",
+        	"Effect": "Allow",
+        	"Action": [
+            	"ec2:CreateDhcpOptions",
+            	"ec2:DeleteSubnet",
+            	"ec2:ReplaceRouteTableAssociation",
+            	"ec2:DescribeAddresses",
+            	"ec2:DescribeInstances",
+            	"ec2:DeleteVpcEndpoints",
+            	"ec2:CreateNatGateway",
+            	"ec2:CreateVpc",
+            	"ec2:DescribeDhcpOptions",
+            	"ec2:AttachInternetGateway",
+            	"ec2:DeleteVpcEndpointServiceConfigurations",
+            	"ec2:DeleteRouteTable",
+            	"ec2:AssociateRouteTable",
+            	"ec2:DescribeInternetGateways",
+            	"ec2:DescribeAvailabilityZones",
+            	"ec2:CreateRoute",
+            	"ec2:CreateInternetGateway",
+            	"ec2:RevokeSecurityGroupEgress",
+            	"ec2:ModifyVpcAttribute",
+            	"ec2:DeleteInternetGateway",
+            	"ec2:DescribeVpcEndpointConnections",
+            	"ec2:RejectVpcEndpointConnections",
+            	"ec2:DescribeRouteTables",
+            	"ec2:ReleaseAddress",
+            	"ec2:AssociateDhcpOptions",
+            	"ec2:TerminateInstances",
+            	"ec2:CreateTags",
+            	"ec2:DeleteRoute",
+            	"ec2:CreateRouteTable",
+            	"ec2:DetachInternetGateway",
+            	"ec2:DescribeVpcEndpointServiceConfigurations",
+            	"ec2:DescribeNatGateways",
+            	"ec2:DisassociateRouteTable",
+            	"ec2:AllocateAddress",
+            	"ec2:DescribeSecurityGroups",
+            	"ec2:RevokeSecurityGroupIngress",
+            	"ec2:CreateVpcEndpoint",
+            	"ec2:DescribeVpcs",
+            	"ec2:DeleteSecurityGroup",
+            	"ec2:DeleteDhcpOptions",
+            	"ec2:DeleteNatGateway",
+            	"ec2:DescribeVpcEndpoints",
+            	"ec2:DeleteVpc",
+            	"ec2:CreateSubnet",
+            	"ec2:DescribeSubnets"
+        	],
+        	"Resource": "*"
+    	},
+    	{
+        	"Sid": "ELB",
+        	"Effect": "Allow",
+        	"Action": [
+            	"elasticloadbalancing:DeleteLoadBalancer",
+            	"elasticloadbalancing:DescribeLoadBalancers",
+            	"elasticloadbalancing:DescribeTargetGroups",
+            	"elasticloadbalancing:DeleteTargetGroup"
+        	],
+        	"Resource": "*"
+    	},
+    	{
+        	"Sid": "IAMPassRole",
+        	"Effect": "Allow",
+        	"Action": "iam:PassRole",
+        	"Resource": "arn:*:iam::*:role/*-worker-role",
+        	"Condition": {
+            	"ForAnyValue:StringEqualsIfExists": {
+                	"iam:PassedToService": "ec2.amazonaws.com"
+            	}
+        	}
+    	},
+    	{
+        	"Sid": "IAM",
+        	"Effect": "Allow",
+        	"Action": [
+            	"iam:CreateInstanceProfile",
+            	"iam:DeleteInstanceProfile",
+            	"iam:GetRole",
+            	"iam:UpdateAssumeRolePolicy",
+            	"iam:GetInstanceProfile",
+            	"iam:TagRole",
+            	"iam:RemoveRoleFromInstanceProfile",
+            	"iam:CreateRole",
+            	"iam:DeleteRole",
+            	"iam:PutRolePolicy",
+            	"iam:AddRoleToInstanceProfile",
+            	"iam:CreateOpenIDConnectProvider",
+            	"iam:TagOpenIDConnectProvider",
+            	"iam:ListOpenIDConnectProviders",
+            	"iam:DeleteRolePolicy",
+            	"iam:UpdateRole",
+            	"iam:DeleteOpenIDConnectProvider",
+            	"iam:GetRolePolicy",
+				"iam:ListAttachedRolePolicies",
+				"iam:ListRolePolicies"
+        	],
+        	"Resource": "*"
+    	},
+    	{
+        	"Sid": "Route53",
+        	"Effect": "Allow",
+        	"Action": [
+            	"route53:ListHostedZonesByVPC",
+            	"route53:CreateHostedZone",
+            	"route53:ListHostedZones",
+            	"route53:ChangeResourceRecordSets",
+            	"route53:ListResourceRecordSets",
+            	"route53:DeleteHostedZone",
+            	"route53:AssociateVPCWithHostedZone",
+            	"route53:ListHostedZonesByName"
+        	],
+        	"Resource": "*"
+    	},
+    	{
+        	"Sid": "S3",
+        	"Effect": "Allow",
+        	"Action": [
+            	"s3:ListAllMyBuckets",
+            	"s3:ListBucket",
+            	"s3:DeleteObject",
+            	"s3:DeleteBucket"
+        	],
+        	"Resource": "*"
+    	}
+	]
+}
+EOF
+
+# Attach the inline policy to the HCP operator role
+aws iam put-role-policy --role-name {{ openshift_cluster_name_suffix }}-hcp-operator-role --policy-name hcp-operator-role-policy-attachment --policy-document file://hcp-operator-role-policy-attachment.json
+
+# Get STS credentials
+aws sts get-session-token --output json > sts-creds.json
+
+# Create the HCP cluster namespace
+oc new-project {{ openshift_cluster_name_suffix }}-hcp1
+
+# Create HCP cluster with Private endpoint and HighlyAvailable policy
+hcp create cluster aws \
+	--instance-type m5.large \
+	--region $AWS_REGION \
+	--auto-repair \
+	--generate-ssh \
+	--name $CLUSTER_NAME \
+	--infra-id $INFRA_ID \
+	--namespace $NAMESPACE \
+	--base-domain $BASE_DOMAIN \
+	--node-pool-replicas 1 \
+	--pull-secret {{ home_dir }}/pull-secret.txt \
+	--release-image {{ installer_quay_hostname }}:{{ mirror_registry_port }}/openshift/release-images:{{ openshift_version }}-x86_64 \
+	--endpoint-access=Private \
+	--infra-availability-policy HighlyAvailable  \
+	--control-plane-availability-policy HighlyAvailable \
+	--zones "${AWS_REGION}a","${AWS_REGION}b","${AWS_REGION}c" \
+	--role-arn $HCP_OPERATOR_ROLE_ARN \
+	--use-rosa-managed-policies \
+	--additional-tags red-hat-managed=true \
+	--sts-creds {{ home_dir }}/sts-creds.json
+
+# Delete the HCP Cluster
+#hcp destroy cluster aws \
+#  --name $CLUSTER_NAME \
+#  --sts-creds {{ home_dir }}/sts-creds.json \
+#  --role-arn $HCP_OPERATOR_ROLE_ARN \
+#  --base-domain $BASE_DOMAIN \
+#  --infra-id $INFRA_ID \
+#  --namespace $NAMESPACE

@@ -62,10 +62,13 @@ disconnected/
 │   ├── iam.tf                       # IAM role + instance profile for bastion EC2
 │   ├── endpoints.tf                 # Security group + VPC endpoints (S3, EC2, STS, ELB, ECR, IAM, Route53)
 │   ├── tagging_endpoint.tf          # Optional: cross-region tagging endpoint via us-east-1 VPC peering
+│   ├── hcp-roles.tf                 # HCP: OIDC S3/CloudFront, IAM roles, Route53 zones, PrivateLink
 │   ├── route53.tf                   # Private hosted zone + egress VPC association
 │   ├── ec2.tf                       # SSH key pair, security group, bastion EC2 instance
 │   ├── ansible.tf                   # Generated Ansible inventory + vars
-│   └── outputs.tf                   # All outputs (VPC IDs, IPs, hosted zone, etc.)
+│   ├── outputs.tf                   # All outputs (VPC IDs, IPs, hosted zone, etc.)
+│   └── scripts/
+│       └── pem-to-jwk.py           # Helper: converts RSA PEM to JWK for OIDC
 ├── setup-bastion-ec2.yaml           # Ansible: configure bastion, mirror registry, images
 ├── prepare-upi-install-dir.yaml     # Ansible: create install-dir-upi for UPI deployments
 ├── files/
@@ -76,6 +79,9 @@ disconnected/
     ├── install-config-upi.yaml.j2   # UPI install-config template
     ├── imageset-config.yaml.j2      # oc-mirror imageset configuration
     ├── squid-allow-list.txt.j2      # Squid allow-list
+    ├── aws/
+    │   ├── hosted-cluster-hcp-pvt.yaml.j2   # HCP HostedCluster CR (disconnected, pvt)
+    │   └── create-self-managed-hcp.sh.j2    # HCP operator setup script
     └── rosa-*.sh.j2                 # ROSA create/delete cluster scripts
 ```
 
@@ -326,6 +332,64 @@ To delete:
 ./rosa-delete-cluster-hcp-zero-egress.sh  # HCP zero egress
 ```
 
+### Option D: Self-Managed HCP (Hosted Control Planes)
+
+Deploy self-managed HCP clusters using the disconnected mirror registry.
+This method creates HostedCluster CRs with private endpoint access,
+`imageContentSources` pointing to the local mirror, and the mirror registry
+CA in `additionalTrustBundle`.
+
+**Prerequisites:**
+
+> **Note:** The `advanced-cluster-management` and `multicluster-engine` operators
+> must be mirrored to the local registry for HCP to function. Add them to the
+> `--operators` flag when running `deploy.sh`, or include them in the
+> `mirror_operators` list in your Ansible vars.
+
+1. Set `hcp_cluster_suffixes` in `terraform.tfvars` **before** running
+   `terraform apply`:
+
+   ```hcl
+   hcp_cluster_suffixes = ["hcp1"]
+   ```
+
+2. Terraform will create:
+   - OIDC S3 bucket + CloudFront distribution
+   - SA signing keys and OIDC discovery documents
+   - IAM OIDC provider + 7 operator roles per cluster suffix
+   - Worker IAM role + instance profile
+   - Route53 private zones (pvt + hypershift.local)
+   - Public subdomain zone (`hcp.<base_domain>`) with NS delegation
+   - PrivateLink IAM user + credentials
+
+3. All values are automatically passed to Ansible via `ansible-vars.json`.
+
+**Deploy:**
+
+```bash
+ssh ec2-user@$BASTION_IP
+
+# 1. Run the one-time HCP operator setup (creates OIDC secret, operator role)
+./create-self-managed-hcp.sh
+
+# 2. Apply the HostedCluster CR
+export KUBECONFIG=~/install-dir/auth/kubeconfig
+oc apply -f ~/hosted-cluster-hcp1-pvt.yaml
+```
+
+The HostedCluster CR includes:
+- `imageContentSources` mirroring `quay.io/openshift-release-dev` to the local registry
+- `additionalTrustBundle` referencing a ConfigMap with the mirror registry CA
+- `release.image` pointing to the mirror registry
+- `endpointAccess: Private`
+- All NodePools use the disconnected VPC subnets
+
+**Destroy:**
+
+```bash
+oc delete -f ~/hosted-cluster-hcp1-pvt.yaml
+```
+
 ---
 
 ## Variables Reference
@@ -380,6 +444,12 @@ and are created directly in the disconnected VPC via `interface_endpoint_service
 | `cross_region_vpc_cidr` | `10.99.0.0/24` | CIDR for the us-east-1 VPC |
 | `cross_region_subnet_cidr` | `10.99.0.0/26` | Subnet CIDR within the us-east-1 VPC |
 
+### Self-Managed HCP
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `hcp_cluster_suffixes` | `[]` | List of HCP cluster suffixes (e.g. `["hcp1"]`). Empty disables HCP. |
+
 ### Bastion EC2
 
 | Variable | Default | Description |
@@ -406,6 +476,13 @@ After `terraform apply`, these outputs are available:
 | `transit_gateway_id` | Transit gateway ID |
 | `iam_role_arn` | IAM role ARN for the bastion |
 | `vpc_owner_aws_account_number` | AWS account number |
+| `hcp_oidc_bucket_name` | OIDC S3 bucket name (when HCP enabled) |
+| `hcp_cloudfront_domain` | CloudFront domain for OIDC (when HCP enabled) |
+| `hcp_account_numbers` | Per-cluster AWS account IDs |
+| `hcp_base_domains` | Per-cluster base domains |
+| `hcp_public_zone_ids` | Per-cluster public zone IDs |
+| `hcp_pvt_private_zone_ids` | Per-cluster private zone IDs (pvt) |
+| `hcp_operator_role_arns` | Per-cluster map of 7 operator role ARNs |
 
 These values are also automatically written to `ansible-vars.json` for use
 by Ansible playbooks.

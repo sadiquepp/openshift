@@ -316,6 +316,40 @@
       format: bz2
     when: not install_dir_check.stat.exists
 
+  - name: Read Quay Root CA for HCP trust bundle
+    slurp:
+      src: "{{ quay_root_mount }}/quay-rootCA/rootCA.pem"
+    register: quay_root_ca_for_hcp
+    become: true
+    when: hcp_cluster_suffixes is defined and hcp_cluster_suffixes | length > 0
+
+  - name: Store mirror registry CA cert
+    set_fact:
+      mirror_registry_ca_cert: "{{ quay_root_ca_for_hcp.content | b64decode }}"
+    when: hcp_cluster_suffixes is defined and hcp_cluster_suffixes | length > 0
+
+  - name: Copy create-self-managed-hcp.sh
+    template:
+      src: "{{ cloud_provider }}/create-self-managed-hcp.sh.j2"
+      dest: "{{ home_dir }}/create-self-managed-hcp.sh"
+      mode: "0755"
+    when: cloud_provider == 'aws' and hcp_cluster_suffixes is defined and hcp_cluster_suffixes | length > 0
+
+  - name: Render HCP cluster manifests (private endpoint)
+    ansible.builtin.template:
+      src: "{{ cloud_provider }}/hosted-cluster-hcp-pvt.yaml.j2"
+      dest: "{{ home_dir }}/hosted-cluster-{{ hcp_suffix }}-pvt.yaml"
+    loop: "{{ hcp_cluster_suffixes }}"
+    loop_control:
+      loop_var: hcp_suffix
+    when: hcp_cluster_suffixes is defined and hcp_cluster_suffixes | length > 0
+
+  - name: Render HyperShift OIDC S3 and PrivateLink credentials secrets
+    ansible.builtin.template:
+      src: "{{ cloud_provider }}/hypershift-secrets.yaml.j2"
+      dest: "{{ home_dir }}/hypershift-secrets.yaml"
+    when: cloud_provider == 'aws' and hcp_cluster_suffixes is defined and hcp_cluster_suffixes | length > 0
+
   - name: Cloud-specific helper scripts
     include_tasks: "tasks/scripts/{{ cloud_provider }}.yaml"
     when: lookup('fileglob', 'tasks/scripts/' + cloud_provider + '.yaml') | length > 0

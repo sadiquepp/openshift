@@ -56,3 +56,11 @@ ssh_private_key_path    = "~/.ssh/id_rsa"
 installer_ami           = "ami-04698733964af06d5"
 installer_instance_type = "c6i.large"
 installer_disk_size     = 100
+
+# ── Self-Managed HCP (Hosted Control Planes) ─────────────────────
+# Uncomment and populate to enable HCP cluster deployment.
+# Each suffix creates OIDC infrastructure, IAM roles (7 operator +
+# 1 worker per suffix), Route53 zones, and PrivateLink credentials.
+# HCP clusters use the same disconnected VPC (private endpoint only).
+#
+# hcp_cluster_suffixes = ["hcp1"]
