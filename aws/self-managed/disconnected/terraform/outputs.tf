@@ -60,6 +60,11 @@ output "cluster_domain" {
 
 # ── Installer EC2 ────────────────────────────────────────────────────────────
 
+output "installer_ami_id" {
+  description = "AMI ID used for the installer EC2 (resolved from RHEL 9 lookup or override)"
+  value       = aws_instance.installer.ami
+}
+
 output "installer_instance_id" {
   description = "Instance ID of the installer EC2"
   value       = aws_instance.installer.id

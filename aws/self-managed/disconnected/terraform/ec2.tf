@@ -1,3 +1,30 @@
+# ── RHEL 9 AMI Lookup ─────────────────────────────────────────────────────────
+
+data "aws_ami" "rhel9" {
+  most_recent = true
+  owners      = ["309956199498"] # Red Hat's official AWS account
+
+  filter {
+    name   = "name"
+    values = ["RHEL-9.*_HVM-*-x86_64-*-Hourly2-GP3"]
+  }
+
+  filter {
+    name   = "architecture"
+    values = ["x86_64"]
+  }
+
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
+  }
+
+  filter {
+    name   = "state"
+    values = ["available"]
+  }
+}
+
 # ── SSH Key Pair ──────────────────────────────────────────────────────────────
 
 resource "aws_key_pair" "installer" {
@@ -59,7 +86,7 @@ resource "aws_security_group" "installer" {
 # ── Installer EC2 Instance ───────────────────────────────────────────────────
 
 resource "aws_instance" "installer" {
-  ami                         = var.installer_ami
+  ami                         = var.installer_ami != "" ? var.installer_ami : data.aws_ami.rhel9.id
   instance_type               = var.installer_instance_type
   subnet_id                   = aws_subnet.egress_public[0].id
   associate_public_ip_address = true
