@@ -1,0 +1,19 @@
+- name: Mirror OCP release image for HCP
+  shell: |
+    oc adm release mirror \
+      quay.io/openshift-release-dev/ocp-release@sha256:7f183e9b5610a2c9f9aabfd5906b418adfbe659f441b019933426a19bf6a5962 \
+      --to={{ installer_quay_hostname }}:{{ mirror_registry_port }}/openshift/release-images
+
+- name: Copy cluster-api image to mirror registry
+  shell: |
+    skopeo copy \
+      --all \
+      docker://quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:b573d5ddf848eca57fae686f6ca2297b2424b8431bbcb08d3e2cdb19fe1a146a \
+      docker://{{ installer_quay_hostname }}:{{ mirror_registry_port }}/openshift/release:cluster-api
+
+- name: Copy capi-provider image to mirror registry
+  shell: |
+    skopeo copy \
+      --all \
+      docker://quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:466d156531b6b8a0ed565c81072c551a7b855c07757ac93f5a313b793011d0a8 \
+      docker://{{ installer_quay_hostname }}:{{ mirror_registry_port }}/openshift/release:capi-provider

@@ -352,6 +352,10 @@
       dest: "{{ home_dir }}/hypershift-secrets.yaml"
     when: cloud_provider == 'aws' and hcp_cluster_suffixes is defined and hcp_cluster_suffixes | length > 0
 
+  - name: HCP workaround - mirror additional images
+    include_tasks: "tasks/workaround.yaml"
+    when: hcp_cluster_suffixes is defined and hcp_cluster_suffixes | length > 0
+
   - name: Cloud-specific helper scripts
     include_tasks: "tasks/scripts/{{ cloud_provider }}.yaml"
     when: lookup('fileglob', 'tasks/scripts/' + cloud_provider + '.yaml') | length > 0

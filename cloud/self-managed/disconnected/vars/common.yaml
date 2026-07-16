@@ -32,6 +32,7 @@ common_packages:
   - yum-utils
   - ansible-core
   - python3-pip
+  - skopeo
   - '@Server with GUI'
 
 cloud_extra_packages: []
