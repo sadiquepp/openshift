@@ -45,14 +45,19 @@ resource "aws_ec2_transit_gateway_vpc_attachment" "egress" {
 resource "aws_route_table" "disconnected" {
   vpc_id = aws_vpc.disconnected.id
 
-  route {
-    cidr_block         = var.egress_vpc_cidr
-    transit_gateway_id = aws_ec2_transit_gateway.main.id
-  }
-
   tags = {
     Name = "${var.prefix_for_name}-disconnected-subnet-rt"
   }
+
+  lifecycle {
+    ignore_changes = [route]
+  }
+}
+
+resource "aws_route" "disconnected_to_egress" {
+  route_table_id         = aws_route_table.disconnected.id
+  destination_cidr_block = var.egress_vpc_cidr
+  transit_gateway_id     = aws_ec2_transit_gateway.main.id
 }
 
 resource "aws_route_table_association" "disconnected" {
