@@ -354,7 +354,7 @@
 
   - name: HCP workaround - mirror additional images
     include_tasks: "tasks/workaround.yaml"
-    when: hcp_cluster_suffixes is defined and hcp_cluster_suffixes | length > 0
+    when: hcp_workaround_enabled | default(false) | bool
 
   - name: Cloud-specific helper scripts
     include_tasks: "tasks/scripts/{{ cloud_provider }}.yaml"

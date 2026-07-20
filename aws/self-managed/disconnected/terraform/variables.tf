@@ -171,3 +171,9 @@ variable "ssh_private_key_path" {
   type        = string
   default     = "~/.ssh/id_rsa"
 }
+
+variable "hcp_workaround_enabled" {
+  description = "Enable HCP workaround to mirror additional images (cluster-api, capi-provider) for disconnected HCP."
+  type        = bool
+  default     = false
+}
