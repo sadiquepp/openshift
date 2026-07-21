@@ -71,6 +71,8 @@ resource "local_file" "ansible_vars" {
       }
       hcp_pl_access_key_id       = aws_iam_access_key.hcp_privatelink[0].id
       hcp_pl_secret_access_key   = aws_iam_access_key.hcp_privatelink[0].secret
+      hcp_ext_dns_access_key_id  = aws_iam_access_key.hcp_external_dns[0].id
+      hcp_ext_dns_secret_access_key = aws_iam_access_key.hcp_external_dns[0].secret
       hcp_oidc_bucket_name       = aws_s3_bucket.hcp_oidc[0].id
     } : {
       hcp_account_numbers      = {}

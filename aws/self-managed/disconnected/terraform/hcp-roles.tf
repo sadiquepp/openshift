@@ -549,6 +549,56 @@ resource "aws_iam_access_key" "hcp_privatelink" {
   user  = aws_iam_user.hcp_privatelink[0].name
 }
 
+# ── External DNS IAM User (management account) ───────────────────────────────
+
+resource "aws_iam_user" "hcp_external_dns" {
+  provider = aws.hcp
+  count    = local.hcp_enabled ? 1 : 0
+  name     = "hypershift-operator-external-dns"
+
+  tags = {
+    Name            = "hypershift-operator-external-dns"
+    red-hat-managed = "true"
+  }
+}
+
+resource "aws_iam_user_policy" "hcp_external_dns" {
+  provider = aws.hcp
+  count    = local.hcp_enabled ? 1 : 0
+  name     = "hypershift-operator-external-dns"
+  user     = aws_iam_user.hcp_external_dns[0].name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "route53:ListHostedZones",
+          "route53:ListHostedZonesByName"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "route53:ChangeResourceRecordSets",
+          "route53:ListResourceRecordSets"
+        ]
+        Resource = [
+          "arn:aws:route53:::hostedzone/${aws_route53_zone.hcp_public_subdomain[0].zone_id}"
+        ]
+      }
+    ]
+  })
+}
+
+resource "aws_iam_access_key" "hcp_external_dns" {
+  provider = aws.hcp
+  count    = local.hcp_enabled ? 1 : 0
+  user     = aws_iam_user.hcp_external_dns[0].name
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # MERGED PER-SUFFIX LOCALS (for Ansible / outputs)
 # ═══════════════════════════════════════════════════════════════════════════════
