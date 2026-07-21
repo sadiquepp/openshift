@@ -75,15 +75,17 @@ resource "local_file" "ansible_vars" {
       hcp_ext_dns_secret_access_key = aws_iam_access_key.hcp_external_dns[0].secret
       hcp_oidc_bucket_name       = aws_s3_bucket.hcp_oidc[0].id
     } : {
-      hcp_account_numbers      = {}
-      hcp_base_domains         = {}
-      hcp_public_zone_ids      = {}
-      hcp_pvt_private_zone_ids = {}
-      hcp_sa_signing_keys      = {}
-      hcp_issuer_urls          = {}
-      hcp_pl_access_key_id       = ""
-      hcp_pl_secret_access_key   = ""
-      hcp_oidc_bucket_name       = ""
+      hcp_account_numbers           = {}
+      hcp_base_domains              = {}
+      hcp_public_zone_ids           = {}
+      hcp_pvt_private_zone_ids      = {}
+      hcp_sa_signing_keys           = {}
+      hcp_issuer_urls               = {}
+      hcp_pl_access_key_id          = ""
+      hcp_pl_secret_access_key      = ""
+      hcp_ext_dns_access_key_id     = ""
+      hcp_ext_dns_secret_access_key = ""
+      hcp_oidc_bucket_name          = ""
     }
   ))
 }
