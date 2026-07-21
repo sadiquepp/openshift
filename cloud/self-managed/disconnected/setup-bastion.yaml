@@ -97,9 +97,8 @@
     register: tarball_stats
 
   - name: Get the Mirror Registry, OC and OPM Tarball
-    get_url:
-      url: "{{ item.item }}"
-      dest: "{{ home_dir }}/{{ item.item | basename }}"
+    shell: |
+      wget "{{ item.item }}"
     loop: "{{ tarball_stats.results }}"
     loop_control:
       label: "{{ item.item | basename }}"
