@@ -461,10 +461,21 @@ resource "aws_route53_zone" "hcp_pvt_private" {
     vpc_id = aws_vpc.disconnected.id
   }
 
+  lifecycle {
+    ignore_changes = [vpc]
+  }
+
   tags = {
     Name            = "${each.value.cluster_name}-private-zone"
     red-hat-managed = "true"
   }
+}
+
+resource "aws_route53_zone_association" "hcp_pvt_private_egress" {
+  for_each = local.hcp_pvt_clusters
+
+  zone_id = aws_route53_zone.hcp_pvt_private[each.key].zone_id
+  vpc_id  = aws_vpc.egress.id
 }
 
 resource "aws_route53_zone" "hcp_pvt_hypershift_local" {
@@ -476,10 +487,21 @@ resource "aws_route53_zone" "hcp_pvt_hypershift_local" {
     vpc_id = aws_vpc.disconnected.id
   }
 
+  lifecycle {
+    ignore_changes = [vpc]
+  }
+
   tags = {
     Name            = "${each.value.cluster_name}-hypershift-local"
     red-hat-managed = "true"
   }
+}
+
+resource "aws_route53_zone_association" "hcp_pvt_hypershift_local_egress" {
+  for_each = local.hcp_pvt_clusters
+
+  zone_id = aws_route53_zone.hcp_pvt_hypershift_local[each.key].zone_id
+  vpc_id  = aws_vpc.egress.id
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
