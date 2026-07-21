@@ -62,10 +62,17 @@ kind: HostedCluster
 metadata:
   name: {{ openshift_cluster_name_suffix }}-{{ pvt }}
   namespace: {{ openshift_cluster_name_suffix }}-{{ pvt }}
+  annotations:
+    hypershift.openshift.io/ingress-controller-load-balancer-scope: "Internal"
 spec:
   autoscaling: {}
   capabilities: {}
   configuration:
+    ingress:
+      loadBalancer:
+        platform:
+          aws:
+            type: NLB
     operatorhub:
       disableAllDefaultSources: true
   controllerAvailabilityPolicy: HighlyAvailable
@@ -95,6 +102,30 @@ spec:
   - mirrors:
     - {{ installer_quay_hostname }}:{{ mirror_registry_port }}/openshift/release
     source: quay.io/openshift-release-dev/ocp-v4.0-art-dev
+  - mirrors:
+    - {{ installer_quay_hostname }}:{{ mirror_registry_port }}/multicluster-engine
+    source: registry.redhat.io/multicluster-engine
+  - mirrors:
+    - {{ installer_quay_hostname }}:{{ mirror_registry_port }}/rhacm2
+    source: registry.redhat.io/rhacm2
+  - mirrors:
+    - {{ installer_quay_hostname }}:{{ mirror_registry_port }}/openshift4
+    source: registry.redhat.io/openshift4
+  - mirrors:
+    - {{ installer_quay_hostname }}:{{ mirror_registry_port }}/ubi9
+    source: registry.redhat.io/ubi9
+  - mirrors:
+    - {{ installer_quay_hostname }}:{{ mirror_registry_port }}/rhel9
+    source: registry.redhat.io/rhel9
+  - mirrors:
+    - {{ installer_quay_hostname }}:{{ mirror_registry_port }}/rhel8
+    source: registry.redhat.io/rhel8
+  - mirrors:
+    - {{ installer_quay_hostname }}:{{ mirror_registry_port }}/cluster-observability-operator
+    source: registry.redhat.io/cluster-observability-operator
+  - mirrors:
+    - {{ installer_quay_hostname }}:{{ mirror_registry_port }}/rhem
+    source: registry.redhat.io/rhem
   networking:
     clusterNetwork:
     - cidr: 10.132.0.0/14

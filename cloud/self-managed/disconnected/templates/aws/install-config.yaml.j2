@@ -6,7 +6,7 @@ compute:
   hyperthreading: Enabled
   name: worker
   platform: {}
-  replicas: 3
+  replicas: {{ compute_replicas | default(3) }}
 controlPlane:
   architecture: amd64
   hyperthreading: Enabled
@@ -33,6 +33,7 @@ platform:
     - {{ disconnected_subnet_id_b }}
     - {{ disconnected_subnet_id_c }}
     hostedZone: {{ hosted_zone_id_for_domain }} 
+    lbType: NLB
 publish: Internal
 pullSecret: '{"auths":{"{{ installer_quay_hostname }}:{{ mirror_registry_port }}": {"auth": {{ quay_credential.stdout }}} }}'
 imageDigestSources:

@@ -9,6 +9,9 @@ openshift_cluster_name_suffix = "xt1"
 # ── Region ────────────────────────────────────────────────────────
 aws_region = "ap-southeast-1"
 
+# ── OpenShift Cluster ────────────────────────────────────────────
+compute_replicas = 3
+
 # ── Disconnected VPC ─────────────────────────────────────────────
 disconnected_vpc_cidr    = "172.16.0.0/16"
 disconnected_subnet_cidrs = ["172.16.1.0/24", "172.16.2.0/24", "172.16.3.0/24"]

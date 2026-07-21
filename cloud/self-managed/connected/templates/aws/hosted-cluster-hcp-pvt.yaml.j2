@@ -56,7 +56,12 @@ metadata:
 spec:
   autoscaling: {}
   capabilities: {}
-  configuration: {}
+  configuration:
+    ingress:
+      loadBalancer:
+        platform:
+          aws:
+            type: NLB
   controllerAvailabilityPolicy: HighlyAvailable
   dns:
     baseDomain: {{ hcp_base_domains[hcp_suffix] }}

@@ -141,6 +141,12 @@ variable "openshift_cluster_name_suffix" {
   default     = "xt1"
 }
 
+variable "compute_replicas" {
+  description = "Number of compute (worker) replicas for the OpenShift cluster"
+  type        = number
+  default     = 3
+}
+
 # ── Installer EC2 Instance ───────────────────────────────────────────────────
 
 variable "ssh_public_key" {
