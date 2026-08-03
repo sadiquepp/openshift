@@ -16,3 +16,11 @@ resource "aws_route53_zone_association" "egress" {
   vpc_id     = aws_vpc.egress.id
   vpc_region = var.aws_region
 }
+
+resource "aws_route53_record" "mirror_registry" {
+  zone_id = aws_route53_zone.cluster.zone_id
+  name    = "registry.${local.openshift_cluster_name}.${var.openshift_base_domain}"
+  type    = "A"
+  ttl     = 600
+  records = [aws_instance.installer.private_ip]
+}

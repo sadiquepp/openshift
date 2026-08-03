@@ -33,6 +33,7 @@ resource "local_file" "ansible_vars" {
       openshift_base_domain           = var.openshift_base_domain
       openshift_cluster_name_suffix   = var.openshift_cluster_name_suffix
       compute_replicas                = var.compute_replicas
+      mirror_registry_fqdn            = aws_route53_record.mirror_registry.fqdn
       ssh_public_key_for_ec2_and_openshit_node  = var.ssh_public_key
       vpc_owner_aws_account_number    = data.aws_caller_identity.current.account_id
       hosted_zone_id_for_domain       = aws_route53_zone.cluster.zone_id
