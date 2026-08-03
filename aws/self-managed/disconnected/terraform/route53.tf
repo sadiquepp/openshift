@@ -17,9 +17,28 @@ resource "aws_route53_zone_association" "egress" {
   vpc_region = var.aws_region
 }
 
+resource "aws_route53_zone" "registry" {
+  name = "registry.${local.openshift_cluster_name}.${var.openshift_base_domain}"
+
+  vpc {
+    vpc_id     = aws_vpc.disconnected.id
+    vpc_region = var.aws_region
+  }
+
+  lifecycle {
+    ignore_changes = [vpc]
+  }
+}
+
+resource "aws_route53_zone_association" "registry_egress" {
+  zone_id    = aws_route53_zone.registry.zone_id
+  vpc_id     = aws_vpc.egress.id
+  vpc_region = var.aws_region
+}
+
 resource "aws_route53_record" "mirror_registry" {
-  zone_id = aws_route53_zone.cluster.zone_id
-  name    = "registry.${local.openshift_cluster_name}.${var.openshift_base_domain}"
+  zone_id = aws_route53_zone.registry.zone_id
+  name    = aws_route53_zone.registry.name
   type    = "A"
   ttl     = 600
   records = [aws_instance.installer.private_ip]
