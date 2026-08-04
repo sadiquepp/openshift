@@ -25,7 +25,9 @@ egress_private_subnet_cidrs  = ["172.17.4.0/24", "172.17.5.0/24", "172.17.6.0/24
 # Regional endpoints: com.amazonaws.<region>.<service>
 interface_endpoint_services = ["ec2", "sts", "elasticloadbalancing", "ecr.api", "ecr.dkr"]
 # Global cross-region endpoints: com.amazonaws.<service>  (no region prefix)
-global_endpoint_services    = ["iam", "route53", "tagging"]
+global_endpoint_services       = ["iam", "route53"]
+# Cross-region regional endpoints: com.amazonaws.us-east-1.<service>
+cross_region_endpoint_services = ["tagging"]
 
 # ── UPI Node IPs (host number within each subnet) ───────────────
 # bootstrap, master0, worker1, infra1 → subnet A (AZ1)

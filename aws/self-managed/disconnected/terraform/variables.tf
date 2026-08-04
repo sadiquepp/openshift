@@ -53,9 +53,15 @@ variable "interface_endpoint_services" {
 }
 
 variable "global_endpoint_services" {
-  description = "Global AWS services with cross-region VPC endpoint support (service name: com.amazonaws.<service>, no region prefix)"
+  description = "Global AWS services with cross-region VPC endpoint support (service name: com.amazonaws.<service>, no region prefix, DNS: <service>.amazonaws.com)"
   type        = list(string)
-  default     = ["iam", "route53", "tagging"]
+  default     = ["iam", "route53"]
+}
+
+variable "cross_region_endpoint_services" {
+  description = "Regional AWS services in us-east-1 accessed via cross-region VPC endpoints (service name: com.amazonaws.us-east-1.<service>, DNS: <service>.us-east-1.amazonaws.com)"
+  type        = list(string)
+  default     = ["tagging"]
 }
 
 # ── UPI Node IPs ─────────────────────────────────────────────────────────────

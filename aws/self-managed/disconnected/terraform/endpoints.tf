@@ -49,10 +49,9 @@ resource "aws_vpc_endpoint" "interface" {
   }
 }
 
-# ── Global Interface Endpoints (iam, route53, tagging) ────────────────────────
-# Cross-region VPC endpoints use a global service name: com.amazonaws.<service>
-# with service_region pointing to where the service is hosted (us-east-1).
-# DNS resolves to private IPs in the disconnected VPC (e.g. iam.amazonaws.com)
+# ── Global Interface Endpoints (iam, route53) ─────────────────────────────────
+# Truly global services use: com.amazonaws.<service> (no region in service name).
+# DNS resolves to private IPs in the disconnected VPC (e.g. iam.amazonaws.com).
 
 resource "aws_vpc_endpoint" "global" {
   for_each = toset(var.global_endpoint_services)
@@ -67,5 +66,27 @@ resource "aws_vpc_endpoint" "global" {
 
   tags = {
     Name = "${var.prefix_for_name}-${each.key}-disconnected"
+  }
+}
+
+# ── Cross-region Interface Endpoints (tagging) ────────────────────────────────
+# Regional services in us-east-1 accessed cross-region.
+# Service name format: com.amazonaws.us-east-1.<service>
+# DNS resolves to private IPs in the disconnected VPC
+# (e.g. tagging.us-east-1.amazonaws.com).
+
+resource "aws_vpc_endpoint" "cross_region" {
+  for_each = toset(var.cross_region_endpoint_services)
+
+  vpc_id              = aws_vpc.disconnected.id
+  service_name        = "com.amazonaws.us-east-1.${each.key}"
+  service_region      = "us-east-1"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = [aws_subnet.disconnected[0].id]
+  security_group_ids  = [aws_security_group.vpc_endpoint.id]
+  private_dns_enabled = true
+
+  tags = {
+    Name = "${var.prefix_for_name}-${each.key}-us-east-1-disconnected"
   }
 }

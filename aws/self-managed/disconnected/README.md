@@ -427,7 +427,8 @@ oc delete -f ~/hosted-cluster-hcp1-pvt.yaml
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `interface_endpoint_services` | `[ec2, sts, elasticloadbalancing, ecr.api, ecr.dkr]` | Regional AWS services (`com.amazonaws.<region>.<service>`) |
-| `global_endpoint_services` | `[iam, route53, tagging]` | Global AWS services with cross-region endpoint support (`com.amazonaws.<service>`, no region prefix). DNS resolves to private IPs in the disconnected VPC (e.g. `iam.amazonaws.com`). |
+| `global_endpoint_services` | `[iam, route53]` | Global AWS services with cross-region endpoint support (`com.amazonaws.<service>`, no region prefix). DNS resolves to private IPs in the disconnected VPC (e.g. `iam.amazonaws.com`). |
+| `cross_region_endpoint_services` | `[tagging]` | Regional AWS services in us-east-1 accessed via cross-region VPC endpoints (`com.amazonaws.us-east-1.<service>`). DNS resolves to private IPs in the disconnected VPC (e.g. `tagging.us-east-1.amazonaws.com`). |
 
 ### Self-Managed HCP
 
