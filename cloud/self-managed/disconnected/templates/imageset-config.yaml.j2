@@ -10,7 +10,7 @@ mirror:
   operators:
     - catalog: registry.redhat.io/redhat/redhat-operator-index:v{{ openshift_major_version }} 
       packages: 
-{% for op in mirror_operators %}
+{% for op in (mirror_operators + ['cincinnati-operator']) | unique %}
        - name: {{ op }}
 {% endfor %}
   additionalImages: 
