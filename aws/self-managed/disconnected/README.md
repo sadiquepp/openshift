@@ -6,7 +6,7 @@
 Set up a disconnected (air-gapped) environment on AWS for deploying OpenShift
 clusters. This creates the network infrastructure, a bastion host with a mirror
 registry and mirrored OCP images, and leaves you ready to deploy a cluster using
-the method of your choice: **IPI**, **UPI**, or **ROSA**.
+the method of your choice: **IPI**, **UPI**, **HCP** or **ROSA**.
 
 ## Architecture
 
@@ -61,7 +61,6 @@ disconnected/
 │   ├── transit_gateway.tf           # IGW, Transit Gateway, route tables
 │   ├── iam.tf                       # IAM role + instance profile for bastion EC2
 │   ├── endpoints.tf                 # Security group + VPC endpoints (S3, EC2, STS, ELB, ECR, IAM, Route53)
-│   ├── tagging_endpoint.tf          # Optional: cross-region tagging endpoint via us-east-1 VPC peering
 │   ├── hcp-roles.tf                 # HCP: OIDC S3/CloudFront, IAM roles, Route53 zones, PrivateLink
 │   ├── route53.tf                   # Private hosted zone + egress VPC association
 │   ├── ec2.tf                       # SSH key pair, security group, bastion EC2 instance
@@ -83,6 +82,7 @@ disconnected/
     │   ├── hosted-cluster-hcp-pvt.yaml.j2   # HCP HostedCluster CR (disconnected, pvt)
     │   └── create-self-managed-hcp.sh.j2    # HCP operator setup script
     └── rosa-*.sh.j2                 # ROSA create/delete cluster scripts
+    └── hcp-*.sh.j2                  # HCP create/delete cluster scripts
 ```
 
 ---
@@ -117,6 +117,7 @@ ssh_private_key_path    = "~/.ssh/id_rsa"
 installer_ami           = "ami-04698733964af06d5"
 installer_instance_type = "t2.large"
 installer_disk_size     = 100
+hcp_cluster_suffixes    = ["hcp1", "hcp2"]
 ```
 
 ### 3. Run the setup
@@ -163,6 +164,7 @@ When complete, the bastion has:
 - UPI `~/upi-terraform/` with terraform files and pre-filled `terraform.tfvars`
 - STS credentials in `~/sts/`
 - ROSA scripts pre-templated
+- HCP templates pre-templated if enabled.
 
 ### 4. SSH into the bastion
 
@@ -360,7 +362,8 @@ CA in `additionalTrustBundle`.
    - Worker IAM role + instance profile
    - Route53 private zones (pvt + hypershift.local)
    - Public subdomain zone (`hcp.<base_domain>`) with NS delegation
-   - PrivateLink IAM user + credentials
+   - PrivateLink IAM user + credentials (for the HCP clusters)
+   - External DNS IAM User + credentials (for the HCP clusters)
 
 3. All values are automatically passed to Ansible via `ansible-vars.json`.
 
@@ -424,25 +427,7 @@ oc delete -f ~/hosted-cluster-hcp1-pvt.yaml
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `interface_endpoint_services` | `[ec2, sts, elasticloadbalancing, ecr.api, ecr.dkr]` | Regional AWS services (`com.amazonaws.<region>.<service>`) |
-| `global_endpoint_services` | `[iam, route53]` | Global AWS services with cross-region endpoint support (`com.amazonaws.<service>`, no region prefix). DNS resolves to private IPs in the disconnected VPC (e.g. `iam.amazonaws.com`). |
-
-### Cross-region Endpoints (us-east-1)
-
-The Tagging API endpoint is only available in us-east-1. When enabled, Terraform
-creates a small VPC in us-east-1, peers it with the disconnected VPC, creates the
-interface endpoint there, and adds a Route53 private zone override so the
-disconnected VPC resolves `tagging.us-east-1.amazonaws.com` to a private IP
-reachable via peering.
-
-IAM and Route53 support cross-region VPC endpoints natively (since Nov 2025)
-and are created directly in the disconnected VPC via `interface_endpoint_services`.
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `create_cross_region_endpoints` | `false` | Create a us-east-1 VPC with peering and interface endpoints for the Tagging API |
-| `cross_region_endpoint_services` | `[tagging]` | Services to create endpoints for in us-east-1 |
-| `cross_region_vpc_cidr` | `10.99.0.0/24` | CIDR for the us-east-1 VPC |
-| `cross_region_subnet_cidr` | `10.99.0.0/26` | Subnet CIDR within the us-east-1 VPC |
+| `global_endpoint_services` | `[iam, route53, tagging]` | Global AWS services with cross-region endpoint support (`com.amazonaws.<service>`, no region prefix). DNS resolves to private IPs in the disconnected VPC (e.g. `iam.amazonaws.com`). |
 
 ### Self-Managed HCP
 

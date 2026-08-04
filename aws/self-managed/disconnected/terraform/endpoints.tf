@@ -49,7 +49,7 @@ resource "aws_vpc_endpoint" "interface" {
   }
 }
 
-# ── Global Interface Endpoints (iam, route53) ────────────────────────────────
+# ── Global Interface Endpoints (iam, route53, tagging) ────────────────────────
 # Cross-region VPC endpoints use a global service name: com.amazonaws.<service>
 # with service_region pointing to where the service is hosted (us-east-1).
 # DNS resolves to private IPs in the disconnected VPC (e.g. iam.amazonaws.com)
