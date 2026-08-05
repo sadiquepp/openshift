@@ -371,12 +371,15 @@ CA in `additionalTrustBundle`.
 
 ```bash
 ssh ec2-user@$BASTION_IP
-
-# 1. Create the secrets for the HCP clusters
 export KUBECONFIG=~/install-dir/auth/kubeconfig
+
+# 1. Add mirror registry CA trust to the cluster
+oc apply -f ~/registry-trust.yaml
+
+# 2. Create the secrets for the HCP clusters
 oc apply -f ~/hypershift-secrets.yaml
 
-# 2. Apply the HostedCluster CR
+# 3. Apply the HostedCluster CR
 oc apply -f ~/hosted-cluster-hcp1-pvt.yaml
 ```
 
