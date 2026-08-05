@@ -58,7 +58,7 @@ resource "aws_vpc_endpoint" "global" {
 
   vpc_id              = aws_vpc.disconnected.id
   service_name        = "com.amazonaws.${each.key}"
-  service_region      = "us-east-1"
+  service_region      = var.aws_region == "us-east-1" ? null : "us-east-1"
   vpc_endpoint_type   = "Interface"
   subnet_ids          = [aws_subnet.disconnected[0].id]
   security_group_ids  = [aws_security_group.vpc_endpoint.id]
@@ -80,7 +80,7 @@ resource "aws_vpc_endpoint" "cross_region" {
 
   vpc_id              = aws_vpc.disconnected.id
   service_name        = "com.amazonaws.us-east-1.${each.key}"
-  service_region      = "us-east-1"
+  service_region      = var.aws_region == "us-east-1" ? null : "us-east-1"
   vpc_endpoint_type   = "Interface"
   subnet_ids          = [aws_subnet.disconnected[0].id]
   security_group_ids  = [aws_security_group.vpc_endpoint.id]
