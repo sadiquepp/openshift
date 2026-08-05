@@ -408,7 +408,7 @@ oc delete -f ~/hosted-cluster-hcp1-pvt.yaml
 ---
 ## Cluster Updates in the disconnected environment. (Main cluster only - Hosted Cluster follows a different process)
 
-1. Edit imageset-config.yaml to mirror a higher patch version of the existing version. If openshift 4.20.28 was mirrored, update it to include 4.20.29. Example below.
+1. Edit imageset-config.yaml to mirror a higher patch version of the existing version. If openshift `4.20.28` was mirrored, update it to include `4.20.29`. Example below.
 ```yaml
 kind: ImageSetConfiguration
 apiVersion: mirror.openshift.io/v2alpha1
@@ -432,7 +432,7 @@ mirror:
 ```bash
 oc mirror -c imageset-config.yaml --workspace file://oc-mirror-output docker://registry.<clustername>.<basedomain>:8443 --v2
 ```
-Replace <clustername> and <basedomain> with the actual cluster name and base domain.
+Replace `<clustername>` and `<basedomain>` with the actual cluster name and base domain.
 
 3. Apply the artifacts to the cluster after mirroring so that the singatures for new release images are available in the cluster.
 ```bash
