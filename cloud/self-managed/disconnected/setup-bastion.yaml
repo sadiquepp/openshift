@@ -332,6 +332,12 @@
       src: "registry-trust.yaml.j2"
       dest: "{{ home_dir }}/registry-trust.yaml"
 
+  - name: Copy cluster update helper script
+    ansible.builtin.template:
+      src: apply-cluster-update.sh.j2
+      dest: "{{ home_dir }}/apply-cluster-update.sh"
+      mode: "0755"
+
   - name: Copy create-self-managed-hcp.sh
     template:
       src: "{{ cloud_provider }}/create-self-managed-hcp.sh.j2"

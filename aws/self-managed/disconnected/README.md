@@ -200,7 +200,7 @@ To destroy:
   --dir ~/install-dir \
   --log-level=debug
 ```
-To re-run the installer, you need to unpack the backup of install-dir and re-run the installer if there are no changes to the install-config.yaml needs to be made.
+To re-run the installer, unpack the backup of install-dir and re-run the installer if there are no changes to the install-config.yaml needs to be made.
 ```bash
 rm -rf ~/install-dir
 tar -xjf ~/install-dir-backup.bz2
@@ -428,7 +428,7 @@ mirror:
   additionalImages: 
    - name: registry.redhat.io/ubi8/ubi:latest
 ```
-2. Run the following command to mirror the new version.
+y2. Run the following command to mirror the new version.
 ```bash
 oc mirror -c imageset-config.yaml --workspace file://oc-mirror-output docker://registry.<clustername>.<basedomain>:8443 --v2
 ```
