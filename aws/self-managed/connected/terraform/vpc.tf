@@ -29,9 +29,16 @@ resource "aws_subnet" "private" {
   cidr_block        = var.connected_private_subnet_cidrs[count.index]
   availability_zone = local.azs[count.index]
 
-  tags = {
-    Name = "${local.connected_vpc_name}-subnet-az${count.index + 1}"
-  }
+  tags = merge(
+    {
+      Name                              = "${local.connected_vpc_name}-subnet-az${count.index + 1}"
+      "kubernetes.io/role/internal-elb" = "1"
+    },
+    {
+      for suffix, cluster in local.hcp_pvt_clusters :
+      "kubernetes.io/cluster/${cluster.cluster_name}" => "shared"
+    }
+  )
 }
 
 # ── Public Subnets ────────────────────────────────────────────────────────────
