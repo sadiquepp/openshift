@@ -14,18 +14,20 @@ tarballs:
   - https://mirror.openshift.com/pub/cgw/rosa/latest/rosa-linux.tar.gz
   - https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/latest/oc-mirror.tar.gz
   - https://mirror.openshift.com/pub/cgw/mirror-registry/latest/mirror-registry-amd64.tar.gz
+  - https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/{{ openshift_major_version }}.{{ openshift_minor_version }}/opm-linux-rhel9-{{ openshift_major_version }}.{{ openshift_minor_version }}.tar.gz
 
 tarball_basenames:
   - openshift-client-linux.tar.gz
   - rosa-linux.tar.gz
   - oc-mirror.tar.gz
   - mirror-registry-amd64.tar.gz
-
+  - opm-linux-rhel9-{{ openshift_major_version }}.{{ openshift_minor_version }}.tar.gz
 cli_binaries:
   - oc
   - rosa
   - kubectl
   - oc-mirror
+  - opm-rhel9
 
 mirror_operators:
   - aws-load-balancer-operator

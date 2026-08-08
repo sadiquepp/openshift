@@ -80,7 +80,8 @@ oc whoami >/dev/null 2>&1 || die "unable to connect to cluster using KUBECONFIG=
 
 # Step 3: Apply mirrored release signatures and catalog resources.
 log "Step 3: applying oc-mirror cluster resources"
-oc apply -f "${CLUSTER_RESOURCES}"
+oc apply -f "${CLUSTER_RESOURCES}" \
+  || log "warning: some cluster resources failed to apply (expected before Update Service operator is installed); continuing"
 
 # Steps 4-5: Trust ingress and mirror registry CAs for the update service.
 if [[ "${SKIP_CA_TRUST}" == "true" ]]; then
@@ -169,9 +170,20 @@ oc apply -f "${UPDATE_SERVICE_CR}" -n "${UPDATE_SERVICE_NAMESPACE}"
 
 # Steps 9-11: Point CVO at the local update graph.
 log "Steps 9-11: configuring ClusterVersion upstream to the local update service"
-POLICY_ENGINE_GRAPH_URI="$(oc -n "${UPDATE_SERVICE_NAMESPACE}" get -o jsonpath='{.status.policyEngineURI}/api/upgrades_info/v1/graph{"\n"}' \
-  updateservice "${UPDATE_SERVICE_NAME}")"
+log "waiting for UpdateService policyEngineURI"
+POLICY_ENGINE_GRAPH_URI=""
+for _ in $(seq 1 60); do
+  POLICY_ENGINE_URI="$(oc -n "${UPDATE_SERVICE_NAMESPACE}" get updateservice "${UPDATE_SERVICE_NAME}" \
+    -o jsonpath='{.status.policyEngineURI}' 2>/dev/null || true)"
+  if [[ -n "${POLICY_ENGINE_URI}" ]]; then
+    POLICY_ENGINE_GRAPH_URI="${POLICY_ENGINE_URI}/api/upgrades_info/v1/graph"
+    break
+  fi
+  sleep 10
+done
 [[ -n "${POLICY_ENGINE_GRAPH_URI}" ]] || die "policyEngineURI is empty; is UpdateService ${UPDATE_SERVICE_NAME} ready?"
+[[ "${POLICY_ENGINE_GRAPH_URI}" == http* ]] \
+  || die "policyEngineURI is not a full URL: ${POLICY_ENGINE_GRAPH_URI}"
 log "policy engine graph URI: ${POLICY_ENGINE_GRAPH_URI}"
 
 PATCH="{\"spec\":{\"upstream\":\"${POLICY_ENGINE_GRAPH_URI}\"}}"

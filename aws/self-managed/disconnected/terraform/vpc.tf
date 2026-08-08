@@ -41,9 +41,16 @@ resource "aws_subnet" "disconnected" {
   cidr_block        = var.disconnected_subnet_cidrs[count.index]
   availability_zone = local.azs[count.index]
 
-  tags = {
-    Name = "${local.disconnected_vpc_name}-subnet-az${count.index + 1}"
-  }
+  tags = merge(
+    {
+      Name                              = "${local.disconnected_vpc_name}-subnet-az${count.index + 1}"
+      "kubernetes.io/role/internal-elb" = "1"
+    },
+    {
+      for suffix, cluster in local.hcp_pvt_clusters :
+      "kubernetes.io/cluster/${cluster.cluster_name}" => "shared"
+    }
+  )
 }
 
 # ── Egress VPC ────────────────────────────────────────────────────────────────
