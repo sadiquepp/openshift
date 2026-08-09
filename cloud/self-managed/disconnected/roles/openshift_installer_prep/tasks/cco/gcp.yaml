@@ -1,0 +1,10 @@
+- name: Create All CCO Files for GCP
+  shell: |
+    cd {{ cco_dir }}
+    {{ cco_dir }}/ccoctl gcp create-all \
+    --credentials-requests-dir {{ cco_dir }}/credrequests/ \
+    --name {{ cco_suffix }} \
+    --region {{ gcp_region }} \
+    --project {{ gcp_project_id }} \
+    --output-dir {{ cco_dir }}
+  when: not cco_dir_check.stat.exists

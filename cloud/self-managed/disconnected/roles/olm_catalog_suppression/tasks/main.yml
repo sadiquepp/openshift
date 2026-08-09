@@ -1,0 +1,79 @@
+---
+# ── olm_catalog_suppression ──────────────────────────────────────────────
+# NEW ROLE (not from the original playbook). Builds a single empty
+# File-Based Catalog (FBC) image and pushes it under one repo name per
+# default OLM catalog you want suppressed (e.g. community, marketplace)
+# while leaving redhat-operators/certified-operators pointed at real
+# mirrored content via the hypershift.openshift.io/*-catalog-image
+# annotations on HostedCluster (rendered by hcp_provisioning).
+
+- name: Ensure mirror registry CA is on disk for podman/skopeo trust
+  copy:
+    content: "{{ mirror_registry_ca_cert }}"
+    dest: "{{ olm_suppression_ca_path }}/mirror-registry-ca.pem"
+    mode: "0644"
+
+- name: Ensure empty catalog directory exists (no packages = valid empty FBC)
+  file:
+    path: "{{ empty_catalog_workdir }}"
+    state: directory
+    mode: "0755"
+
+- name: Generate Dockerfile for empty FBC catalog
+  command: >
+    opm generate dockerfile {{ empty_catalog_workdir }}
+  args:
+    creates: "{{ empty_catalog_dockerfile }}"
+
+- name: Validate empty FBC catalog structure
+  command: >
+    opm validate {{ empty_catalog_workdir }}
+  changed_when: false
+
+- name: Build empty catalog image (base build, tag = first target)
+  command: >
+    podman build
+    -t {{ empty_catalog_targets[0].repo }}:v{{ openshift_major_version }}
+    -f {{ empty_catalog_dockerfile }}
+    {{ empty_catalog_workdir | dirname }}
+  changed_when: true
+
+- name: Tag base image under each suppressed-catalog repo name
+  command: >
+    podman tag
+    {{ empty_catalog_targets[0].repo }}:v{{ openshift_major_version }}
+    {{ item.repo }}:v{{ openshift_major_version }}
+  loop: "{{ empty_catalog_targets }}"
+  loop_control:
+    label: "{{ item.name }}"
+  changed_when: true
+
+- name: Push tagged image and capture digest
+  command: >
+    podman push
+    --cert-dir {{ olm_suppression_ca_path }}
+    {{ item.repo }}:v{{ openshift_major_version }}
+    --digestfile {{ olm_suppression_ca_path }}/{{ item.name }}-empty.digest
+  loop: "{{ empty_catalog_targets }}"
+  loop_control:
+    label: "{{ item.name }}"
+  changed_when: true
+
+- name: Read back each pushed digest
+  slurp:
+    src: "{{ olm_suppression_ca_path }}/{{ item.name }}-empty.digest"
+  loop: "{{ empty_catalog_targets }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: empty_catalog_digest_files
+
+- name: Set fact — map of catalog name to full image@digest reference
+  set_fact:
+    empty_catalog_images: "{{ empty_catalog_images | default({}) | combine({item.item.name: item.item.repo + '@' + (item.content | b64decode | trim)}) }}"
+  loop: "{{ empty_catalog_digest_files.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+
+- name: Show resulting image references (consumed by hcp_provisioning annotations)
+  debug:
+    msg: "{{ empty_catalog_images }}"

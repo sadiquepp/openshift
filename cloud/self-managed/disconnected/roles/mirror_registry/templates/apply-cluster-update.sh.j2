@@ -1,0 +1,208 @@
+#!/bin/bash
+# Automates README steps 3-13 for cluster updates in a disconnected environment.
+# Run after mirroring a new OpenShift version with oc-mirror (README step 2).
+#
+# Steps 4-5 can be skipped when Ingress Controller and mirror registry use an
+# official CA (for example Let's Encrypt). Pass --skip-ca-trust or set
+# SKIP_CA_TRUST=true.
+#
+# Step 12 (trigger update from OpenShift Console) remains manual.
+set -euo pipefail
+
+KUBECONFIG="${KUBECONFIG:-{{ home_dir }}/install-dir/auth/kubeconfig}"
+export KUBECONFIG
+
+OC_MIRROR_OUTPUT="${OC_MIRROR_OUTPUT:-{{ home_dir }}/oc-mirror-output}"
+CLUSTER_RESOURCES="${OC_MIRROR_OUTPUT}/working-dir/cluster-resources"
+REGISTRY_TRUST="${REGISTRY_TRUST:-{{ home_dir }}/registry-trust.yaml}"
+UPDATE_SERVICE_NAME="${UPDATE_SERVICE_NAME:-update-service-oc-mirror}"
+UPDATE_SERVICE_NAMESPACE="${UPDATE_SERVICE_NAMESPACE:-openshift-update-service}"
+SKIP_CA_TRUST="${SKIP_CA_TRUST:-{{ skip_ca_trust | default('false') }}}"
+RESTART_CVO="${RESTART_CVO:-true}"
+OPERATOR_WAIT_TIMEOUT="${OPERATOR_WAIT_TIMEOUT:-600s}"
+
+log() {
+  echo "[apply-cluster-update] $*"
+}
+
+die() {
+  echo "[apply-cluster-update] ERROR: $*" >&2
+  exit 1
+}
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [OPTIONS]
+
+Automate post-mirror cluster update configuration (README steps 3-13).
+
+Options:
+  --skip-ca-trust     Skip ingress and registry CA trust steps (README steps 4-5)
+  --no-restart-cvo    Do not restart the cluster-version-operator pod (step 13)
+  --kubeconfig PATH   Kubeconfig path (default: ${KUBECONFIG})
+  -h, --help          Show this help
+
+Environment:
+  KUBECONFIG, OC_MIRROR_OUTPUT, REGISTRY_TRUST, UPDATE_SERVICE_NAME,
+  UPDATE_SERVICE_NAMESPACE, SKIP_CA_TRUST, RESTART_CVO, OPERATOR_WAIT_TIMEOUT
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --skip-ca-trust)
+      SKIP_CA_TRUST=true
+      shift
+      ;;
+    --no-restart-cvo)
+      RESTART_CVO=false
+      shift
+      ;;
+    --kubeconfig)
+      [[ $# -ge 2 ]] || die "--kubeconfig requires a path"
+      KUBECONFIG="$2"
+      export KUBECONFIG
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      die "unknown option: $1"
+      ;;
+  esac
+done
+
+[[ -d "${CLUSTER_RESOURCES}" ]] || die "cluster resources not found at ${CLUSTER_RESOURCES}; run oc-mirror first"
+command -v oc >/dev/null || die "oc not found in PATH"
+oc whoami >/dev/null 2>&1 || die "unable to connect to cluster using KUBECONFIG=${KUBECONFIG}"
+
+# Step 3: Apply mirrored release signatures and catalog resources.
+log "Step 3: applying oc-mirror cluster resources"
+oc apply -f "${CLUSTER_RESOURCES}" \
+  || log "warning: some cluster resources failed to apply (expected before Update Service operator is installed); continuing"
+
+# Steps 4-5: Trust ingress and mirror registry CAs for the update service.
+if [[ "${SKIP_CA_TRUST}" == "true" ]]; then
+  log "Steps 4-5: skipped (--skip-ca-trust / SKIP_CA_TRUST=true)"
+else
+  log "Step 4: trusting ingress controller self-signed CA for the update service"
+  INGRESS_CA="$(mktemp)"
+  trap 'rm -f "${INGRESS_CA}"' EXIT
+  oc get secret router-ca -n openshift-ingress-operator -o jsonpath='{.data.tls\.crt}' | base64 -d > "${INGRESS_CA}"
+  oc create configmap update-service-ca -n openshift-config --from-file=ca-bundle.crt="${INGRESS_CA}" --dry-run=client -o yaml | oc apply -f -
+  oc patch proxy/cluster --type=merge -p '{"spec":{"trustedCA":{"name":"update-service-ca"}}}'
+  log "waiting for cluster operators to settle after proxy trusted CA change"
+  if oc adm wait-for-stable-cluster --help >/dev/null 2>&1; then
+    oc adm wait-for-stable-cluster --minimum-stable-period=60s --timeout=15m \
+      || log "warning: cluster did not report stable within timeout; continuing"
+  else
+    log "waiting 120s for proxy trusted CA change to propagate"
+    sleep 120
+  fi
+
+  log "Step 5: applying mirror registry trust for the update service"
+  [[ -f "${REGISTRY_TRUST}" ]] || die "registry trust manifest not found at ${REGISTRY_TRUST}"
+  oc apply -f "${REGISTRY_TRUST}"
+fi
+
+# Step 7: Install OpenShift Update Service operator from the mirrored catalog.
+log "Step 7: ensuring OpenShift Update Service operator is installed"
+oc create namespace "${UPDATE_SERVICE_NAMESPACE}" --dry-run=client -o yaml | oc apply -f -
+
+if ! oc get subscription cincinnati-operator -n "${UPDATE_SERVICE_NAMESPACE}" >/dev/null 2>&1; then
+  SUBSCRIPTION_FILE="$(find "${CLUSTER_RESOURCES}" -maxdepth 1 -type f -name '*.yaml' -print0 2>/dev/null \
+    | xargs -0 grep -l 'cincinnati-operator' 2>/dev/null | head -1 || true)"
+  if [[ -n "${SUBSCRIPTION_FILE}" ]]; then
+    log "applying operator subscription from ${SUBSCRIPTION_FILE}"
+    oc apply -f "${SUBSCRIPTION_FILE}"
+  else
+    CATALOG_SOURCE="$(oc get catalogsource -n openshift-marketplace -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' \
+      | grep -E 'redhat-operator-index|cs-redhat-operator-index' | head -1 || true)"
+    [[ -n "${CATALOG_SOURCE}" ]] || die "could not find mirrored redhat-operator-index CatalogSource; apply cluster-resources first"
+
+    log "creating Subscription for cincinnati-operator (catalog: ${CATALOG_SOURCE})"
+    cat <<EOF | oc apply -f -
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: openshift-update-service
+  namespace: ${UPDATE_SERVICE_NAMESPACE}
+spec:
+  targetNamespaces:
+    - ${UPDATE_SERVICE_NAMESPACE}
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: cincinnati-operator
+  namespace: ${UPDATE_SERVICE_NAMESPACE}
+spec:
+  channel: v1
+  name: cincinnati-operator
+  source: ${CATALOG_SOURCE}
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Automatic
+EOF
+  fi
+fi
+
+log "waiting for OpenShift Update Service operator CSV to succeed"
+CSV_NAME=""
+for _ in $(seq 1 60); do
+  CSV_NAME="$(oc get csv -n "${UPDATE_SERVICE_NAMESPACE}" -o jsonpath='{.items[?(@.spec.displayName=="OpenShift Update Service")].metadata.name}' 2>/dev/null || true)"
+  if [[ -n "${CSV_NAME}" ]]; then
+    break
+  fi
+  sleep 10
+done
+[[ -n "${CSV_NAME}" ]] || die "OpenShift Update Service CSV was not created in ${UPDATE_SERVICE_NAMESPACE}"
+oc wait "csv/${CSV_NAME}" -n "${UPDATE_SERVICE_NAMESPACE}" \
+  --for=jsonpath='{.status.phase}'=Succeeded \
+  --timeout="${OPERATOR_WAIT_TIMEOUT}"
+
+# Step 8: Apply UpdateService CR generated by oc-mirror.
+log "Step 8: applying UpdateService CR"
+UPDATE_SERVICE_CR="${CLUSTER_RESOURCES}/updateService.yaml"
+[[ -f "${UPDATE_SERVICE_CR}" ]] || die "UpdateService manifest not found at ${UPDATE_SERVICE_CR}"
+oc apply -f "${UPDATE_SERVICE_CR}" -n "${UPDATE_SERVICE_NAMESPACE}"
+
+# Steps 9-11: Point CVO at the local update graph.
+log "Steps 9-11: configuring ClusterVersion upstream to the local update service"
+log "waiting for UpdateService policyEngineURI"
+POLICY_ENGINE_GRAPH_URI=""
+for _ in $(seq 1 60); do
+  POLICY_ENGINE_URI="$(oc -n "${UPDATE_SERVICE_NAMESPACE}" get updateservice "${UPDATE_SERVICE_NAME}" \
+    -o jsonpath='{.status.policyEngineURI}' 2>/dev/null || true)"
+  if [[ -n "${POLICY_ENGINE_URI}" ]]; then
+    POLICY_ENGINE_GRAPH_URI="${POLICY_ENGINE_URI}/api/upgrades_info/v1/graph"
+    break
+  fi
+  sleep 10
+done
+[[ -n "${POLICY_ENGINE_GRAPH_URI}" ]] || die "policyEngineURI is empty; is UpdateService ${UPDATE_SERVICE_NAME} ready?"
+[[ "${POLICY_ENGINE_GRAPH_URI}" == http* ]] \
+  || die "policyEngineURI is not a full URL: ${POLICY_ENGINE_GRAPH_URI}"
+log "policy engine graph URI: ${POLICY_ENGINE_GRAPH_URI}"
+
+PATCH="{\"spec\":{\"upstream\":\"${POLICY_ENGINE_GRAPH_URI}\"}}"
+oc patch clusterversion version -p "${PATCH}" --type merge
+
+# Step 12: Manual update trigger from the console.
+cat <<EOF
+
+Step 12 (manual): Open OpenShift Console -> Administration -> Cluster Settings -> Details
+to review the update graph and start the upgrade to the newly mirrored version.
+
+EOF
+
+# Step 13: Restart CVO to refresh the graph immediately.
+if [[ "${RESTART_CVO}" == "true" ]]; then
+  log "Step 13: restarting cluster-version-operator to refresh the update graph"
+  oc delete pod -n openshift-cluster-version -l k8s-app=cluster-version-operator --wait=false
+else
+  log "Step 13: skipped (--no-restart-cvo); wait for the next CVO poll to see the updated graph"
+fi
+
+log "done"

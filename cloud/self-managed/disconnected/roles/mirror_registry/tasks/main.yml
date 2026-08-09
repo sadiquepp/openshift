@@ -1,0 +1,139 @@
+---
+# ── mirror_registry ──────────────────────────────────────────────────────
+# Downloads mirror-registry/oc/opm tarballs, installs Quay mirror-registry,
+# trusts its CA, logs in, mirrors content via oc-mirror, and renders the
+# registry-trust manifest + cluster-update helper script.
+
+- name: Check if tarballs already exist
+  stat:
+    path: "{{ home_dir }}/{{ item | basename }}"
+  loop: "{{ tarballs }}"
+  register: tarball_stats
+
+- name: Get the Mirror Registry, OC and OPM Tarball
+  shell: |
+    wget "{{ item.item }}"
+  loop: "{{ tarball_stats.results }}"
+  loop_control:
+    label: "{{ item.item | basename }}"
+  when: not item.stat.exists
+
+- name: Unarchive Downloaded Tarballs
+  unarchive:
+    src: "{{ home_dir }}/{{ item }}"
+    dest: "{{ home_dir }}/"
+    remote_src: yes
+  loop: "{{ tarball_basenames }}"
+
+- name: Copy CLI binaries to /usr/bin
+  copy:
+    src: "{{ home_dir }}/{{ item }}"
+    dest: "/usr/bin/{{ item }}"
+    remote_src: yes
+    mode: 0755
+  loop: "{{ cli_binaries }}"
+  become: yes
+
+- name: Creates directory quay_root_mount
+  file:
+    path: "{{ quay_root_mount }}"
+    state: directory
+  become: true
+
+- name: Check if mirror registry is already running
+  shell: |
+    podman login -u init -p {{ mirror_registry_password }} {{ installer_quay_hostname }}:{{ mirror_registry_port }} 2>/dev/null
+  register: registry_check
+  ignore_errors: true
+  changed_when: false
+
+- name: Install Mirror Registry
+  shell: |
+    {{ home_dir }}/mirror-registry install \
+    --quayHostname {{ installer_quay_hostname }}:{{ mirror_registry_port }} \
+    --quayRoot {{ quay_root_mount }} \
+    --quayStorage {{ quay_root_mount }} \
+    --initPassword {{ mirror_registry_password }}
+  register: mirror_registry_install_output
+  become: true
+  when: registry_check.rc != 0
+
+- name: Copy Quay Root CA
+  copy:
+    src: "{{ quay_root_mount }}/quay-rootCA/rootCA.pem"
+    dest: /etc/pki/ca-trust/source/anchors/
+    remote_src: yes
+    mode: 0644
+  become: yes
+
+- name: Update CA trust Bundle
+  shell: |
+    update-ca-trust extract
+  become: yes
+
+- name: Copy pull secret
+  copy:
+    dest: "{{ home_dir }}/pull-secret.txt"
+    content: "{{ pull_secret }}"
+
+- name: Login to the registry and generate password
+  shell: |
+    podman login --authfile {{ home_dir }}/pull-secret.txt \
+    -u init \
+    -p {{ mirror_registry_password }} \
+    {{ installer_quay_hostname }}:{{ mirror_registry_port }}
+
+- name: Create .docker Directory
+  file:
+    path: "{{ home_dir }}/.docker"
+    state: directory
+
+- name: Copy pull secret to .docker directory
+  copy:
+    src: "{{ home_dir }}/pull-secret.txt"
+    dest: "{{ home_dir }}/.docker/config.json"
+    remote_src: yes
+
+- name: Store the mirror registry credentials to a variable
+  shell: |
+    CREDENTIAL=$(grep -A1 {{ installer_quay_hostname }} {{ home_dir }}/pull-secret.txt | grep -v {{ installer_quay_hostname }} | awk {'print $2'})
+    echo $CREDENTIAL
+  register: quay_credential
+
+- name: Copy ImageSet Configuration file
+  template:
+    src: "imageset-config.yaml.j2"
+    dest: "{{ home_dir }}/imageset-config.yaml"
+  when: registry_check.rc != 0
+
+- name: Create oc-mirror-output Directory
+  file:
+    path: "{{ home_dir }}/oc-mirror-output"
+    state: directory
+  when: registry_check.rc != 0
+
+- name: Mirror Images to the local registry
+  shell: |
+    oc mirror -c imageset-config.yaml --workspace file://oc-mirror-output/ docker://{{ installer_quay_hostname }}:{{ mirror_registry_port }} --v2
+  when: registry_check.rc != 0
+
+- name: Read mirror registry CA cert
+  slurp:
+    src: "{{ quay_root_mount }}/quay-rootCA/rootCA.pem"
+  register: quay_root_ca
+  become: true
+
+- name: Store mirror registry CA cert
+  set_fact:
+    mirror_registry_ca_cert: "{{ quay_root_ca.content | b64decode }}"
+
+- name: Render registry trust ConfigMap and Image CR
+  ansible.builtin.template:
+    src: "registry-trust.yaml.j2"
+    dest: "{{ home_dir }}/registry-trust.yaml"
+
+- name: Copy cluster update helper script
+  ansible.builtin.template:
+    src: apply-cluster-update.sh.j2
+    dest: "{{ home_dir }}/apply-cluster-update.sh"
+    mode: "0755"

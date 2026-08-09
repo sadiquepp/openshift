@@ -1,0 +1,36 @@
+---
+# ── hcp_provisioning ──────────────────────────────────────────────────────
+# HyperShift-hosted-cluster-specific rendering: create-self-managed-hcp.sh
+# helper, one HostedCluster manifest per hcp_cluster_suffixes entry, OIDC/
+# PrivateLink secrets, and the HCP image-mirroring workaround.
+#
+# All tasks here are already individually guarded with the same `when:`
+# conditions as the original playbook, so this role is safe to include
+# unconditionally — but the orchestrator still gates the whole role for
+# clarity (see setup-bastion.yaml).
+
+- name: Copy create-self-managed-hcp.sh
+  template:
+    src: "{{ cloud_provider }}/create-self-managed-hcp.sh.j2"
+    dest: "{{ home_dir }}/create-self-managed-hcp.sh"
+    mode: "0755"
+  when: cloud_provider == 'aws' and hcp_cluster_suffixes is defined and hcp_cluster_suffixes | length > 0
+
+- name: Render HCP cluster manifests (private endpoint)
+  ansible.builtin.template:
+    src: "{{ cloud_provider }}/hosted-cluster-hcp-pvt.yaml.j2"
+    dest: "{{ home_dir }}/hosted-cluster-{{ hcp_suffix }}-pvt.yaml"
+  loop: "{{ hcp_cluster_suffixes }}"
+  loop_control:
+    loop_var: hcp_suffix
+  when: hcp_cluster_suffixes is defined and hcp_cluster_suffixes | length > 0
+
+- name: Render HyperShift OIDC S3 and PrivateLink credentials secrets
+  ansible.builtin.template:
+    src: "{{ cloud_provider }}/hypershift-secrets.yaml.j2"
+    dest: "{{ home_dir }}/hypershift-secrets.yaml"
+  when: cloud_provider == 'aws' and hcp_cluster_suffixes is defined and hcp_cluster_suffixes | length > 0
+
+- name: HCP workaround - mirror additional images
+  include_tasks: "tasks/workaround.yaml"
+  when: hcp_workaround_enabled | default(false) | bool

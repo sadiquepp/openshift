@@ -1,0 +1,86 @@
+---
+# ── bastion_base ─────────────────────────────────────────────────────────
+# Base OS/tooling setup for the disconnected bastion host.
+
+- name: Wait for SSH banners
+  wait_for_connection:
+    delay: 5
+    timeout: 300
+
+- name: Gather hostname fact
+  setup:
+    gather_subset:
+      - min
+  when: mirror_registry_fqdn is not defined
+
+- name: Store mirror registry hostname
+  set_fact:
+    installer_quay_hostname: "{{ mirror_registry_fqdn | default(ansible_hostname) }}"
+
+- name: Install Required RPM Packages
+  dnf:
+    name: "{{ common_packages + cloud_extra_packages }}"
+    state: present
+  become: true
+
+- name: Cloud-specific setup (CLI, credentials, auth)
+  include_tasks: "tasks/cloud-setup/{{ cloud_provider }}.yaml"
+
+- name: Enable mouse scrolling for tmux
+  lineinfile:
+    path: "{{ home_dir }}/.tmux.conf"
+    line: "set -g mouse on"
+    create: yes
+    state: present
+
+- name: Add Terraform Yum Repo
+  copy:
+    dest: /etc/yum.repos.d/hashicorp.repo
+    content: |
+      [hashicorp]
+      name=HashiCorp Stable - RHEL
+      baseurl=https://rpm.releases.hashicorp.com/RHEL/9/$basearch/stable
+      enabled=1
+      gpgcheck=1
+      gpgkey=https://rpm.releases.hashicorp.com/gpg
+  become: true
+
+- name: Install Terraform
+  dnf:
+    name:
+      - terraform
+    state: present
+  become: true
+
+- name: Create VNC User
+  ansible.builtin.user:
+    name: vncuser
+  become: true
+
+- name: Listen for vnc server on port 5999
+  ansible.builtin.lineinfile:
+    path: /etc/tigervnc/vncserver.users
+    insertafter: EOF
+    line: ":99=vncuser"
+  become: true
+
+- name: Copy squid Configuration file
+  copy:
+    src: squid.conf
+    dest: /etc/squid/
+  become: true
+
+- name: Copy squid allow list
+  template:
+    src: "{{ cloud_provider }}/squid-allow-list.txt.j2"
+    dest: /etc/squid/squid-allow-list.txt
+  become: true
+
+- name: Start and enable Squid
+  systemd:
+    state: started
+    name: "{{ item }}"
+    enabled: yes
+  loop:
+    - squid
+  become: yes

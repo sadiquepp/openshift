@@ -1,0 +1,14 @@
+---
+# Override any of these in vars/*.yaml or extra-vars per environment.
+
+olm_suppression_ca_path: "{{ home_dir }}/.olm-suppression"
+empty_catalog_workdir: "{{ olm_suppression_ca_path }}/community-operators-empty"
+empty_catalog_dockerfile: "{{ empty_catalog_workdir }}.Dockerfile"
+
+# Which default catalogs to suppress (leave redhat-operators / certified-operators
+# out of this list — those should point at real mirrored indexes instead).
+empty_catalog_targets:
+  - name: community-operators
+    repo: "{{ installer_quay_hostname }}:{{ mirror_registry_port }}/redhat/community-operator-index-empty"
+  - name: redhat-marketplace
+    repo: "{{ installer_quay_hostname }}:{{ mirror_registry_port }}/redhat/redhat-marketplace-index-empty"
