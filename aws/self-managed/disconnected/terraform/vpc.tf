@@ -51,6 +51,10 @@ resource "aws_subnet" "disconnected" {
       "kubernetes.io/cluster/${cluster.cluster_name}" => "shared"
     }
   )
+
+  lifecycle {
+    ignore_changes = [tags]
+  }
 }
 
 # ── Egress VPC ────────────────────────────────────────────────────────────────

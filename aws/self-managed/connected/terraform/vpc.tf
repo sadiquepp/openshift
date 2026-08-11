@@ -68,6 +68,9 @@ resource "aws_subnet" "public" {
       "kubernetes.io/cluster/${cluster.cluster_name}" => "shared"
     }
   )
+  lifecycle {
+    ignore_changes = [tags]
+  }
 }
 
 # ── Internet Gateway ──────────────────────────────────────────────────────────
