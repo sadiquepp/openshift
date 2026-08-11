@@ -64,10 +64,14 @@ metadata:
   namespace: {{ openshift_cluster_name_suffix }}-{{ pvt }}
   annotations:
     hypershift.openshift.io/ingress-controller-load-balancer-scope: "Internal"
+#    hypershift.openshift.io/olm-catalogs-is-registry-overrides: "registry.redhat.io={{ installer_quay_hostname }}:{{ mirror_registry_port }}"
 spec:
   autoscaling: {}
   capabilities: {}
   configuration:
+    proxy:
+      trustedCA:
+        name: {{ openshift_cluster_name_suffix }}-{{ pvt }}-user-ca-bundle
     ingress:
       loadBalancer:
         platform:
@@ -76,6 +80,7 @@ spec:
     operatorhub:
       disableAllDefaultSources: true
   controllerAvailabilityPolicy: HighlyAvailable
+#  updateService: https://update-service-oc-mirror-route-openshift-update-service.apps.{{ cluster_name }}.{{ openshift_base_domain }}/api/upgrades_info/v1/graph
   additionalTrustBundle:
     name: {{ openshift_cluster_name_suffix }}-{{ pvt }}-user-ca-bundle
   dns:

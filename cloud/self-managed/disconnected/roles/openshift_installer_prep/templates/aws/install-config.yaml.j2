@@ -43,6 +43,9 @@ imageDigestSources:
 - mirrors:
   - {{ installer_quay_hostname }}:{{ mirror_registry_port }}/openshift/release
   source: quay.io/openshift-release-dev/ocp-v4.0-art-dev
+- mirrors:
+  - {{ installer_quay_hostname }}:{{ mirror_registry_port }}/edo
+  source: registry.redhat.io/edo
 sshKey: |
   {{ ssh_public_key_for_vm_and_openshift_node }}
 additionalTrustBundle: |
