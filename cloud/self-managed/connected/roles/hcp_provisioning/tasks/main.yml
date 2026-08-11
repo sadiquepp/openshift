@@ -1,0 +1,72 @@
+---
+# ── hcp_provisioning (connected-only) ─────────────────────────────────────
+# Renders all HCP manifest variants connected supports: public, private,
+# public-and-private (PrivateLink), and the same three again for a separate
+# VPC topology — plus the create-self-managed-hcp.sh helper and the
+# HyperShift OIDC/PrivateLink/External-DNS secrets manifest.
+
+- name: Copy HCP script (AWS only)
+  template:
+    src: "{{ cloud_provider }}/create-self-managed-hcp.sh.j2"
+    dest: "{{ home_dir }}/create-self-managed-hcp.sh"
+  when: cloud_provider == 'aws'
+
+- name: Render HCP cluster manifests (public endpoint)
+  ansible.builtin.template:
+    src: "{{ cloud_provider }}/hosted-cluster-hcp.yaml.j2"
+    dest: "{{ home_dir }}/hosted-cluster-{{ hcp_suffix }}.yaml"
+  loop: "{{ hcp_cluster_suffixes }}"
+  loop_control:
+    loop_var: hcp_suffix
+  when: hcp_cluster_suffixes is defined
+
+- name: Render HCP cluster manifests (private endpoint / PrivateLink)
+  ansible.builtin.template:
+    src: "{{ cloud_provider }}/hosted-cluster-hcp-pvt.yaml.j2"
+    dest: "{{ home_dir }}/hosted-cluster-{{ hcp_suffix }}-pvt.yaml"
+  loop: "{{ hcp_cluster_suffixes }}"
+  loop_control:
+    loop_var: hcp_suffix
+  when: hcp_cluster_suffixes is defined
+
+- name: Render HCP cluster manifests (PublicAndPrivate endpoint / PrivateLink)
+  ansible.builtin.template:
+    src: "{{ cloud_provider }}/hosted-cluster-hcp-pvtpl.yaml.j2"
+    dest: "{{ home_dir }}/hosted-cluster-{{ hcp_suffix }}-pvtpl.yaml"
+  loop: "{{ hcp_cluster_suffixes }}"
+  loop_control:
+    loop_var: hcp_suffix
+  when: hcp_cluster_suffixes is defined
+
+- name: Render HCP cluster manifests for separate VPC (public endpoint)
+  ansible.builtin.template:
+    src: "{{ cloud_provider }}/hosted-cluster-hcp-vpc.yaml.j2"
+    dest: "{{ home_dir }}/hosted-cluster-{{ hcp_suffix }}-vpc.yaml"
+  loop: "{{ hcp_vpc_suffixes | default([]) }}"
+  loop_control:
+    loop_var: hcp_suffix
+  when: hcp_vpc_suffixes is defined and hcp_vpc_suffixes | length > 0
+
+- name: Render HCP cluster manifests for separate VPC (private endpoint)
+  ansible.builtin.template:
+    src: "{{ cloud_provider }}/hosted-cluster-hcp-vpc-pvt.yaml.j2"
+    dest: "{{ home_dir }}/hosted-cluster-{{ hcp_suffix }}-vpc-pvt.yaml"
+  loop: "{{ hcp_vpc_suffixes | default([]) }}"
+  loop_control:
+    loop_var: hcp_suffix
+  when: hcp_vpc_suffixes is defined and hcp_vpc_suffixes | length > 0
+
+- name: Render HCP cluster manifests for separate VPC (PublicAndPrivate endpoint)
+  ansible.builtin.template:
+    src: "{{ cloud_provider }}/hosted-cluster-hcp-vpc-pvtpl.yaml.j2"
+    dest: "{{ home_dir }}/hosted-cluster-{{ hcp_suffix }}-vpc-pvtpl.yaml"
+  loop: "{{ hcp_vpc_suffixes | default([]) }}"
+  loop_control:
+    loop_var: hcp_suffix
+  when: hcp_vpc_suffixes is defined and hcp_vpc_suffixes | length > 0
+
+- name: Render HyperShift OIDC S3, PrivateLink, and External DNS credentials secrets
+  ansible.builtin.template:
+    src: "{{ cloud_provider }}/hypershift-secrets.yaml.j2"
+    dest: "{{ home_dir }}/hypershift-secrets.yaml"
+  when: (hcp_cluster_suffixes is defined and hcp_cluster_suffixes | length > 0) or (hcp_xacct_cluster_suffixes is defined and hcp_xacct_cluster_suffixes | length > 0)

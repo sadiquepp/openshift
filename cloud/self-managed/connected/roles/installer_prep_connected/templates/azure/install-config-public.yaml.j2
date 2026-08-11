@@ -1,0 +1,50 @@
+apiVersion: v1
+baseDomain: {{ openshift_base_domain }}
+credentialsMode: Manual
+compute:
+- architecture: amd64
+  hyperthreading: Enabled
+  name: worker
+  platform:
+    azure:
+      zones:
+      - "1"
+      - "2"
+      - "3"
+  replicas: 3
+controlPlane:
+  architecture: amd64
+  hyperthreading: Enabled
+  name: master
+  platform:
+    azure:
+      zones:
+      - "1"
+      - "2"
+      - "3"
+  replicas: 3
+metadata:
+  creationTimestamp: null
+  name: {{ openshift_cluster_name }}
+networking:
+  clusterNetwork:
+  - cidr: 10.128.0.0/14
+    hostPrefix: 23
+  machineNetwork:
+  - cidr: {{ connected_vnet_cidr }}
+  networkType: OVNKubernetes
+  serviceNetwork:
+  - 172.30.0.0/16
+platform:
+  azure:
+    baseDomainResourceGroupName: {{ resource_group_name }}
+    resourceGroupName: {{ cluster_resource_group_name }}
+    region: {{ azure_region }}
+    networkResourceGroupName: {{ network_resource_group_name }}
+    virtualNetwork: {{ connected_vnet_name }}
+    controlPlaneSubnet: {{ connected_subnet_name_a }}
+    computeSubnet: {{ connected_subnet_name_b }}
+publish: Internal
+pullSecret: '{{ pull_secret }}'
+sshKey: |
+  {{ ssh_public_key_for_vm_and_openshift_node }}

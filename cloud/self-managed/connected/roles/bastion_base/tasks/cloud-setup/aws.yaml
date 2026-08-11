@@ -1,0 +1,11 @@
+- name: Creates .aws directory to store files
+  file:
+    path: "{{ home_dir }}/.aws"
+    state: directory
+
+- name: Update .aws/config with region
+  copy:
+    dest: "{{ home_dir }}/.aws/config"
+    content: |
+      [default]
+      region = {{ aws_region }}

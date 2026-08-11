@@ -1,0 +1,91 @@
+#!/bin/bash
+# Applies Let's Encrypt certificates to the API server and Ingress controller
+# following the Red Hat OpenShift documentation:
+# https://docs.redhat.com/en/documentation/openshift_container_platform/4.21/html/security_and_compliance/configuring-certificates
+set -euo pipefail
+
+API_FQDN="api.{{ openshift_cluster_name }}.{{ openshift_base_domain }}"
+APPS_FQDN="*.apps.{{ openshift_cluster_name }}.{{ openshift_base_domain }}"
+
+echo "=== Applying Let's Encrypt certificates ==="
+echo "API:     ${API_FQDN}"
+echo "Ingress: ${APPS_FQDN}"
+echo ""
+
+# ── Step 1: Create the CA ConfigMap for the cluster trust store ──────────────
+# Red Hat docs: create a configmap with the CA bundle so internal cluster
+# components (console, monitoring, image-registry) trust the new CA.
+echo "=== Creating CA ConfigMap in openshift-config ==="
+oc create configmap letsencrypt-ca \
+  --from-file=ca-bundle.crt=letsencrypt-ca-bundle.pem \
+  -n openshift-config --dry-run=client -o yaml | oc apply -f -
+
+# ── Step 2: Patch the cluster-wide proxy with the trusted CA ─────────────────
+echo ""
+echo "=== Patching proxy/cluster with trusted CA ==="
+oc patch proxy/cluster --type=merge \
+  -p '{"spec":{"trustedCA":{"name":"letsencrypt-ca"}}}'
+
+# ── Step 3: Apply the TLS Secrets ────────────────────────────────────────────
+echo ""
+echo "=== Applying TLS Secrets ==="
+oc apply -f letsencrypt-api-cert-secret.yaml
+oc apply -f letsencrypt-ingress-cert-secret.yaml
+
+# ── Step 4: Patch APIServer with named certificate ───────────────────────────
+echo ""
+echo "=== Patching APIServer to use Let's Encrypt certificate ==="
+oc patch apiserver cluster --type=merge -p '{
+  "spec": {
+    "servingCerts": {
+      "namedCertificates": [
+        {
+          "names": ["'"${API_FQDN}"'"],
+          "servingCertificate": {
+            "name": "letsencrypt-api-cert"
+          }
+        }
+      ]
+    }
+  }
+}'
+
+# ── Step 5: Patch IngressController with default certificate ─────────────────
+echo ""
+echo "=== Patching IngressController to use Let's Encrypt certificate ==="
+oc patch ingresscontroller default -n openshift-ingress-operator --type=merge -p '{
+  "spec": {
+    "defaultCertificate": {
+      "name": "letsencrypt-ingress-cert"
+    }
+  }
+}'
+
+echo ""
+echo "============================================================"
+echo "  Done. API server pods will restart (takes a few minutes)."
+echo "============================================================"
+echo ""
+
+# ── Step 6: Update kubeconfig CA trust ────────────────────────────────────────
+# The original kubeconfig uses client-certificate auth (system:admin).
+# We keep that but remove the embedded self-signed CA so that oc/kubectl
+# falls back to the system root CA pool (which includes Let's Encrypt ISRG Root X1).
+KUBECONFIG_FILE="${KUBECONFIG:-${HOME}/.kube/config}"
+if [ -f "$KUBECONFIG_FILE" ]; then
+  echo "=== Updating kubeconfig to trust Let's Encrypt CA ==="
+  cp "$KUBECONFIG_FILE" "${KUBECONFIG_FILE}.bak"
+  sed -i '/certificate-authority-data:/d' "$KUBECONFIG_FILE"
+  echo "  Removed embedded self-signed CA from kubeconfig."
+  echo "  oc will now use the system trust store for server verification."
+  echo "  Kubeconfig updated: ${KUBECONFIG_FILE}"
+  echo "  Backup saved:       ${KUBECONFIG_FILE}.bak"
+  echo ""
+  echo "  Wait for kube-apiserver rollout, then verify:"
+  echo "    oc get co"
+else
+  echo ""
+  echo "  Could not find kubeconfig at: ${KUBECONFIG_FILE}"
+  echo "  After API server restarts, manually run:"
+  echo "    sed -i '/certificate-authority-data:/d' <your-kubeconfig>"
+fi

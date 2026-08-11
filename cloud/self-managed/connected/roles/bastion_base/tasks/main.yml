@@ -1,0 +1,86 @@
+---
+# ── bastion_base (connected-only) ────────────────────────────────────────
+# Independent from disconnected's bastion_base role by design (Option B —
+# no shared role between connected/disconnected; kept separate to avoid
+# touching the already-live, already-working disconnected roles). Some
+# task overlap with disconnected's bastion_base is intentional duplication,
+# not an oversight — see the conversation notes on why Option B was chosen.
+
+- name: Wait for SSH banners
+  wait_for_connection:
+    delay: 5
+    timeout: 300
+
+- name: Install Required RPM Packages
+  dnf:
+    name: "{{ common_packages + cloud_extra_packages }}"
+    state: present
+  become: true
+
+- name: Cloud-specific setup (CLI, credentials, auth)
+  include_tasks: "tasks/cloud-setup/{{ cloud_provider }}.yaml"
+
+- name: Enable mouse scrolling for tmux
+  lineinfile:
+    path: "{{ home_dir }}/.tmux.conf"
+    line: "set -g mouse on"
+    create: yes
+    state: present
+
+- name: Create VNC User
+  ansible.builtin.user:
+    name: vncuser
+  become: true
+
+- name: Listen for vnc server on port 5999
+  ansible.builtin.lineinfile:
+    path: /etc/tigervnc/vncserver.users
+    insertafter: EOF
+    line: ":99=vncuser"
+  become: true
+
+- name: Gather service facts for firewalld check
+  ansible.builtin.service_facts:
+  become: true
+
+- name: Open VNC port 5999 in firewalld
+  ansible.posix.firewalld:
+    port: 5999/tcp
+    permanent: true
+    immediate: true
+    state: enabled
+  become: true
+  when: >
+    ansible_facts.services['firewalld.service'] is defined
+    and ansible_facts.services['firewalld.service'].state == 'running'
+
+- name: Check if tarballs already exist
+  stat:
+    path: "{{ home_dir }}/{{ item | basename }}"
+  loop: "{{ tarballs }}"
+  register: tarball_stats
+
+- name: Get the OC, openshift-install, and ccoctl Tarballs
+  get_url:
+    url: "{{ item.item }}"
+    dest: "{{ home_dir }}/{{ item.item | basename }}"
+  loop: "{{ tarball_stats.results }}"
+  loop_control:
+    label: "{{ item.item | basename }}"
+  when: not item.stat.exists
+
+- name: Unarchive Downloaded Tarballs
+  unarchive:
+    src: "{{ home_dir }}/{{ item }}"
+    dest: "{{ home_dir }}/"
+    remote_src: yes
+  loop: "{{ tarball_basenames }}"
+
+- name: Copy CLI binaries to /usr/bin
+  copy:
+    src: "{{ home_dir }}/{{ item }}"
+    dest: "/usr/bin/{{ item }}"
+    remote_src: yes
+    mode: 0755
+  loop: "{{ cli_binaries }}"
+  become: yes

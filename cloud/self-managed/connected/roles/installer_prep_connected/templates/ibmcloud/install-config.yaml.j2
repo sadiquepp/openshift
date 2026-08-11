@@ -1,0 +1,45 @@
+apiVersion: v1
+baseDomain: {{ openshift_base_domain }}
+credentialsMode: Manual
+compute:
+- architecture: amd64
+  hyperthreading: Enabled
+  name: worker
+  platform: {}
+  replicas: 3
+controlPlane:
+  architecture: amd64
+  hyperthreading: Enabled
+  name: master
+  platform: {}
+  replicas: 3
+metadata:
+  creationTimestamp: null
+  name: {{ openshift_cluster_name }}
+networking:
+  clusterNetwork:
+  - cidr: 10.128.0.0/14
+    hostPrefix: 23
+  machineNetwork:
+  - cidr: {{ connected_vpc_cidr }}
+  networkType: OVNKubernetes
+  serviceNetwork:
+  - 172.30.0.0/16
+platform:
+  ibmcloud:
+    region: {{ ibmcloud_region }}
+    resourceGroupName: {{ resource_group_name }}
+    networkResourceGroupName: {{ resource_group_name }}
+    vpcName: {{ connected_vpc_name }}
+    controlPlaneSubnets:
+{% for sn in control_plane_subnet_names %}
+    - {{ sn }}
+{% endfor %}
+    computeSubnets:
+{% for sn in compute_subnet_names %}
+    - {{ sn }}
+{% endfor %}
+publish: Internal
+pullSecret: '{{ pull_secret }}'
+sshKey: |
+  {{ ssh_public_key_for_vm_and_openshift_node }}

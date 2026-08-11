@@ -1,0 +1,102 @@
+---
+# ── installer_prep_connected (connected-only) ────────────────────────────
+# Pull secret handling, dual install-dir (install-dir + install-dir-public)
+# creation, install-config rendering, CCO/STS, manifest generation, backup.
+# Assumes bastion_base has already downloaded oc/openshift-install/ccoctl
+# tarballs and installed the CLI binaries.
+
+- name: Copy pull secret
+  copy:
+    dest: "{{ home_dir }}/pull-secret.txt"
+    content: "{{ pull_secret }}"
+
+- name: Create .docker Directory
+  file:
+    path: "{{ home_dir }}/.docker"
+    state: directory
+
+- name: Copy pull secret to .docker directory
+  copy:
+    src: "{{ home_dir }}/pull-secret.txt"
+    dest: "{{ home_dir }}/.docker/config.json"
+    remote_src: yes
+
+- name: Check if cco-dir already exists
+  stat:
+    path: "{{ cco_dir }}/manifests"
+  register: cco_dir_check
+
+- name: Check if install-dir already exists
+  stat:
+    path: "{{ home_dir }}/install-dir/manifests"
+  register: install_dir_check
+
+- name: Create credentials directory
+  file:
+    path: "{{ item }}"
+    state: directory
+  loop:
+    - "{{ home_dir }}/install-dir"
+    - "{{ home_dir }}/install-dir-public"
+    - "{{ cco_dir }}"
+
+- name: Copy install-config.yaml
+  template:
+    src: "{{ cloud_provider }}/{{ item }}.j2"
+    dest: "{{ home_dir }}/{{ item }}"
+  loop:
+    - install-config.yaml
+    - install-config-public.yaml
+
+- name: Cloud-specific CCO/STS creation
+  include_tasks: "tasks/cco/{{ cloud_provider }}.yaml"
+  when: not cco_dir_check.stat.exists
+
+- name: Copy install-config into install directories
+  copy:
+    src: "{{ home_dir }}/{{ item.src }}"
+    dest: "{{ home_dir }}/{{ item.dest }}/install-config.yaml"
+    remote_src: yes
+    mode: 0644
+  loop:
+    - { src: install-config.yaml, dest: install-dir }
+    - { src: install-config-public.yaml, dest: install-dir-public }
+  when: not install_dir_check.stat.exists
+
+- name: Generate Manifests
+  shell: |
+    openshift-install create manifests --dir {{ home_dir }}/{{ item.dir }}
+  loop:
+    - { dir: install-dir }
+    - { dir: install-dir-public }
+  environment: "{{ cloud_env }}"
+  when: not install_dir_check.stat.exists
+
+- name: Copy CCO credentials to install-dir/manifests
+  copy:
+    src: "{{ cco_dir }}/manifests/"
+    dest: "{{ home_dir }}/{{ item.dir }}/manifests/"
+    remote_src: yes
+  loop:
+    - { dir: install-dir }
+    - { dir: install-dir-public }
+  when: not install_dir_check.stat.exists
+
+- name: Copy CCO tls files to install-dir/
+  copy:
+    src: "{{ cco_dir }}/tls"
+    dest: "{{ home_dir }}/{{ item.dir }}/"
+    remote_src: yes
+  loop:
+    - { dir: install-dir }
+    - { dir: install-dir-public }
+  when: not install_dir_check.stat.exists
+
+- name: Take a backup of the install-dir
+  community.general.archive:
+    path: "{{ home_dir }}/{{ item.dir }}"
+    dest: "{{ home_dir }}/{{ item.dir }}-backup.bz2"
+    format: bz2
+  loop:
+    - { dir: install-dir }
+    - { dir: install-dir-public }

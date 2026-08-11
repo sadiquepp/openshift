@@ -1,0 +1,34 @@
+- name: Check if cco-dir already exists
+  stat:
+    path: "{{ cco_dir }}/manifests"
+  register: cco_dir_check
+
+- name: Delete existing CCO resources
+  shell: |
+    export IBMCLOUD_API_KEY="{{ ibmcloud_api_key }}"
+    cd {{ cco_dir }}
+    ccoctl ibmcloud delete-service-id \
+      --credentials-requests-dir {{ cco_dir }}/credrequests \
+      --name {{ cco_suffix }}
+  ignore_errors: true
+
+- name: Extract the list of CredentialsRequest objects from the release image
+  shell: |
+    cd {{ cco_dir }}
+    RELEASE_IMAGE=$(openshift-install version | awk '/release image/ {print $3}')
+    oc adm release extract -a {{ home_dir }}/pull-secret.txt \
+      --credentials-requests \
+      --cloud=ibmcloud \
+      --to={{ cco_dir }}/credrequests \
+      ${RELEASE_IMAGE}
+  when: not cco_dir_check.stat.exists
+
+- name: Create all CCO service IDs for IBM Cloud
+  shell: |
+    export IBMCLOUD_API_KEY="{{ ibmcloud_api_key }}"
+    cd {{ cco_dir }}
+    ccoctl ibmcloud create-service-id \
+      --credentials-requests-dir {{ cco_dir }}/credrequests/ \
+      --name {{ cco_suffix }} \
+      --output-dir {{ cco_dir }}
+  when: not cco_dir_check.stat.exists

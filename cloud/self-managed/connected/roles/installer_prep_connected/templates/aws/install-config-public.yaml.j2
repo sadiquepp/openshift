@@ -1,0 +1,43 @@
+apiVersion: v1
+baseDomain: {{ openshift_base_domain }}
+credentialsMode: Manual
+compute:
+- architecture: amd64
+  hyperthreading: Enabled
+  name: worker
+  platform:
+    aws:
+      type: {{ compute_instance_type }}
+  replicas: {{ compute_replicas }}
+controlPlane:
+  architecture: amd64
+  hyperthreading: Enabled
+  name: master
+  platform: {}
+  replicas: {{ control_plane_replicas }}
+metadata:
+  creationTimestamp: null
+  name: {{ openshift_cluster_name }}
+networking:
+  clusterNetwork:
+  - cidr: 10.128.0.0/14
+    hostPrefix: 23
+  machineNetwork:
+  - cidr: {{ connected_vpc_cidr }}
+  networkType: OVNKubernetes
+  serviceNetwork:
+  - 172.30.0.0/16
+platform:
+  aws:
+    region: {{ aws_region }}
+    subnets: 
+    - {{ connected_subnet_id_a }}
+    - {{ connected_subnet_id_b }}
+    - {{ connected_subnet_id_c }}
+    - {{ connected_public_subnet_id_a }}
+    - {{ connected_public_subnet_id_b }}
+    - {{ connected_public_subnet_id_c }}
+    lbType: NLB
+pullSecret: '{{ pull_secret }}'
+sshKey: |
+  {{ ssh_public_key_for_ec2_and_openshit_node }}
