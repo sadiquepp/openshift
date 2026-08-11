@@ -21,13 +21,13 @@
 
 - name: Generate Dockerfile for empty FBC catalog
   command: >
-    opm generate dockerfile {{ empty_catalog_workdir }}
+    opm-rhel9 generate dockerfile {{ empty_catalog_workdir }}
   args:
     creates: "{{ empty_catalog_dockerfile }}"
 
 - name: Validate empty FBC catalog structure
   command: >
-    opm validate {{ empty_catalog_workdir }}
+    opm-rhel9 validate {{ empty_catalog_workdir }}
   changed_when: false
 
 - name: Build empty catalog image (base build, tag = first target)
