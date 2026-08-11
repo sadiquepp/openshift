@@ -19,8 +19,3 @@
         and olm_suppress_default_catalogs | default(false) | bool
 
     - hcp_provisioning
-
-  tasks:
-    - name: Cloud-specific helper scripts
-      include_tasks: "tasks/scripts/{{ cloud_provider }}.yaml"
-      when: lookup('fileglob', 'tasks/scripts/' + cloud_provider + '.yaml') | length > 0
