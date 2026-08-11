@@ -48,6 +48,7 @@ resource "local_file" "ansible_vars" {
       egress_vpc_id                   = aws_vpc.egress.id
       hcp_cluster_suffixes            = var.hcp_cluster_suffixes
       hcp_workaround_enabled          = var.hcp_workaround_enabled
+      olm_suppress_default_catalogs   = var.olm_suppress_default_catalogs
       upi_bootstrap_ip = cidrhost(var.disconnected_subnet_cidrs[0], var.upi_node_host_numbers.bootstrap)
       upi_master0_ip   = cidrhost(var.disconnected_subnet_cidrs[0], var.upi_node_host_numbers.master0)
       upi_master1_ip   = cidrhost(var.disconnected_subnet_cidrs[1], var.upi_node_host_numbers.master1)

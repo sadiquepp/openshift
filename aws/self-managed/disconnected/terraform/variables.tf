@@ -154,3 +154,9 @@ variable "hcp_workaround_enabled" {
   type        = bool
   default     = false
 }
+
+variable "olm_suppress_default_catalogs" {
+  description = "Suppress community-operators and redhat-marketplace OLM catalogs on HCP clusters"
+  type        = bool
+  default     = false
+}

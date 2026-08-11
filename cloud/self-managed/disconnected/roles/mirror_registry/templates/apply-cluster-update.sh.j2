@@ -78,8 +78,9 @@ done
 command -v oc >/dev/null || die "oc not found in PATH"
 oc whoami >/dev/null 2>&1 || die "unable to connect to cluster using KUBECONFIG=${KUBECONFIG}"
 
-# Step 3: Apply mirrored release signatures and catalog resources.
+# Step 3: Disable default OperatorHub sources and apply mirrored release signatures and catalog resources.
 log "Step 3: applying oc-mirror cluster resources"
+oc patch OperatorHub cluster --type json -p '[{"op": "add", "path": "/spec/disableAllDefaultSources", "value": true}]'
 oc apply -f "${CLUSTER_RESOURCES}" \
   || log "warning: some cluster resources failed to apply (expected before Update Service operator is installed); continuing"
 
