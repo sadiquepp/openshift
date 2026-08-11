@@ -7,6 +7,12 @@
 # mirrored content via the hypershift.openshift.io/*-catalog-image
 # annotations on HostedCluster (rendered by hcp_provisioning).
 
+- name: Ensure olm_suppression_ca_path exists
+  file:
+    path: "{{ olm_suppression_ca_path }}"
+    state: directory
+    mode: "0755"
+    
 - name: Ensure mirror registry CA is on disk for podman/skopeo trust
   copy:
     content: "{{ mirror_registry_ca_cert }}"
