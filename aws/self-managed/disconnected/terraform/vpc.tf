@@ -40,6 +40,12 @@ resource "aws_subnet" "disconnected" {
   vpc_id            = aws_vpc.disconnected.id
   cidr_block        = var.disconnected_subnet_cidrs[count.index]
   availability_zone = local.azs[count.index]
+  lifecycle {
+    ignore_changes = [
+      tags,
+      tags_all,
+    ]
+  }
 }
 
 # ── Subnet Tags ──────────────────────────────────────────────────────────────
@@ -49,12 +55,6 @@ resource "aws_ec2_tag" "subnet_name" {
   resource_id = aws_subnet.disconnected[count.index].id
   key         = "Name"
   value       = "${local.disconnected_vpc_name}-subnet-az${count.index + 1}"
-  lifecycle {
-    ignore_changes = [
-      tags,
-      tags_all,
-    ]
-  }
 }
 
 # ── Subnet Internal ELB Tag ──────────────────────────────────────────────────
