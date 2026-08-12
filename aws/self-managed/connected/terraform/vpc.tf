@@ -39,6 +39,9 @@ resource "aws_subnet" "private" {
       "kubernetes.io/cluster/${cluster.cluster_name}" => "shared"
     }
   )
+  lifecycle {
+    ignore_changes = [tags]
+  }
 }
 
 # ── Public Subnets ────────────────────────────────────────────────────────────
