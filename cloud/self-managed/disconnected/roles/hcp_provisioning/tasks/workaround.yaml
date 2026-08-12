@@ -1,8 +1,8 @@
-- name: Mirror OCP release image for HCP
-  shell: |
-    oc adm release mirror \
-      quay.io/openshift-release-dev/ocp-release@sha256:7f183e9b5610a2c9f9aabfd5906b418adfbe659f441b019933426a19bf6a5962 \
-      --to={{ installer_quay_hostname }}:{{ mirror_registry_port }}/openshift/release-images
+#- name: Mirror OCP release image for HCP
+#  shell: |
+#    oc adm release mirror \
+#      quay.io/openshift-release-dev/ocp-release@sha256:7f183e9b5610a2c9f9aabfd5906b418adfbe659f441b019933426a19bf6a5962 \
+#      --to={{ installer_quay_hostname }}:{{ mirror_registry_port }}/openshift/release-images
 
 - name: Copy cluster-api image to mirror registry
   shell: |
@@ -17,3 +17,10 @@
       --all \
       docker://quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:466d156531b6b8a0ed565c81072c551a7b855c07757ac93f5a313b793011d0a8 \
       docker://{{ installer_quay_hostname }}:{{ mirror_registry_port }}/openshift/release:capi-provider
+
+- name: Copy external-dns image to mirror registry
+  shell: |
+    skopeo copy \
+      --all \
+      docker://registry.redhat.io/edo/external-dns-rhel8@sha256:638fb6b5fc348f5cf52b9800d3d8e9f5315078fc9b1e57e800cb0a4a50f1b4b9 \
+      docker://{{ installer_quay_hostname }}:{{ mirror_registry_port }}/edo/external-dns-rhel8:v1
