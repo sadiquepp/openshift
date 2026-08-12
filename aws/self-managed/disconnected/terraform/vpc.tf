@@ -22,7 +22,7 @@ locals {
   }
 }
 
-# ── Disconnected VPC ──────────────────────────────────────────────────────────
+# ── Disconnected VPC and Subnets ──────────────────────────────────────────────
 
 resource "aws_vpc" "disconnected" {
   cidr_block           = var.disconnected_vpc_cidr
@@ -40,21 +40,39 @@ resource "aws_subnet" "disconnected" {
   vpc_id            = aws_vpc.disconnected.id
   cidr_block        = var.disconnected_subnet_cidrs[count.index]
   availability_zone = local.azs[count.index]
+}
 
-  tags = merge(
-    {
-      Name                              = "${local.disconnected_vpc_name}-subnet-az${count.index + 1}"
-      "kubernetes.io/role/internal-elb" = "1"
-    },
-    {
-      for suffix, cluster in local.hcp_pvt_clusters :
-      "kubernetes.io/cluster/${cluster.cluster_name}" => "shared"
+# ── Subnet Tags ──────────────────────────────────────────────────────────────
+
+resource "aws_ec2_tag" "subnet_name" {
+  count       = length(var.disconnected_subnet_cidrs)
+  resource_id = aws_subnet.disconnected[count.index].id
+  key         = "Name"
+  value       = "${local.disconnected_vpc_name}-subnet-az${count.index + 1}"
+}
+
+# ── Subnet Internal ELB Tag ──────────────────────────────────────────────────
+resource "aws_ec2_tag" "subnet_internal_elb" {
+  count       = length(var.disconnected_subnet_cidrs)
+  resource_id = aws_subnet.disconnected[count.index].id
+  key         = "kubernetes.io/role/internal-elb"
+  value       = "1"
+}
+
+# ── Subnet HCP Shared Tag ────────────────────────────────────────────────────
+
+resource "aws_ec2_tag" "subnet_hcp_shared" {
+  for_each = {
+    for pair in setproduct(range(length(var.disconnected_subnet_cidrs)), keys(local.hcp_pvt_clusters)) :
+    "${pair[0]}-${pair[1]}" => {
+      subnet_index = pair[0]
+      suffix       = pair[1]
     }
-  )
-
-  lifecycle {
-    ignore_changes = [tags]
   }
+
+  resource_id = aws_subnet.disconnected[each.value.subnet_index].id
+  key         = "kubernetes.io/cluster/${local.hcp_pvt_clusters[each.value.suffix].cluster_name}"
+  value       = "shared"
 }
 
 # ── Egress VPC ────────────────────────────────────────────────────────────────
