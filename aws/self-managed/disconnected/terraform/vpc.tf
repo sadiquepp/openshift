@@ -49,6 +49,12 @@ resource "aws_ec2_tag" "subnet_name" {
   resource_id = aws_subnet.disconnected[count.index].id
   key         = "Name"
   value       = "${local.disconnected_vpc_name}-subnet-az${count.index + 1}"
+  lifecycle {
+    ignore_changes = [
+      tags,
+      tags_all,
+    ]
+  }
 }
 
 # ── Subnet Internal ELB Tag ──────────────────────────────────────────────────
