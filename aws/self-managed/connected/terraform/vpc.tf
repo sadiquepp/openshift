@@ -29,19 +29,42 @@ resource "aws_subnet" "private" {
   cidr_block        = var.connected_private_subnet_cidrs[count.index]
   availability_zone = local.azs[count.index]
 
-  tags = merge(
-    {
-      Name                              = "${local.connected_vpc_name}-subnet-az${count.index + 1}"
-      "kubernetes.io/role/internal-elb" = "1"
-    },
-    {
-      for suffix, cluster in local.hcp_pvt_clusters :
-      "kubernetes.io/cluster/${cluster.cluster_name}" => "shared"
-    }
-  )
   lifecycle {
-    ignore_changes = [tags]
+    ignore_changes = [
+      tags,
+      tags_all,
+    ]
   }
+}
+
+# ── Private Subnet Tags ───────────────────────────────────────────────────────
+
+resource "aws_ec2_tag" "private_subnet_name" {
+  count       = length(var.connected_private_subnet_cidrs)
+  resource_id = aws_subnet.private[count.index].id
+  key         = "Name"
+  value       = "${local.connected_vpc_name}-subnet-az${count.index + 1}"
+}
+
+resource "aws_ec2_tag" "private_subnet_internal_elb" {
+  count       = length(var.connected_private_subnet_cidrs)
+  resource_id = aws_subnet.private[count.index].id
+  key         = "kubernetes.io/role/internal-elb"
+  value       = "1"
+}
+
+resource "aws_ec2_tag" "private_subnet_hcp_pvt_shared" {
+  for_each = {
+    for pair in setproduct(range(length(var.connected_private_subnet_cidrs)), keys(local.hcp_pvt_clusters)) :
+    "${pair[0]}-${pair[1]}" => {
+      subnet_index = pair[0]
+      suffix       = pair[1]
+    }
+  }
+
+  resource_id = aws_subnet.private[each.value.subnet_index].id
+  key         = "kubernetes.io/cluster/${local.hcp_pvt_clusters[each.value.suffix].cluster_name}"
+  value       = "shared"
 }
 
 # ── Public Subnets ────────────────────────────────────────────────────────────
@@ -53,27 +76,70 @@ resource "aws_subnet" "public" {
   cidr_block        = var.connected_public_subnet_cidrs[count.index]
   availability_zone = local.azs[count.index]
 
-  tags = merge(
-    {
-      Name                          = "${local.connected_vpc_name}-public-subnet-az${count.index + 1}"
-      "kubernetes.io/cluster/dummy" = "shared"
-    },
-    {
-      for suffix, cluster in local.hcp_clusters :
-      "kubernetes.io/cluster/${cluster.cluster_name}" => "shared"
-    },
-    {
-      for suffix, cluster in local.hcp_pvt_clusters :
-      "kubernetes.io/cluster/${cluster.cluster_name}" => "shared"
-    },
-    {
-      for suffix, cluster in local.hcp_pvtpl_clusters :
-      "kubernetes.io/cluster/${cluster.cluster_name}" => "shared"
-    }
-  )
   lifecycle {
-    ignore_changes = [tags]
+    ignore_changes = [
+      tags,
+      tags_all,
+    ]
   }
+}
+
+# ── Public Subnet Tags ────────────────────────────────────────────────────────
+
+resource "aws_ec2_tag" "public_subnet_name" {
+  count       = length(var.connected_public_subnet_cidrs)
+  resource_id = aws_subnet.public[count.index].id
+  key         = "Name"
+  value       = "${local.connected_vpc_name}-public-subnet-az${count.index + 1}"
+}
+
+resource "aws_ec2_tag" "public_subnet_dummy_cluster" {
+  count       = length(var.connected_public_subnet_cidrs)
+  resource_id = aws_subnet.public[count.index].id
+  key         = "kubernetes.io/cluster/dummy"
+  value       = "shared"
+}
+
+resource "aws_ec2_tag" "public_subnet_hcp_shared" {
+  for_each = {
+    for pair in setproduct(range(length(var.connected_public_subnet_cidrs)), keys(local.hcp_clusters)) :
+    "${pair[0]}-${pair[1]}" => {
+      subnet_index = pair[0]
+      suffix       = pair[1]
+    }
+  }
+
+  resource_id = aws_subnet.public[each.value.subnet_index].id
+  key         = "kubernetes.io/cluster/${local.hcp_clusters[each.value.suffix].cluster_name}"
+  value       = "shared"
+}
+
+resource "aws_ec2_tag" "public_subnet_hcp_pvt_shared" {
+  for_each = {
+    for pair in setproduct(range(length(var.connected_public_subnet_cidrs)), keys(local.hcp_pvt_clusters)) :
+    "${pair[0]}-${pair[1]}" => {
+      subnet_index = pair[0]
+      suffix       = pair[1]
+    }
+  }
+
+  resource_id = aws_subnet.public[each.value.subnet_index].id
+  key         = "kubernetes.io/cluster/${local.hcp_pvt_clusters[each.value.suffix].cluster_name}"
+  value       = "shared"
+}
+
+resource "aws_ec2_tag" "public_subnet_hcp_pvtpl_shared" {
+  for_each = {
+    for pair in setproduct(range(length(var.connected_public_subnet_cidrs)), keys(local.hcp_pvtpl_clusters)) :
+    "${pair[0]}-${pair[1]}" => {
+      subnet_index = pair[0]
+      suffix       = pair[1]
+    }
+  }
+
+  resource_id = aws_subnet.public[each.value.subnet_index].id
+  key         = "kubernetes.io/cluster/${local.hcp_pvtpl_clusters[each.value.suffix].cluster_name}"
+  value       = "shared"
 }
 
 # ── Internet Gateway ──────────────────────────────────────────────────────────
