@@ -88,9 +88,20 @@ resource "aws_subnet" "hcp_private" {
   cidr_block        = var.hcp_private_subnet_cidrs[count.index]
   availability_zone = local.azs[count.index]
 
-  tags = {
-    Name = "${local.hcp_sep_vpc_name}-subnet-az${count.index + 1}"
+  lifecycle {
+    ignore_changes = [
+      tags,
+      tags_all,
+    ]
   }
+}
+
+resource "aws_ec2_tag" "hcp_private_subnet_name" {
+  provider    = aws.hcp
+  count       = local.hcp_sep_vpc_enabled ? length(var.hcp_private_subnet_cidrs) : 0
+  resource_id = aws_subnet.hcp_private[count.index].id
+  key         = "Name"
+  value       = "${local.hcp_sep_vpc_name}-subnet-az${count.index + 1}"
 }
 
 resource "aws_subnet" "hcp_public" {
@@ -101,24 +112,73 @@ resource "aws_subnet" "hcp_public" {
   cidr_block        = var.hcp_public_subnet_cidrs[count.index]
   availability_zone = local.azs[count.index]
 
-  tags = merge(
-    {
-      Name                          = "${local.hcp_sep_vpc_name}-public-subnet-az${count.index + 1}"
-      "kubernetes.io/cluster/dummy" = "shared"
-    },
-    {
-      for suffix, cluster in local.hcp_clusters :
-      "kubernetes.io/cluster/${cluster.cluster_name}" => "shared"
-    },
-    {
-      for suffix, cluster in local.hcp_pvt_clusters :
-      "kubernetes.io/cluster/${cluster.cluster_name}" => "shared"
-    },
-    {
-      for suffix, cluster in local.hcp_pvtpl_clusters :
-      "kubernetes.io/cluster/${cluster.cluster_name}" => "shared"
+  lifecycle {
+    ignore_changes = [
+      tags,
+      tags_all,
+    ]
+  }
+}
+
+resource "aws_ec2_tag" "hcp_public_subnet_name" {
+  provider    = aws.hcp
+  count       = local.hcp_sep_vpc_enabled ? length(var.hcp_public_subnet_cidrs) : 0
+  resource_id = aws_subnet.hcp_public[count.index].id
+  key         = "Name"
+  value       = "${local.hcp_sep_vpc_name}-public-subnet-az${count.index + 1}"
+}
+
+resource "aws_ec2_tag" "hcp_public_subnet_dummy_cluster" {
+  provider    = aws.hcp
+  count       = local.hcp_sep_vpc_enabled ? length(var.hcp_public_subnet_cidrs) : 0
+  resource_id = aws_subnet.hcp_public[count.index].id
+  key         = "kubernetes.io/cluster/dummy"
+  value       = "shared"
+}
+
+resource "aws_ec2_tag" "hcp_public_subnet_hcp_shared" {
+  provider = aws.hcp
+  for_each = local.hcp_sep_vpc_enabled ? {
+    for pair in setproduct(range(length(var.hcp_public_subnet_cidrs)), keys(local.hcp_clusters)) :
+    "${pair[0]}-${pair[1]}" => {
+      subnet_index = pair[0]
+      suffix       = pair[1]
     }
-  )
+  } : {}
+
+  resource_id = aws_subnet.hcp_public[each.value.subnet_index].id
+  key         = "kubernetes.io/cluster/${local.hcp_clusters[each.value.suffix].cluster_name}"
+  value       = "shared"
+}
+
+resource "aws_ec2_tag" "hcp_public_subnet_hcp_pvt_shared" {
+  provider = aws.hcp
+  for_each = local.hcp_sep_vpc_enabled ? {
+    for pair in setproduct(range(length(var.hcp_public_subnet_cidrs)), keys(local.hcp_pvt_clusters)) :
+    "${pair[0]}-${pair[1]}" => {
+      subnet_index = pair[0]
+      suffix       = pair[1]
+    }
+  } : {}
+
+  resource_id = aws_subnet.hcp_public[each.value.subnet_index].id
+  key         = "kubernetes.io/cluster/${local.hcp_pvt_clusters[each.value.suffix].cluster_name}"
+  value       = "shared"
+}
+
+resource "aws_ec2_tag" "hcp_public_subnet_hcp_pvtpl_shared" {
+  provider = aws.hcp
+  for_each = local.hcp_sep_vpc_enabled ? {
+    for pair in setproduct(range(length(var.hcp_public_subnet_cidrs)), keys(local.hcp_pvtpl_clusters)) :
+    "${pair[0]}-${pair[1]}" => {
+      subnet_index = pair[0]
+      suffix       = pair[1]
+    }
+  } : {}
+
+  resource_id = aws_subnet.hcp_public[each.value.subnet_index].id
+  key         = "kubernetes.io/cluster/${local.hcp_pvtpl_clusters[each.value.suffix].cluster_name}"
+  value       = "shared"
 }
 
 resource "aws_internet_gateway" "hcp" {
@@ -246,9 +306,20 @@ resource "aws_subnet" "hcp_xacct_private" {
   cidr_block        = var.hcp_xacct_private_subnet_cidrs[count.index]
   availability_zone = local.azs[count.index]
 
-  tags = {
-    Name = "${local.hcp_xacct_vpc_name}-subnet-az${count.index + 1}"
+  lifecycle {
+    ignore_changes = [
+      tags,
+      tags_all,
+    ]
   }
+}
+
+resource "aws_ec2_tag" "hcp_xacct_private_subnet_name" {
+  provider    = aws.xacct
+  count       = local.hcp_xacct_vpc_enabled ? length(var.hcp_xacct_private_subnet_cidrs) : 0
+  resource_id = aws_subnet.hcp_xacct_private[count.index].id
+  key         = "Name"
+  value       = "${local.hcp_xacct_vpc_name}-subnet-az${count.index + 1}"
 }
 
 resource "aws_subnet" "hcp_xacct_public" {
@@ -259,24 +330,73 @@ resource "aws_subnet" "hcp_xacct_public" {
   cidr_block        = var.hcp_xacct_public_subnet_cidrs[count.index]
   availability_zone = local.azs[count.index]
 
-  tags = merge(
-    {
-      Name                          = "${local.hcp_xacct_vpc_name}-public-subnet-az${count.index + 1}"
-      "kubernetes.io/cluster/dummy" = "shared"
-    },
-    {
-      for suffix, cluster in local.hcp_xacct_clusters :
-      "kubernetes.io/cluster/${cluster.cluster_name}" => "shared"
-    },
-    {
-      for suffix, cluster in local.hcp_xacct_pvt_clusters :
-      "kubernetes.io/cluster/${cluster.cluster_name}" => "shared"
-    },
-    {
-      for suffix, cluster in local.hcp_xacct_pvtpl_clusters :
-      "kubernetes.io/cluster/${cluster.cluster_name}" => "shared"
+  lifecycle {
+    ignore_changes = [
+      tags,
+      tags_all,
+    ]
+  }
+}
+
+resource "aws_ec2_tag" "hcp_xacct_public_subnet_name" {
+  provider    = aws.xacct
+  count       = local.hcp_xacct_vpc_enabled ? length(var.hcp_xacct_public_subnet_cidrs) : 0
+  resource_id = aws_subnet.hcp_xacct_public[count.index].id
+  key         = "Name"
+  value       = "${local.hcp_xacct_vpc_name}-public-subnet-az${count.index + 1}"
+}
+
+resource "aws_ec2_tag" "hcp_xacct_public_subnet_dummy_cluster" {
+  provider    = aws.xacct
+  count       = local.hcp_xacct_vpc_enabled ? length(var.hcp_xacct_public_subnet_cidrs) : 0
+  resource_id = aws_subnet.hcp_xacct_public[count.index].id
+  key         = "kubernetes.io/cluster/dummy"
+  value       = "shared"
+}
+
+resource "aws_ec2_tag" "hcp_xacct_public_subnet_hcp_shared" {
+  provider = aws.xacct
+  for_each = local.hcp_xacct_vpc_enabled ? {
+    for pair in setproduct(range(length(var.hcp_xacct_public_subnet_cidrs)), keys(local.hcp_xacct_clusters)) :
+    "${pair[0]}-${pair[1]}" => {
+      subnet_index = pair[0]
+      suffix       = pair[1]
     }
-  )
+  } : {}
+
+  resource_id = aws_subnet.hcp_xacct_public[each.value.subnet_index].id
+  key         = "kubernetes.io/cluster/${local.hcp_xacct_clusters[each.value.suffix].cluster_name}"
+  value       = "shared"
+}
+
+resource "aws_ec2_tag" "hcp_xacct_public_subnet_hcp_pvt_shared" {
+  provider = aws.xacct
+  for_each = local.hcp_xacct_vpc_enabled ? {
+    for pair in setproduct(range(length(var.hcp_xacct_public_subnet_cidrs)), keys(local.hcp_xacct_pvt_clusters)) :
+    "${pair[0]}-${pair[1]}" => {
+      subnet_index = pair[0]
+      suffix       = pair[1]
+    }
+  } : {}
+
+  resource_id = aws_subnet.hcp_xacct_public[each.value.subnet_index].id
+  key         = "kubernetes.io/cluster/${local.hcp_xacct_pvt_clusters[each.value.suffix].cluster_name}"
+  value       = "shared"
+}
+
+resource "aws_ec2_tag" "hcp_xacct_public_subnet_hcp_pvtpl_shared" {
+  provider = aws.xacct
+  for_each = local.hcp_xacct_vpc_enabled ? {
+    for pair in setproduct(range(length(var.hcp_xacct_public_subnet_cidrs)), keys(local.hcp_xacct_pvtpl_clusters)) :
+    "${pair[0]}-${pair[1]}" => {
+      subnet_index = pair[0]
+      suffix       = pair[1]
+    }
+  } : {}
+
+  resource_id = aws_subnet.hcp_xacct_public[each.value.subnet_index].id
+  key         = "kubernetes.io/cluster/${local.hcp_xacct_pvtpl_clusters[each.value.suffix].cluster_name}"
+  value       = "shared"
 }
 
 resource "aws_internet_gateway" "hcp_xacct" {
