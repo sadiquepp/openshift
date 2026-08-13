@@ -78,9 +78,9 @@ variable "ssh_private_key_path" {
 }
 
 variable "installer_ami" {
-  description = "AMI ID for the bastion EC2 instance"
+  description = "AMI ID for the installer / mirror-registry EC2 instance. Leave empty to auto-detect the latest RHEL 9 AMI in the region."
   type        = string
-  default     = "ami-04698733964af06d5"
+  default     = ""
 }
 
 variable "installer_instance_type" {
