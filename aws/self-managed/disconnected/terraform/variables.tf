@@ -134,7 +134,7 @@ variable "installer_ami" {
 variable "installer_instance_type" {
   description = "EC2 instance type for the installer instance"
   type        = string
-  default     = "t2.large"
+  default     = "c6i.large"
 }
 
 variable "installer_disk_size" {

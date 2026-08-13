@@ -86,7 +86,7 @@ variable "installer_ami" {
 variable "installer_instance_type" {
   description = "Instance type for the bastion EC2"
   type        = string
-  default     = "t2.medium"
+  default     = "c6i.large"
 }
 
 variable "installer_disk_size" {
