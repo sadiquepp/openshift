@@ -1,0 +1,19 @@
+# Replaces upstream's `frontend-external` LoadBalancer Service.
+# No `host:` — OpenShift generates one from the cluster's apps domain, which is
+# what keeps this portable between clusters.
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: frontend
+  labels:
+    app: frontend
+spec:
+  to:
+    kind: Service
+    name: frontend
+  port:
+    # Upstream's `frontend` Service exposes port 80 -> targetPort 8080.
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

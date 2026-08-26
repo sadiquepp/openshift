@@ -1,0 +1,67 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Online Boutique (GoogleCloudPlatform/microservices-demo), made to actually run
+# on OpenShift.
+#
+# kubernetes-manifests.yaml is vendored verbatim from the upstream v0.10.6
+# release — not referenced by URL, so `oc kustomize` works on an air-gapped
+# machine and the version cannot drift under us. To refresh:
+#
+#   V=v0.10.7
+#   curl -sfL https://raw.githubusercontent.com/GoogleCloudPlatform/microservices-demo/$V/release/kubernetes-manifests.yaml \
+#     -o base/kubernetes-manifests.yaml
+#
+# then re-run `oc kustomize overlays/default` — the patches below use JSON
+# 6902 `remove`, so if upstream drops any of these fields the build FAILS rather
+# than silently no-opping.
+
+resources:
+  - kubernetes-manifests.yaml
+  - route.yaml
+
+labels:
+  - includeSelectors: false
+    pairs:
+      app.kubernetes.io/part-of: online-boutique
+      app.kubernetes.io/managed-by: kustomize
+
+patches:
+  # ── OpenShift SCC compatibility ─────────────────────────────────────────────
+  # Upstream pins runAsUser/runAsGroup/fsGroup to 1000 on all 12 deployments.
+  # Under OpenShift's default restricted-v2 SCC every namespace gets its own
+  # allocated UID range (e.g. 1000750000/10000) and a hardcoded 1000 falls
+  # outside it, so admission rejects the pod with:
+  #   "unable to validate against any security context constraint"
+  #
+  # Removing them lets OpenShift assign a UID from the namespace range. Dropping
+  # runAsGroup matters too: OpenShift runs containers with GID 0 and expects
+  # images to be group-writable, so forcing GID 1000 breaks that assumption.
+  # runAsNonRoot: true is deliberately kept.
+  #
+  # There is no upstream OpenShift kustomize component (checked against
+  # kustomize/components at v0.10.6) — this is that missing piece.
+  - target:
+      kind: Deployment
+    patch: |
+      - op: remove
+        path: /spec/template/spec/securityContext/runAsUser
+      - op: remove
+        path: /spec/template/spec/securityContext/runAsGroup
+      - op: remove
+        path: /spec/template/spec/securityContext/fsGroup
+
+  # ── Drop the LoadBalancer Service ───────────────────────────────────────────
+  # Upstream ships `frontend-external` as type LoadBalancer for GKE. On a
+  # cluster with no LB provider it sits in <pending> forever; route.yaml exposes
+  # the ClusterIP `frontend` Service instead, which is the OpenShift way.
+  # Delete this patch if you do have MetalLB and would rather use a real LB.
+  - target:
+      kind: Service
+      name: frontend-external
+    patch: |
+      $patch: delete
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: frontend-external

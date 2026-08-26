@@ -1,0 +1,23 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# The normal deploy. Copy this directory as the starting point for a project.
+
+namespace: online-boutique
+
+resources:
+  - ../../base
+  - namespace.yaml
+
+labels:
+  - includeSelectors: false
+    pairs:
+      app.kubernetes.io/instance: online-boutique
+
+# For a disconnected cluster, repoint every image at your mirror. Upstream also
+# ships a `container-images-registry` component that does this, but doing it
+# here keeps the whole override surface in one file.
+# images:
+#   - name: us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/frontend
+#     newName: registry.example.com:8443/online-boutique/frontend
+#   ... one entry per service, plus redis and busybox
