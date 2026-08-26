@@ -13,6 +13,8 @@ not give you.
 - [Why Ansible](#why-ansible)
 - [What it deploys](#what-it-deploys)
 - [Prerequisites](#prerequisites)
+  - [Ansible and Python versions](#ansible-and-python-versions)
+  - [Python libraries](#python-libraries)
   - [Pointing at the right cluster](#pointing-at-the-right-cluster)
 - [The two phases](#the-two-phases)
   - [Phase 1 — AWS (an AWS admin can run this alone)](#phase-1--aws-an-aws-admin-can-run-this-alone)
@@ -77,15 +79,67 @@ reason to deploy the intermediate one.
 - `oc` on `PATH`. It is used **only** to render the workload's kustomize overlay
   and to check its own version — it never contacts the cluster, so `oc login` is
   not a prerequisite.
-- Ansible, the collections, and the Python Kubernetes client:
+- Ansible, the collections, and two Python libraries — see below, because the
+  version matrix here has a sharp edge.
+
+### Ansible and Python versions
+
+Check what you have first:
+
+```bash
+ansible --version
+```
+
+**ansible-core 2.17 or newer:**
 
 ```bash
 ansible-galaxy collection install -r requirements.yml
 ```
 
+**ansible-core 2.13–2.16** — which is what the RHEL 9 AppStream `ansible-core`
+package gives you (2.14), and what most bastions have:
+
 ```bash
-pip install kubernetes
+ansible-galaxy collection install -r requirements-legacy.yml --force
 ```
+
+`ansible-galaxy` **ignores a collection's `requires_ansible` when resolving
+versions**, so the plain install pulls the latest — amazon.aws 10.x needs
+ansible-core ≥2.17, kubernetes.core 6.x needs ≥2.16 — and you get:
+
+```
+[WARNING]: Collection amazon.aws does not support Ansible version 2.14.17
+[WARNING]: Collection kubernetes.core does not support Ansible version 2.14.17
+```
+
+That is a warning now and a confusing failure later. `requirements-legacy.yml`
+pins the newest releases that genuinely support 2.14 (amazon.aws 7.6.0,
+kubernetes.core 3.3.1); every module used here is present in both with the same
+parameter and return names.
+
+`--force` matters: galaxy will not *downgrade* to satisfy a constraint that an
+already-installed newer version also meets, so without it you get
+`Nothing to do. All requested collections are already installed.`
+
+### Python libraries
+
+The collections are wrappers — the actual work is done by Python libraries that
+must be installed **for the same interpreter Ansible runs**, which is not
+necessarily the one `python3` resolves to in your shell. Ansible reports it in
+the error when it is missing (`... on <host>'s Python /usr/bin/python3`).
+
+| Library | Needed by | Phase |
+|---|---|---|
+| `boto3`, `botocore` | `amazon.aws` | AWS |
+| `kubernetes` | `kubernetes.core` | cluster |
+
+```bash
+/usr/bin/python3 -m pip install boto3 botocore kubernetes
+```
+
+Substitute the interpreter Ansible actually reported. To pin it explicitly,
+set `ansible_python_interpreter` in `inventory.yml` or pass
+`-e ansible_python_interpreter=/usr/bin/python3.11`.
 
 ### Pointing at the right cluster
 
@@ -256,6 +310,9 @@ ansible-playbook demo-otel-logs.yml -e suffix=xipio -e demo_state=reverted
 ## Layout
 
 ```
+requirements.yml         Collections, for ansible-core 2.17+
+requirements-legacy.yml  Collections, for ansible-core 2.13-2.16 (RHEL 9)
+
 aws-prereqs.yml       AWS only - buckets, IAM, access keys, credentials file
 cluster.yml           Everything cluster-side
 site.yml              Both, in order
@@ -322,6 +379,9 @@ Safe to re-run. Specifics worth knowing:
 
 | Symptom | Cause |
 |---|---|
+| "Failed to import the required Python library (botocore and boto3)" | Install them for the interpreter named in the message — see [Python libraries](#python-libraries). The message reports the exact path Ansible used. |
+| "Failed to import the required Python library (kubernetes)" | Same, for the cluster phase. |
+| "Collection amazon.aws does not support Ansible version 2.14.x" | Collections too new for your ansible-core. Install `requirements-legacy.yml --force`. |
 | "Failed to get client due to Invalid kube-config file" / connection refused | No usable kubeconfig. Export `KUBECONFIG` or pass `-e kubeconfig=…`. Nothing has been created at that point. |
 | Preflight ran against the wrong cluster | Check the `Target:` line it prints. Pin it with `-e kube_context=…` rather than relying on current-context. |
 | Preflight: "must be set to a short lowercase string" | Pass `-e suffix=…`. |

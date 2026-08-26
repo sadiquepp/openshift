@@ -1,0 +1,33 @@
+---
+# ansible-galaxy collection install -r requirements-legacy.yml --force
+#
+# FOR ansible-core 2.13 – 2.16, which is what you get from the RHEL 9 AppStream
+# package (`ansible-core` 2.14) and on most bastions that were not built with a
+# virtualenv.
+#
+# `ansible-galaxy` ignores a collection's `requires_ansible` when resolving
+# versions, so an unpinned install pulls the latest — amazon.aws 10.x needs
+# ansible-core >=2.17 and kubernetes.core 6.x needs >=2.16 — and you get:
+#
+#   [WARNING]: Collection amazon.aws does not support Ansible version 2.14.17
+#
+# which is a warning now and a confusing failure later. These pins are the
+# newest releases that genuinely support 2.14, verified against their
+# meta/runtime.yml:
+#
+#   amazon.aws 7.6.0       requires_ansible ">=2.13.0"
+#   kubernetes.core 3.3.1  requires_ansible ">=2.14.0"
+#
+# Every module this automation uses is present in both, with the same parameter
+# and return names — including amazon.aws.iam_managed_policy, which only moved
+# into amazon.aws (and gained its `name`/`description` parameters) in 7.2.0.
+#
+# `--force` is needed if a newer version is already installed: galaxy will not
+# downgrade to satisfy a constraint an installed version already meets.
+collections:
+  - name: amazon.aws
+    version: ">=7.2.0,<8.0.0"
+  - name: kubernetes.core
+    version: ">=3.0.0,<4.0.0"
+  - name: community.general
+    version: "<9.0.0"       # 9.x requires ansible-core >=2.15

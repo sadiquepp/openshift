@@ -1,11 +1,21 @@
 ---
 # ansible-galaxy collection install -r requirements.yml
 #
-# kubernetes.core additionally needs the Python client on the control node:
-#   pip install kubernetes
+# FOR MODERN ansible-core (2.17+). If `ansible --version` reports anything
+# older, use requirements-legacy.yml instead — see "Ansible and Python
+# versions" in README.md. `ansible-galaxy` does NOT take a collection's
+# `requires_ansible` into account when resolving, so on an older ansible-core
+# this file installs collections that then warn and misbehave rather than
+# failing cleanly.
+#
+# Both collections also need a Python library, installed for the SAME
+# interpreter Ansible runs (see README.md):
+#
+#   amazon.aws       ->  boto3, botocore      (the AWS phase)
+#   kubernetes.core  ->  kubernetes           (the cluster phase)
 collections:
   - name: amazon.aws
-    version: ">=8.0.0"      # iam_managed_policy / iam_access_key live here since 7.2.0
+    version: ">=8.0.0"      # requires ansible-core >=2.15; 10.x requires >=2.17
   - name: kubernetes.core
-    version: ">=3.0.0"
+    version: ">=5.0.0"      # 6.x requires ansible-core >=2.16
   - name: community.general
