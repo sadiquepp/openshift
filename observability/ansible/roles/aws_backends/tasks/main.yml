@@ -32,11 +32,13 @@
     msg: >-
       AWS_ACCESS_KEY_ID is set in the environment. Environment variables
       OUTRANK ~/.aws/credentials and any `aws_profile` you set here, so the
-      identity above is the one they name. Note that
-      observability/README.md's own setup steps export exactly these two
-      variable names for the minted Loki and Tempo keys - which are
-      least-privilege S3 users and cannot create buckets or IAM users. If the
-      identity above is not the administrator you expected, run
+      identity above is the one they name. A common cause is having exported
+      a key this automation itself minted: those are least-privilege S3 users
+      scoped to a single bucket and cannot create buckets or IAM users.
+      (observability/README.md now prefixes them LOKI_ / NETOBSERV_ / TEMPO_
+      for exactly this reason, but an older copy of it exported the
+      unprefixed names.) If the identity above is not the administrator you
+      expected, run
       `unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN`
       and try again.
   when: lookup('ansible.builtin.env', 'AWS_ACCESS_KEY_ID') | length > 0

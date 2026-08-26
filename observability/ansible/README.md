@@ -196,6 +196,14 @@ InvalidAccessKeyId: The AWS Access Key Id you provided does not exist in our rec
 ```
 
 Both mean credentials *were* found and are wrong — not that none were found.
+
+The most likely source is a key this automation minted. Those are IAM users
+scoped to `s3:PutObject`/`GetObject` on a single bucket, so they cannot create
+buckets or IAM users even when valid. `../README.md` prefixes them
+`LOKI_` / `NETOBSERV_` / `TEMPO_` precisely so they never shadow the
+administrative credentials, but an older copy of it exported the unprefixed
+names.
+
 This command shows which source won for each value, without printing secrets:
 
 ```bash

@@ -138,10 +138,26 @@ aws iam attach-user-policy --user-name $LOKI_USERNAME --policy-arn arn:aws:iam::
 - Get the IAM User Access Key.
 
 ```bash
-read -r AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY <<< $(aws iam create-access-key --user-name $LOKI_USERNAME --query 'AccessKey.[AccessKeyId,SecretAccessKey]' --output text) && export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
-echo "AWS_ACCESS_KEY_ID: $AWS_ACCESS_KEY_ID"
-echo "AWS_SECRET_ACCESS_KEY: $AWS_SECRET_ACCESS_KEY"
+read -r LOKI_AWS_ACCESS_KEY_ID LOKI_AWS_SECRET_ACCESS_KEY <<< $(aws iam create-access-key --user-name $LOKI_USERNAME --query 'AccessKey.[AccessKeyId,SecretAccessKey]' --output text) && export LOKI_AWS_ACCESS_KEY_ID LOKI_AWS_SECRET_ACCESS_KEY
+echo "LOKI_AWS_ACCESS_KEY_ID: $LOKI_AWS_ACCESS_KEY_ID"
+echo "LOKI_AWS_SECRET_ACCESS_KEY: $LOKI_AWS_SECRET_ACCESS_KEY"
 ```
+
+> **Why the `LOKI_` prefix.** These keys exist only to be copied into a
+> Kubernetes secret two steps below — they are never meant to authenticate the
+> `aws` CLI. Naming them `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` would
+> do exactly that, because those are the names botocore reads, and environment
+> variables outrank `~/.aws/credentials`. Every `aws` command later in this
+> document would then run as `$LOKI_USERNAME` — an IAM user scoped to
+> `s3:PutObject`/`GetObject` on one bucket — and fail with `AccessDenied` on the
+> Network Observability and Tempo buckets. The `NETOBSERV_` and `TEMPO_` keys
+> below are prefixed for the same reason.
+>
+> If you have already exported the unprefixed names in this shell, clear them:
+>
+> ```bash
+> unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
+> ```
 
 
 
@@ -236,8 +252,8 @@ oc create secret generic $LOKI_SECRET_NAME \
   -n openshift-logging \
   --from-literal=bucketnames="$BUCKET_NAME" \
   --from-literal=endpoint="https://s3.$REGION.amazonaws.com" \
-  --from-literal=access_key_id="$AWS_ACCESS_KEY_ID" \
-  --from-literal=access_key_secret="$AWS_SECRET_ACCESS_KEY" \
+  --from-literal=access_key_id="$LOKI_AWS_ACCESS_KEY_ID" \
+  --from-literal=access_key_secret="$LOKI_AWS_SECRET_ACCESS_KEY" \
   --from-literal=region="$REGION"
 ```
 
