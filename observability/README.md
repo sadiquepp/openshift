@@ -2,6 +2,64 @@
 
 This Document describes the pre-requisites for installing and configuring the OpenShift Logging using AWS S3 as the storage backend.
 
+It then extends that into a full observability stack — Network Observability, distributed tracing
+with Tempo and OpenTelemetry — and drives the whole thing with a test workload so each signal can be
+followed end to end.
+
+## Contents
+
+- [Pre-requisites](#pre-requisites)
+- [Install and Configure the Loki Operator](#install-and-configure-the-loki-operator)
+- [Install openshift-logging Operator](#install-openshift-logging-operator)
+- [Install the Cluster Observability Operator](#install-the-cluster-observability-operator)
+- [Configure the UIPlugin for logging](#configure-the-uiplugin-for-logging)
+- [Install Network Observability Operator](#install-network-observability-operator)
+  - [Choose a deployment mode](#choose-a-deployment-mode)
+  - [Install the operator](#install-the-operator)
+  - [Path A: FlowCollector without Loki](#path-a-flowcollector-without-loki)
+  - [Path B: FlowCollector with Loki](#path-b-flowcollector-with-loki)
+    - [Install the Loki Operator](#install-the-loki-operator)
+    - [Create the S3 bucket for the flows LokiStack](#create-the-s3-bucket-for-the-flows-lokistack)
+    - [Create the LokiStack](#create-the-lokistack)
+    - [Grant the operator access to the LokiStack CA](#grant-the-operator-access-to-the-lokistack-ca)
+    - [Create the FlowCollector](#create-the-flowcollector)
+  - [Verify the deployment](#verify-the-deployment)
+  - [Install the console plugin](#install-the-console-plugin)
+  - [Optional: enable the Troubleshooting Panel UIPlugin](#optional-enable-the-troubleshooting-panel-uiplugin)
+- [Distributed Tracing](#distributed-tracing)
+  - [Create the tracing namespace](#create-the-tracing-namespace)
+  - [Create the S3 bucket for Tempo](#create-the-s3-bucket-for-tempo)
+  - [Install Tempo Operator](#install-tempo-operator)
+  - [Create the TempoStack](#create-the-tempostack)
+  - [Configure the UIPlugin for distributed tracing](#configure-the-uiplugin-for-distributed-tracing)
+  - [Install OpenTelemetry Collector Operator](#install-opentelemetry-collector-operator)
+  - [Create the collector service account and RBAC](#create-the-collector-service-account-and-rbac)
+  - [Create the OpenTelemetryCollector](#create-the-opentelemetrycollector)
+- [Test workload: Online Boutique](#test-workload-online-boutique)
+  - [Deploy the application](#deploy-the-application)
+    - [Deploying as a non-admin user](#deploying-as-a-non-admin-user)
+  - [Enable tracing for the workload](#enable-tracing-for-the-workload)
+    - [Reading a trace](#reading-a-trace)
+    - [Worked example: an order placement](#worked-example-an-order-placement)
+  - [Auto-instrument a service with the Instrumentation CR](#auto-instrument-a-service-with-the-instrumentation-cr)
+    - [Notes and limits](#notes-and-limits)
+  - [Analyze the application logs](#analyze-the-application-logs)
+  - [How OpenTelemetry handles logs, and how that differs](#how-opentelemetry-handles-logs-and-how-that-differs)
+    - [Demo: collecting and correlating `adservice` logs](#demo-collecting-and-correlating-adservice-logs)
+    - [What the demo actually proves](#what-the-demo-actually-proves)
+    - [Where these logs actually go](#where-these-logs-actually-go)
+  - [Observe the network flows](#observe-the-network-flows)
+  - [Metrics from native Prometheus](#metrics-from-native-prometheus)
+  - [What metrics OpenTelemetry collects](#what-metrics-opentelemetry-collects)
+    - [How this differs from what the platform already collects](#how-this-differs-from-what-the-platform-already-collects)
+    - [How the pieces fit together](#how-the-pieces-fit-together)
+    - [Add the spanmetrics connector](#add-the-spanmetrics-connector)
+    - [Scrape the collector](#scrape-the-collector)
+    - [Finding them in the console](#finding-them-in-the-console)
+    - [The metrics you get](#the-metrics-you-get)
+  - [Tear down the workload](#tear-down-the-workload)
+- [Clean up](#clean-up)
+
 ### Pre-requisites
 
 - Define the following variables: Configure SUFFIX to make the resources unique.
