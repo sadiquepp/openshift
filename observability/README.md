@@ -1,13 +1,11 @@
 # OpenShift Observability
 
 ## Contents
-
-- [Pre-requisites](#pre-requisites)
-- [Install and Configure the Loki Operator](#install-and-configure-the-loki-operator)
-- [Install openshift-logging Operator](#install-openshift-logging-operator)
-- [Install the Cluster Observability Operator](#install-the-cluster-observability-operator)
-- [Configure the UIPlugin for logging](#configure-the-uiplugin-for-logging)
-- [Install Network Observability Operator](#install-network-observability-operator)
+- [OpenShift Logging](#openshift-logging)
+  - [Pre-requisites](#pre-requisites)
+  - [Install and Configure the Loki Operator](#install-and-configure-the-loki-operator)
+  - [Install openshift-logging Operator](#install-openshift-logging-operator)
+- [Network Observability](#network-observability)
   - [Choose a deployment mode](#choose-a-deployment-mode)
   - [Install the operator](#install-the-operator)
   - [Path A: FlowCollector without Loki](#path-a-flowcollector-without-loki)
@@ -17,9 +15,9 @@
     - [Create the LokiStack](#create-the-lokistack)
     - [Grant the operator access to the LokiStack CA](#grant-the-operator-access-to-the-lokistack-ca)
     - [Create the FlowCollector](#create-the-flowcollector)
-  - [Verify the deployment](#verify-the-deployment)
-  - [Install the console plugin](#install-the-console-plugin)
-  - [Optional: enable the Troubleshooting Panel UIPlugin](#optional-enable-the-troubleshooting-panel-uiplugin)
+    - [Verify the deployment](#verify-the-deployment)
+    - [Install the console plugin](#install-the-console-plugin)
+    - [Optional: enable the Troubleshooting Panel UIPlugin](#optional-enable-the-troubleshooting-panel-uiplugin)
 - [Distributed Tracing](#distributed-tracing)
   - [Create the tracing namespace](#create-the-tracing-namespace)
   - [Create the S3 bucket for Tempo](#create-the-s3-bucket-for-tempo)
@@ -53,6 +51,7 @@
     - [The metrics you get](#the-metrics-you-get)
   - [Tear down the workload](#tear-down-the-workload)
 - [Clean up](#clean-up)
+
 ## OpenShift Logging
 
 This Document describes the pre-requisites for installing and configuring the OpenShift Logging using AWS S3 as the storage backend.
