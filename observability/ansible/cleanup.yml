@@ -31,6 +31,8 @@
       kubeconfig: "{{ kubeconfig if (kubeconfig | default('') | length > 0) else omit }}"
       context: "{{ kube_context if (kube_context | default('') | length > 0) else omit }}"
     kubernetes.core.k8s_json_patch: *k8s_connection
+    group/amazon.aws.aws:
+      profile: "{{ aws_profile if (aws_profile | default('') | length > 0) else omit }}"
 
   vars:
     cleanup_confirm: "no"

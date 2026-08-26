@@ -15,6 +15,7 @@ not give you.
 - [Prerequisites](#prerequisites)
   - [Ansible and Python versions](#ansible-and-python-versions)
   - [Python libraries](#python-libraries)
+  - [Which AWS credentials get used](#which-aws-credentials-get-used)
   - [Pointing at the right cluster](#pointing-at-the-right-cluster)
 - [The two phases](#the-two-phases)
   - [Phase 1 — AWS (an AWS admin can run this alone)](#phase-1--aws-an-aws-admin-can-run-this-alone)
@@ -75,7 +76,7 @@ reason to deploy the intermediate one.
 - `cluster-admin` on it — preflight checks by attempting a `SelfSubjectAccessReview`
   for creating Subscriptions.
 - AWS credentials that can create S3 buckets, IAM policies, IAM users and access
-  keys. The usual `AWS_PROFILE` / `AWS_ACCESS_KEY_ID` environment works.
+  keys — see [Which AWS credentials get used](#which-aws-credentials-get-used).
 - `oc` on `PATH`. It is used **only** to render the workload's kustomize overlay
   and to check its own version — it never contacts the cluster, so `oc login` is
   not a prerequisite.
@@ -171,6 +172,58 @@ without it you would install into the venv and Ansible would look outside it.
 If a module still reports a missing library, the error names the exact
 interpreter it used (`... on <host>'s Python /usr/bin/python3`). Install there,
 or point Ansible elsewhere with `-e ansible_python_interpreter=…`.
+
+### Which AWS credentials get used
+
+A virtualenv changes **nothing** here. It isolates Python packages, not
+environment variables, `$HOME`, or `~/.aws/` — so whatever works for the `aws`
+CLI works for the playbooks. The tasks pass only `region`, never credentials, so
+botocore's normal chain applies, in this order:
+
+1. the `aws_profile` variable, if you set it
+2. `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_PROFILE` **environment
+   variables**
+3. `~/.aws/credentials` and `~/.aws/config`
+4. an instance role
+
+**Step 2 silently outranks step 3**, which is the usual cause of a confusing
+failure: a stale `AWS_ACCESS_KEY_ID` exported in the shell beats the profile
+that actually works, and you get
+
+```
+InvalidClientTokenId: The security token included in the request is invalid
+InvalidAccessKeyId: The AWS Access Key Id you provided does not exist in our records
+```
+
+Both mean credentials *were* found and are wrong — not that none were found.
+This command shows which source won for each value, without printing secrets:
+
+```bash
+aws configure list
+```
+
+```bash
+env | grep -i aws
+```
+
+To be explicit rather than relying on ambient state, name the profile — it is
+applied to every `amazon.aws` module through `module_defaults`:
+
+```bash
+ansible-playbook site.yml -e suffix=xipio -e aws_profile=lab
+```
+
+`profile` is mutually exclusive with `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`
+being set, so unset those if you use it.
+
+> **`sudo` changes `$HOME`.** Under `sudo`, `~/.aws` resolves to `/root/.aws`,
+> not your user's. Be consistent about which one you populate.
+
+> **Check the region.** `aws_region` defaults to `ap-south-1` and is passed
+> explicitly, so it **overrides** the region in your AWS config rather than
+> inheriting it. Buckets are created there and the Loki/Tempo S3 endpoints are
+> derived from it, so a mismatch puts your buckets somewhere unexpected instead
+> of failing loudly.
 
 ### Pointing at the right cluster
 
@@ -296,6 +349,7 @@ ones worth knowing:
 | Variable | Default | Notes |
 |---|---|---|
 | `suffix` | — | **Required.** Makes bucket and IAM user names unique. S3 bucket names are globally unique across all of AWS. |
+| `aws_profile` | `""` | Empty uses botocore's normal chain. Set it when several credential sources exist. |
 | `kubeconfig` | `""` | Empty falls back to `KUBECONFIG`, then `~/.kube/config`. Ignored by the AWS phase. |
 | `kube_context` | `""` | Empty uses the kubeconfig's current-context. |
 | `aws_region` | `ap-south-1` | |
@@ -410,6 +464,7 @@ Safe to re-run. Specifics worth knowing:
 
 | Symptom | Cause |
 |---|---|
+| `InvalidClientTokenId` / `InvalidAccessKeyId` | Credentials were found but are invalid — usually a stale `AWS_ACCESS_KEY_ID` in the environment outranking `~/.aws/credentials`. Run `aws configure list`. |
 | "Failed to import the required Python library (botocore and boto3)" | Not installed next to Ansible. The message names the exact interpreter used — see [Python libraries](#python-libraries). |
 | "Failed to import the required Python library (kubernetes)" | Same, for the cluster phase. |
 | Library is installed in your venv but Ansible still says it is missing | Ansible ran the module under a different interpreter. Check the path in the error against `which ansible-playbook`; the `ansible_python_interpreter` line in `inventory.yml` is what normally prevents this. |
