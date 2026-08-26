@@ -1,0 +1,123 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# The default deploy, plus OpenTelemetry tracing switched on.
+#
+# The vendored v0.10.6 release manifest ships no tracing configuration at all --
+# upstream keeps it in the `google-cloud-operations` kustomize component. The
+# services read these environment variables:
+#
+#   ENABLE_TRACING          "1"      -- switches instrumentation on
+#   COLLECTOR_SERVICE_ADDR  host:port of an OTLP/gRPC endpoint
+#   OTEL_SERVICE_NAME       the name the service reports itself as
+#
+# OTEL_SERVICE_NAME is not optional in practice. The Go services build their
+# tracer provider without WithResource(), so the SDK falls back to
+# resource.Default(), whose defaultServiceNameDetector reports
+# `unknown_service:<executable>` -- frontend and productcatalogservice both ship
+# a binary called `server`, so they COLLAPSE INTO ONE ENTRY named
+# `unknown_service:server` in the Tempo UI. The Python services report a bare
+# `unknown_service`. Only the Node services (currencyservice, paymentservice)
+# hardcode a fallback name in code.
+#
+# Setting OTEL_SERVICE_NAME fixes all three cases uniformly: Go's
+# resource.Default() includes the fromEnv detector, which overrides the default
+# service name; Python's Resource.create() reads it via OTELResourceDetector;
+# and the Node services already prefer it over their hardcoded fallback.
+
+resources:
+  - ../default
+
+patches:
+  # Shared settings. `name` is matched as a regex, so one patch covers all seven
+  # Deployments. Written as JSON 6902 `add` against containers/0/env/- : every
+  # one of these Deployments has exactly one container named `server` with an
+  # existing `env` list, so the append is well defined. If a future upstream
+  # release changes that, the build FAILS rather than silently doing nothing.
+  - target:
+      kind: Deployment
+      name: (frontend|checkoutservice|currencyservice|emailservice|paymentservice|productcatalogservice|recommendationservice)
+    patch: |
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: ENABLE_TRACING
+          value: "1"
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: COLLECTOR_SERVICE_ADDR
+          # The collector deployed by observability/README.md. Repoint this if
+          # your OpenTelemetryCollector has a different name or namespace.
+          value: otel-collector.tracing-system.svc.cluster.local:4317
+
+  # Per-service identity. Values differ, so these cannot share a patch.
+  - target:
+      kind: Deployment
+      name: frontend
+    patch: |
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: OTEL_SERVICE_NAME
+          value: frontend
+
+  - target:
+      kind: Deployment
+      name: checkoutservice
+    patch: |
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: OTEL_SERVICE_NAME
+          value: checkoutservice
+
+  - target:
+      kind: Deployment
+      name: currencyservice
+    patch: |
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: OTEL_SERVICE_NAME
+          value: currencyservice
+
+  - target:
+      kind: Deployment
+      name: emailservice
+    patch: |
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: OTEL_SERVICE_NAME
+          value: emailservice
+
+  - target:
+      kind: Deployment
+      name: paymentservice
+    patch: |
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: OTEL_SERVICE_NAME
+          value: paymentservice
+
+  - target:
+      kind: Deployment
+      name: productcatalogservice
+    patch: |
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: OTEL_SERVICE_NAME
+          value: productcatalogservice
+
+  - target:
+      kind: Deployment
+      name: recommendationservice
+    patch: |
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: OTEL_SERVICE_NAME
+          value: recommendationservice
