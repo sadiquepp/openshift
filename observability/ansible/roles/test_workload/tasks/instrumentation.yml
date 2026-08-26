@@ -24,7 +24,7 @@
     apply: true
     definition: "{{ lookup('ansible.builtin.template', 'instrumentation.yaml.j2') | from_yaml }}"
 
-- name: Give adservice room to start with the agent attached
+- name: Prepare adservice for the agent, and annotate it, in one patch
   kubernetes.core.k8s:
     state: patched
     api_version: apps/v1
@@ -34,6 +34,12 @@
     definition:
       spec:
         template:
+          metadata:
+            annotations:
+              # On the POD TEMPLATE, not the Deployment's own metadata. A value
+              # of "true" makes the operator look for an Instrumentation CR in
+              # the pod's own namespace.
+              instrumentation.opentelemetry.io/inject-java: "true"
           spec:
             containers:
               - name: server
@@ -59,32 +65,21 @@
                     port: 9555
                   periodSeconds: 15
                   timeoutSeconds: 5
-  # Without this, the pod restarts forever. adservice's probes are tuned for a
-  # plain JVM: timeoutSeconds is unset, so it defaults to 1 second, and the CPU
-  # limit is 300m. The agent rewrites bytecode as classes load, which is
-  # CPU-bound, so the container is killed by the liveness probe before it can
-  # serve gRPC. A startupProbe is the right fix - liveness and readiness are
-  # suspended until it first succeeds, so slow startup stops counting as
+  register: _ad_patch
+  # The probe and resource changes and the annotation go in ONE patch on
+  # purpose. Applied separately they trigger two rollouts back to back, and the
+  # wait below can then satisfy itself against the first one while the second
+  # has not started - leaving a pre-injection pod Running when the check reads.
+  #
+  # Without the probe budget the pod restarts forever. adservice's probes are
+  # tuned for a plain JVM: timeoutSeconds is unset, so it defaults to 1 second,
+  # and the CPU limit is 300m. The agent rewrites bytecode as classes load,
+  # which is CPU-bound, so the container is killed by the liveness probe before
+  # it can serve gRPC. A startupProbe is the right fix - liveness and readiness
+  # are suspended until it first succeeds, so slow startup stops counting as
   # failure while the steady-state probes stay strict. Raising the CPU limit
   # matters as much: most of the extra startup time is class transformation.
   # failureThreshold 30 at periodSeconds 10 allows five minutes to start.
-
-- name: Annotate the adservice pod template for Java injection
-  kubernetes.core.k8s:
-    state: patched
-    api_version: apps/v1
-    kind: Deployment
-    name: adservice
-    namespace: "{{ app_namespace }}"
-    definition:
-      spec:
-        template:
-          metadata:
-            annotations:
-              # On the POD TEMPLATE, not the Deployment's own metadata. A value
-              # of "true" makes the operator look for an Instrumentation CR in
-              # the pod's own namespace.
-              instrumentation.opentelemetry.io/inject-java: "true"
 
 - name: Wait for adservice to roll out with the agent
   kubernetes.core.k8s_info:
@@ -97,11 +92,19 @@
   delay: 10
   until: >-
     _ad.resources | length > 0
-    and (_ad.resources[0].status.readyReplicas | default(0)) > 0
+    and (_ad.resources[0].status.observedGeneration | default(-1))
+        >= (_ad.resources[0].metadata.generation | default(0))
     and (_ad.resources[0].status.updatedReplicas | default(0))
         == (_ad.resources[0].spec.replicas | default(-1))
+    and (_ad.resources[0].status.readyReplicas | default(0))
+        == (_ad.resources[0].spec.replicas | default(-1))
+  # observedGeneration is the part that closes the race: immediately after a
+  # patch the Deployment controller has not yet reconciled, so updatedReplicas
+  # and readyReplicas still describe the PREVIOUS generation and briefly look
+  # complete. Comparing readyReplicas to spec.replicas (not just > 0) also
+  # means the old pod must be gone, not merely outnumbered.
 
-- name: Confirm the agent was injected
+- name: Wait for an adservice pod carrying the injected agent
   kubernetes.core.k8s_info:
     api_version: v1
     kind: Pod
@@ -111,17 +114,63 @@
     field_selectors:
       - status.phase=Running
   register: _ad_pods
+  retries: 30
+  delay: 10
+  until: >-
+    (_ad_pods.resources | default([])
+     | map(attribute='spec.initContainers', default=[]) | flatten
+     | map(attribute='name')
+     | select('search', 'auto-instrumentation') | list | length) > 0
+  failed_when: false
+  # Searches EVERY running adservice pod rather than resources[0]: during a
+  # rollout the previous pod can still be Running, the API returns no
+  # meaningful order, and picking the first one is a coin flip.
+  #
+  # Matches on `auto-instrumentation` as a substring instead of the exact
+  # `opentelemetry-auto-instrumentation-java`, because the operator names this
+  # container per-language only in newer releases; older ones use a single
+  # unsuffixed `opentelemetry-auto-instrumentation`.
+  #
+  # failed_when: false so the assert below can report what was actually found
+  # rather than the retry loop failing with just "until timed out".
 
-- name: Fail if no init container was added
+- name: Confirm the agent was injected
+  vars:
+    _init_names: >-
+      {{ _ad_pods.resources | default([])
+         | map(attribute='spec.initContainers', default=[]) | flatten
+         | map(attribute='name') | list }}
+    _has_java_tool_options: >-
+      {{ (_ad_pods.resources | default([])
+          | map(attribute='spec.containers', default=[]) | flatten
+          | map(attribute='env', default=[]) | flatten
+          | map(attribute='name')
+          | select('equalto', 'JAVA_TOOL_OPTIONS') | list | length) > 0 }}
   ansible.builtin.assert:
     that:
-      - _ad_pods.resources | length > 0
-      - "'opentelemetry-auto-instrumentation-java' in
-         (_ad_pods.resources[0].spec.initContainers | default([]) | map(attribute='name') | join(','))"
+      - _ad_pods.resources | default([]) | length > 0
+      - _init_names | select('search', 'auto-instrumentation') | list | length > 0
+      - _has_java_tool_options | bool
     fail_msg: >-
       The OpenTelemetry operator did not inject the Java agent into adservice.
-      A successful injection adds an init container and sets JAVA_TOOL_OPTIONS
-      on the application container. Check that the Instrumentation CR exists in
-      {{ app_namespace }} and that the operator's webhook is running:
-      oc get pods -n openshift-opentelemetry-operator
+      Running adservice pods: {{ _ad_pods.resources | default([]) | length }}.
+      Init containers found: {{ _init_names | default([]) | join(', ') | default('none', true) }}.
+      JAVA_TOOL_OPTIONS present: {{ _has_java_tool_options }}.
+      A successful injection adds an init container whose name contains
+      `auto-instrumentation` AND sets JAVA_TOOL_OPTIONS on the `server`
+      container. Check, in order - the Instrumentation CR exists in
+      {{ app_namespace }} (`oc get instrumentation -n {{ app_namespace }}`);
+      the operator webhook is running
+      (`oc get pods -n openshift-opentelemetry-operator`); the mutating webhook
+      is registered
+      (`oc get mutatingwebhookconfiguration | grep opentelemetry`); and the pod
+      template carries the annotation
+      (`oc get deploy adservice -n {{ app_namespace }}
+      -o jsonpath='{.spec.template.metadata.annotations}'`).
+      The webhook only runs at pod admission, so a pod created before the
+      operator was ready will never be injected - `oc rollout restart
+      deployment/adservice -n {{ app_namespace }}` forces a fresh admission.
     quiet: true
+  # Both signals are checked: the init container proves the operator acted, and
+  # JAVA_TOOL_OPTIONS proves the agent is actually on the JVM's command line.
+  # The first without the second means injection half-completed.
