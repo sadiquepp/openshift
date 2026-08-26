@@ -1,9 +1,10 @@
 ---
 # ansible-galaxy collection install -r requirements-legacy.yml --force
 #
-# FOR ansible-core 2.13 – 2.16, which is what you get from the RHEL 9 AppStream
-# package (`ansible-core` 2.14) and on most bastions that were not built with a
-# virtualenv.
+# FALLBACK, for ansible-core 2.13 – 2.16 — the RHEL 9 AppStream `ansible-core`
+# package (2.14). Prefer requirements.yml in a 2.17 venv; use this only when a
+# venv is not an option. Verified against ansible-core 2.14.17 with the versions
+# these constraints resolve to (amazon.aws 7.6.1, kubernetes.core 3.3.1).
 #
 # `ansible-galaxy` ignores a collection's `requires_ansible` when resolving
 # versions, so an unpinned install pulls the latest — amazon.aws 10.x needs
@@ -29,5 +30,3 @@ collections:
     version: ">=7.2.0,<8.0.0"
   - name: kubernetes.core
     version: ">=3.0.0,<4.0.0"
-  - name: community.general
-    version: "<9.0.0"       # 9.x requires ansible-core >=2.15

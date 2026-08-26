@@ -6,3 +6,20 @@ all:
   hosts:
     localhost:
       ansible_connection: local
+
+      # Run modules under the SAME Python that is running ansible-playbook,
+      # rather than whatever interpreter discovery settles on.
+      #
+      # This matters because `localhost` is declared explicitly here. Ansible's
+      # *implicit* localhost gets `sys.executable` for free; an explicit one
+      # does not — it goes through normal discovery and lands on the system
+      # interpreter, typically /usr/bin/python3.
+      #
+      # Inside a virtualenv that is a trap: you pip install boto3 and
+      # kubernetes into the venv, Ansible runs the module under
+      # /usr/bin/python3 instead, and reports the library as missing. With
+      # this, the libraries only ever have to be installed next to Ansible.
+      #
+      # Override with -e ansible_python_interpreter=/usr/bin/python3.11 if you
+      # deliberately want them somewhere else.
+      ansible_python_interpreter: "{{ ansible_playbook_python }}"

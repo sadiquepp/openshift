@@ -15,7 +15,27 @@
   amazon.aws.iam_managed_policy:
     name: "{{ backend.iam_name }}"
     description: "Least-privilege access to s3://{{ backend.bucket }} for OpenShift observability"
-    policy: "{{ lookup('ansible.builtin.template', 'iam-policy.json.j2') }}"
+    # Written inline as a mapping rather than rendered from a .json.j2 template.
+    # The module types this parameter as `json`, which accepts either a dict or
+    # a JSON string - but `lookup('template', ...)` does NOT behave the same way
+    # across ansible-core versions: 2.14 applies convert_data and hands back a
+    # dict, while 2.17+ hands back the raw string. Building it here sidesteps
+    # that difference and is easier to read besides.
+    policy:
+      Version: "2012-10-17"
+      Statement:
+        - Effect: Allow
+          Action:
+            - s3:ListBucket
+          Resource: "arn:aws:s3:::{{ backend.bucket }}"
+        - Effect: Allow
+          Action:
+            - s3:PutObject
+            - s3:GetObject
+            - s3:DeleteObject
+            - s3:GetObjectTagging
+            - s3:PutObjectTagging
+          Resource: "arn:aws:s3:::{{ backend.bucket }}/*"
     state: present
 
 - name: "{{ backend.key }}: create the IAM user and attach the policy"

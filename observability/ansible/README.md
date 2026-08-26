@@ -79,67 +79,98 @@ reason to deploy the intermediate one.
 - `oc` on `PATH`. It is used **only** to render the workload's kustomize overlay
   and to check its own version — it never contacts the cluster, so `oc login` is
   not a prerequisite.
-- Ansible, the collections, and two Python libraries — see below, because the
-  version matrix here has a sharp edge.
+- **ansible-core 2.17 in a virtualenv on Python 3.11/3.12**, the collections and
+  two Python libraries — see below. `ansible-galaxy` will not pick compatible
+  collection versions on its own.
 
 ### Ansible and Python versions
 
-Check what you have first:
+**The supported setup is ansible-core 2.17 in a virtualenv on Python 3.11 or
+3.12.** A venv keeps this off the system Python entirely, so an existing
+`ansible-core` RPM — and anything else on the box that depends on it — is
+untouched.
 
 ```bash
-ansible --version
+sudo dnf install -y python3.11
 ```
-
-**ansible-core 2.17 or newer:**
 
 ```bash
-ansible-galaxy collection install -r requirements.yml
+python3.11 -m venv ~/.venv/observability && ~/.venv/observability/bin/pip install --upgrade pip
 ```
 
-**ansible-core 2.13–2.16** — which is what the RHEL 9 AppStream `ansible-core`
-package gives you (2.14), and what most bastions have:
+```bash
+~/.venv/observability/bin/pip install 'ansible-core~=2.17.0' boto3 botocore kubernetes
+```
+
+```bash
+source ~/.venv/observability/bin/activate && ansible-galaxy collection install -r requirements.yml
+```
+
+Activate that venv in any shell you run the playbooks from.
+
+Two details that are easy to get wrong:
+
+- **Python 3.11 or 3.12, not 3.13.** ansible-core 2.17 supports controller
+  Python 3.10–3.12 only. RHEL 9 AppStream carries `python3.11` and `python3.12`.
+- **Pin ansible-core.** A bare `pip install ansible-core` resolves to the newest
+  release the interpreter supports, which on Python 3.11 is well past 2.17.
+  `~=2.17.0` keeps you on the 2.17 series.
+
+`requirements.yml` resolves to amazon.aws 11.4.0 and kubernetes.core 6.5.0,
+which declare `requires_ansible >=2.17.0` and `>=2.16.0`. Its upper bounds are
+deliberate: `ansible-galaxy` **does not consider `requires_ansible` when
+resolving versions**, so without them a future major could install itself and
+then warn that it needs a newer ansible-core than you have.
+
+#### Fallback: system ansible-core 2.13–2.16
+
+If a venv is not an option and you have to use the RHEL 9 AppStream
+`ansible-core` (2.14), there is a pinned collection set for it:
 
 ```bash
 ansible-galaxy collection install -r requirements-legacy.yml --force
 ```
 
-`ansible-galaxy` **ignores a collection's `requires_ansible` when resolving
-versions**, so the plain install pulls the latest — amazon.aws 10.x needs
-ansible-core ≥2.17, kubernetes.core 6.x needs ≥2.16 — and you get:
+```bash
+/usr/bin/python3 -m pip install boto3 botocore kubernetes
+```
+
+It resolves amazon.aws 7.6.1 and kubernetes.core 3.3.1 — the newest releases
+that genuinely support 2.14. Every module used here is present in both with the
+same parameter and return names. Without the pins you get:
 
 ```
 [WARNING]: Collection amazon.aws does not support Ansible version 2.14.17
-[WARNING]: Collection kubernetes.core does not support Ansible version 2.14.17
 ```
 
-That is a warning now and a confusing failure later. `requirements-legacy.yml`
-pins the newest releases that genuinely support 2.14 (amazon.aws 7.6.0,
-kubernetes.core 3.3.1); every module used here is present in both with the same
-parameter and return names.
-
-`--force` matters: galaxy will not *downgrade* to satisfy a constraint that an
-already-installed newer version also meets, so without it you get
-`Nothing to do. All requested collections are already installed.`
+which is a warning now and a confusing failure later. `--force` matters too:
+galaxy will not *downgrade* to satisfy a constraint an already-installed newer
+version also meets, so without it you get `Nothing to do. All requested
+collections are already installed.`
 
 ### Python libraries
 
-The collections are wrappers — the actual work is done by Python libraries that
-must be installed **for the same interpreter Ansible runs**, which is not
-necessarily the one `python3` resolves to in your shell. Ansible reports it in
-the error when it is missing (`... on <host>'s Python /usr/bin/python3`).
+The collections are wrappers — the real work is done by Python libraries that
+must be importable by **the interpreter Ansible runs modules under**:
 
 | Library | Needed by | Phase |
 |---|---|---|
 | `boto3`, `botocore` | `amazon.aws` | AWS |
 | `kubernetes` | `kubernetes.core` | cluster |
 
-```bash
-/usr/bin/python3 -m pip install boto3 botocore kubernetes
-```
+Both commands above install them. `inventory.yml` sets
+`ansible_python_interpreter: "{{ ansible_playbook_python }}"` so that
+interpreter is always the one running `ansible-playbook` — install the
+libraries next to Ansible and they are found.
 
-Substitute the interpreter Ansible actually reported. To pin it explicitly,
-set `ansible_python_interpreter` in `inventory.yml` or pass
-`-e ansible_python_interpreter=/usr/bin/python3.11`.
+That line is load-bearing in a venv. Ansible's *implicit* localhost gets
+`sys.executable` for free, but this inventory declares `localhost` explicitly,
+which falls back to interpreter discovery and lands on `/usr/bin/python3` — so
+without it you would install into the venv and Ansible would look outside it.
+
+If a module still reports a missing library, the error names the exact
+interpreter it used (`... on <host>'s Python /usr/bin/python3`). Install there,
+or point Ansible elsewhere with `-e ansible_python_interpreter=…`.
 
 ### Pointing at the right cluster
 
@@ -310,8 +341,8 @@ ansible-playbook demo-otel-logs.yml -e suffix=xipio -e demo_state=reverted
 ## Layout
 
 ```
-requirements.yml         Collections, for ansible-core 2.17+
-requirements-legacy.yml  Collections, for ansible-core 2.13-2.16 (RHEL 9)
+requirements.yml         Collections, for ansible-core 2.17 in a venv - the supported setup
+requirements-legacy.yml  Collections, fallback for system ansible-core 2.13-2.16
 
 aws-prereqs.yml       AWS only - buckets, IAM, access keys, credentials file
 cluster.yml           Everything cluster-side
@@ -379,9 +410,10 @@ Safe to re-run. Specifics worth knowing:
 
 | Symptom | Cause |
 |---|---|
-| "Failed to import the required Python library (botocore and boto3)" | Install them for the interpreter named in the message — see [Python libraries](#python-libraries). The message reports the exact path Ansible used. |
+| "Failed to import the required Python library (botocore and boto3)" | Not installed next to Ansible. The message names the exact interpreter used — see [Python libraries](#python-libraries). |
 | "Failed to import the required Python library (kubernetes)" | Same, for the cluster phase. |
-| "Collection amazon.aws does not support Ansible version 2.14.x" | Collections too new for your ansible-core. Install `requirements-legacy.yml --force`. |
+| Library is installed in your venv but Ansible still says it is missing | Ansible ran the module under a different interpreter. Check the path in the error against `which ansible-playbook`; the `ansible_python_interpreter` line in `inventory.yml` is what normally prevents this. |
+| "Collection amazon.aws does not support Ansible version 2.14.x" | You are on the system ansible-core, not the 2.17 venv. Activate it, or install `requirements-legacy.yml --force`. |
 | "Failed to get client due to Invalid kube-config file" / connection refused | No usable kubeconfig. Export `KUBECONFIG` or pass `-e kubeconfig=…`. Nothing has been created at that point. |
 | Preflight ran against the wrong cluster | Check the `Target:` line it prints. Pin it with `-e kube_context=…` rather than relying on current-context. |
 | Preflight: "must be set to a short lowercase string" | Pass `-e suffix=…`. |

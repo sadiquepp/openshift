@@ -1,21 +1,24 @@
 ---
 # ansible-galaxy collection install -r requirements.yml
 #
-# FOR MODERN ansible-core (2.17+). If `ansible --version` reports anything
-# older, use requirements-legacy.yml instead — see "Ansible and Python
-# versions" in README.md. `ansible-galaxy` does NOT take a collection's
-# `requires_ansible` into account when resolving, so on an older ansible-core
-# this file installs collections that then warn and misbehave rather than
-# failing cleanly.
+# THE SUPPORTED SETUP: ansible-core 2.17 in a virtualenv on Python 3.11 or 3.12.
+# See "Ansible and Python versions" in README.md for the venv commands.
 #
-# Both collections also need a Python library, installed for the SAME
-# interpreter Ansible runs (see README.md):
+# On ansible-core 2.13–2.16 (the RHEL 9 AppStream `ansible-core` package is
+# 2.14) use requirements-legacy.yml instead. `ansible-galaxy` does NOT consider
+# a collection's `requires_ansible` when resolving versions, so on an older
+# ansible-core this file installs collections that warn and then misbehave
+# rather than failing cleanly.
 #
+# Upper bounds are deliberate. Both collections currently declare
+# requires_ansible ">=2.17.0" / ">=2.16.0", but the next major of either may
+# raise that floor past 2.17 — and galaxy would install it anyway.
+#
+# Each collection also needs a Python library in the same venv:
 #   amazon.aws       ->  boto3, botocore      (the AWS phase)
 #   kubernetes.core  ->  kubernetes           (the cluster phase)
 collections:
   - name: amazon.aws
-    version: ">=8.0.0"      # requires ansible-core >=2.15; 10.x requires >=2.17
+    version: ">=10.0.0,<12.0.0"   # 11.4.0 requires ansible-core >=2.17.0
   - name: kubernetes.core
-    version: ">=5.0.0"      # 6.x requires ansible-core >=2.16
-  - name: community.general
+    version: ">=6.0.0,<7.0.0"     # 6.5.0 requires ansible-core >=2.16.0
