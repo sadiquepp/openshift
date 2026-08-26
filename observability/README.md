@@ -554,13 +554,13 @@ oc get pods -l app.kubernetes.io/component=logging \
 
 
 
-### Install Network Observability Operator
+## Network Observability
 
 Network Observability can be deployed in two shapes. **Decide which one you want before you start** —
 the operator install is identical, but the `FlowCollector` differs and only one of them needs
 storage.
 
-#### Choose a deployment mode
+### Choose a deployment mode
 
 
 |                                           | **Without Loki** (metrics only)                 | **With Loki** (full flow records)         |
@@ -593,7 +593,7 @@ export NETOBSERV_NAMESPACE=netobserv
 
 
 
-#### Install the operator
+### Install the operator
 
 These steps are the same for both paths.
 
@@ -677,7 +677,7 @@ oc create namespace $NETOBSERV_NAMESPACE --dry-run=client -o yaml | oc apply -f 
 Now follow **either** Path A **or** Path B below, then continue at
 [Verify the deployment](#verify-the-deployment).
 
-#### Path A: FlowCollector without Loki
+### Path A: FlowCollector without Loki
 
 No storage is required. The pipeline keeps only the Prometheus exporter, and the metrics are
 scraped by the existing cluster monitoring stack.
@@ -758,7 +758,7 @@ oc adm policy add-cluster-role-to-user netobserv-metrics-reader <user>
 You can switch to Path B later without reinstalling: create the LokiStack, then patch the
 FlowCollector as shown at the end of Path B.
 
-#### Path B: FlowCollector with Loki
+### Path B: FlowCollector with Loki
 
 - Decide where the flows LokiStack will live. If you are **not** deploying OpenShift Logging, put it
 in the same namespace as the flow collector components — this is the simplest layout and needs no
@@ -785,7 +785,7 @@ export NETOBSERV_LOKI_SECRET_NAME=netobserv-loki-s3-$SUFFIX
 
 
 
-##### Install the Loki Operator
+### Install the Loki Operator
 
 Skip this if you already installed the Loki Operator during the OpenShift Logging sections above —
 a single Loki Operator manages every LokiStack on the cluster.
@@ -835,7 +835,7 @@ oc get csv -n openshift-operators-redhat | grep loki
 
 
 
-##### Create the S3 bucket for the flows LokiStack
+### Create the S3 bucket for the flows LokiStack
 
 - Create the S3 bucket.
 
@@ -894,7 +894,7 @@ echo "NETOBSERV_AWS_SECRET_ACCESS_KEY: $NETOBSERV_AWS_SECRET_ACCESS_KEY"
 
 
 
-##### Create the LokiStack
+### Create the LokiStack
 
 - Create the secret for the S3 bucket.
 
@@ -947,7 +947,7 @@ oc get lokistack netobserv-loki -n $NETOBSERV_LOKI_NAMESPACE \
 
 
 
-##### Grant the operator access to the LokiStack CA
+### Grant the operator access to the LokiStack CA
 
 **Only needed when** `NETOBSERV_LOKI_NAMESPACE` **is different from** `NETOBSERV_NAMESPACE` — that is,
 the OpenShift Logging layout. The operator reads the LokiStack CA secret in the namespace where the
@@ -973,7 +973,7 @@ bound by default.
 If flowlogs-pipeline later logs certificate or `x509` errors against the Loki gateway, these two
 bindings are the first thing to check.
 
-##### Create the FlowCollector
+### Create the FlowCollector
 
 The `FlowCollector` is cluster-scoped and must be named `cluster`. Only one can exist per cluster.
 
@@ -1054,7 +1054,7 @@ oc patch flowcollector cluster --type=merge -p '{
 
 
 
-#### Verify the deployment
+### Verify the deployment
 
 - Verify the FlowCollector is ready.
 
@@ -1091,7 +1091,7 @@ oc get clusterrole | grep netobserv
 
 
 
-#### Install the console plugin
+### Install the console plugin
 
 Network Observability does **not** use a Cluster Observability Operator `UIPlugin`. The `UIPlugin`
 API only accepts the types `TroubleshootingPanel`, `DistributedTracing`, `Logging` and `Monitoring`
@@ -1146,7 +1146,7 @@ oc rollout status deployment/console -n openshift-console --timeout=5m
 
 
 
-#### Optional: enable the Troubleshooting Panel UIPlugin
+### Optional: enable the Troubleshooting Panel UIPlugin
 
 This is the Cluster Observability Operator plugin that *does* consume network flows. Korrel8r
 correlates signals across data stores — alerts, metrics, logs, netflows and cluster resources — so
@@ -1185,7 +1185,7 @@ oc get pods -n openshift-cluster-observability-operator
 
 The panel is reached from **Observe → Alerting**: open an alert and select **Troubleshooting Panel**.
 
-### Distributed Tracing
+## Distributed Tracing
 
 Distributed tracing is made up of two operators: **Tempo** stores and queries the traces, and the
 **Red Hat build of OpenTelemetry** provides the collector that receives spans from instrumented
@@ -1210,7 +1210,7 @@ export TEMPO_TENANT_ID=$(uuidgen | tr '[:upper:]' '[:lower:]')
 > themselves live in `openshift-tempo-operator` and `openshift-opentelemetry-operator`, which is
 > correct; it is the *workload* namespace that must not carry the prefix.
 
-#### Create the tracing namespace
+### Create the tracing namespace
 
 Both the TempoStack and the OpenTelemetry collector live here, and the S3 secret below is created
 in it — so this has to exist first.
@@ -1225,7 +1225,7 @@ oc create namespace $TRACING_NAMESPACE --dry-run=client -o yaml | oc apply -f -
 oc get namespace $TRACING_NAMESPACE
 ```
 
-#### Create the S3 bucket for Tempo
+### Create the S3 bucket for Tempo
 
 - Create the S3 bucket.
 
@@ -1317,7 +1317,7 @@ oc patch secret $TEMPO_SECRET_NAME -n $TRACING_NAMESPACE \
 
 
 
-#### Install Tempo Operator
+### Install Tempo Operator
 
 - Create the Namespace.
 
@@ -1390,7 +1390,7 @@ oc get csv -n openshift-tempo-operator
 
 
 
-#### Create the TempoStack
+### Create the TempoStack
 
 The `openshift` tenant mode puts the Tempo gateway in front of the query and ingest paths, so that
 OpenShift authentication and authorization are enforced per tenant.
@@ -1447,7 +1447,7 @@ oc get tempostack tempo -n $TRACING_NAMESPACE \
 
 
 
-#### Configure the UIPlugin for distributed tracing
+### Configure the UIPlugin for distributed tracing
 
 The Cluster Observability Operator installed earlier also provides the tracing console plugin.
 
@@ -1476,7 +1476,7 @@ oc get pods -n openshift-cluster-observability-operator
 
 The **Observe → Traces** page appears in the web console once the plugin pod is running.
 
-#### Install OpenTelemetry Collector Operator
+### Install OpenTelemetry Collector Operator
 
 - Create the Namespace.
 
@@ -1549,7 +1549,7 @@ oc get csv -n openshift-opentelemetry-operator
 
 
 
-#### Create the collector service account and RBAC
+### Create the collector service account and RBAC
 
 The collector authenticates to the Tempo gateway with its own service account token, so it needs
 write permission on the Tempo tenant.
@@ -1599,7 +1599,7 @@ oc apply -f otel-collector-rbac.yaml
 
 
 
-#### Create the OpenTelemetryCollector
+### Create the OpenTelemetryCollector
 
 The collector exposes OTLP receivers for the workloads and exports to the Tempo gateway. The
 `X-Scope-OrgID` header selects the Tempo tenant.
@@ -1704,7 +1704,7 @@ oc adm policy add-cluster-role-to-user tempostack-traces-reader <user>
 
 
 
-### Test workload: Online Boutique
+## Test workload: Online Boutique
 
 Everything above is plumbing. This section deploys a real workload through it and shows where each
 signal lands: logs in Loki, flows in Network Observability, metrics in Prometheus, traces in Tempo.
@@ -1724,7 +1724,7 @@ export APP_NAMESPACE=online-boutique
 export APP_DIR=test-workloads/online-boutique
 ```
 
-#### Deploy the application
+### Deploy the application
 
 Deploy with tracing already switched on — the `tracing` overlay is `default` plus the two
 OpenTelemetry environment variables, covered in the next subsection.
@@ -1735,7 +1735,7 @@ oc apply -k $APP_DIR/overlays/tracing
 
   Use `$APP_DIR/overlays/default` instead if you want the application without tracing.
 
-##### Deploying as a non-admin user
+### Deploying as a non-admin user
 
 Everything before this section needs cluster-admin — Subscriptions, the cluster-scoped
 `FlowCollector`, the `UIPlugin` resources, console plugin registration and user workload monitoring
@@ -1797,7 +1797,7 @@ oc get route frontend -n $APP_NAMESPACE -o jsonpath='https://{.spec.host}{"\n"}'
 Use `overlays/no-loadgenerator` instead if you want a quiet cluster for baseline measurements —
 but note that with no traffic there is nothing to trace, flow or graph.
 
-#### Enable tracing for the workload
+### Enable tracing for the workload
 
 The vendored `v0.10.6` release manifest ships **no** tracing configuration — upstream keeps it in a
 separate kustomize component. The services read two environment variables, and instrumentation
@@ -1867,7 +1867,7 @@ The instrumentation emits **traces only**. It exposes no Prometheus endpoint of 
 why the metrics sections below come from either the platform (cAdvisor / kube-state-metrics) or
 from spans (the spanmetrics connector).
 
-##### Reading a trace
+### Reading a trace
 
 A trace list entry looks like this — a root span, one badge per service with its span count, the
 total, and the wall-clock duration:
@@ -1929,7 +1929,7 @@ TraceQL queries that are useful against this workload:
 > it starts appearing — a single server span from the injected agent, nested under the `frontend`
 > client span that was already there.
 
-##### Worked example: an order placement
+### Worked example: an order placement
 
 Open a `checkoutservice` trace and the waterfall looks like this — a `frontend: POST` root of 27.5ms
 containing a serial chain inside `checkoutservice`:
@@ -1987,7 +1987,7 @@ Four readings that generalise to any application:
 oc set env deployment/paymentservice -n $APP_NAMESPACE --list | grep -E 'ENABLE_TRACING|OTEL|COLLECTOR'
 ```
 
-#### Auto-instrument a service with the Instrumentation CR
+### Auto-instrument a service with the Instrumentation CR
 
 Nothing so far has used an `Instrumentation` custom resource, and that is correct: the seven
 services above ship the OpenTelemetry SDK compiled in, so they only needed configuring. The
@@ -2130,7 +2130,7 @@ oc set env deployment/adservice -n $APP_NAMESPACE --list | grep JAVA_TOOL_OPTION
   frontend call rather than as a separate trace — that nesting is the trace context propagating from
   an SDK-instrumented service into an auto-instrumented one.
 
-##### Notes and limits
+### Notes and limits
 
 - **Go is impractical here.** Go auto-instrumentation is an eBPF sidecar, not an init container, and
   the pod must run with `privileged: true` and `runAsUser: 0`. That conflicts with `restricted-v2`,
@@ -2166,7 +2166,7 @@ oc patch deployment adservice -n $APP_NAMESPACE --type=json \
   -p '[{"op":"remove","path":"/spec/template/metadata/annotations/instrumentation.opentelemetry.io~1inject-java"}]'
 ```
 
-#### Analyze the application logs
+### Analyze the application logs
 
 Container stdout/stderr is already being collected — the `ClusterLogForwarder` created earlier
 forwards the `application` input for every namespace to `logging-loki`.
@@ -2231,7 +2231,7 @@ curl -sG -H 'X-Scope-OrgID: application' http://localhost:3100/loki/api/v1/label
 oc -n $APP_NAMESPACE logs -l app=frontend --tail=20
 ```
 
-#### How OpenTelemetry handles logs, and how that differs
+### How OpenTelemetry handles logs, and how that differs
 
 Nothing in this document collects logs through OpenTelemetry — the `Instrumentation` CR explicitly
 sets `OTEL_LOGS_EXPORTER: none`, because the collector has no logs pipeline and the agent's log
@@ -2285,7 +2285,7 @@ attaches the real trace ID to the record instead of relying on the app's log pat
 > metadata. Either accept the duplication for the correlation benefit, or stop the app writing to
 > stdout — do not silently ship both and then trust log-volume metrics.
 
-##### Demo: collecting and correlating `adservice` logs
+### Demo: collecting and correlating `adservice` logs
 
 `adservice` is the ideal subject. It logs at INFO on **every** request:
 
@@ -2448,7 +2448,7 @@ oc logs -n $TRACING_NAMESPACE deploy/otel-collector --tail=500 \
 > `logs` pipeline, or `/v1/logs` still returns 404; and `adservice` must have been restarted, since
 > the CR is read only at pod admission and a running pod ignores changes to it.
 
-##### What the demo actually proves
+### What the demo actually proves
 
 Compare the same log line arriving by the two paths. Query it in Loki, as collected by Vector:
 
@@ -2489,7 +2489,7 @@ That is the entire difference, and it is why the two paths coexist rather than c
 | Trace identity | Whatever the app printed — here, a broken placeholder | Read from the live span context |
 | Best for | Complete retention, searching all workloads | Pivoting from a slow trace to its log lines |
 
-##### Where these logs actually go
+### Where these logs actually go
 
 Nowhere, in the demo as written. `debug` is a terminal sink: it renders each record to the
 collector's stdout and that is the end of the pipeline. There is no store behind it and nothing to
@@ -2603,7 +2603,7 @@ oc patch opentelemetrycollector otel -n $TRACING_NAMESPACE --type=json -p '[
   In the console, the [Troubleshooting Panel](#optional-enable-the-troubleshooting-panel-uiplugin) is
   what consumes this correlation, pivoting between logs, traces, metrics and alerts.
 
-#### Observe the network flows
+### Observe the network flows
 
 Online Boutique is an unusually good netobserv subject: 11 services on gRPC means a dense,
 constantly-changing east-west call graph.
@@ -2648,7 +2648,7 @@ sum by (SrcK8S_Namespace) (
 sum(rate(netobserv_namespace_flows_total{DstK8S_Namespace="online-boutique"}[5m]))
 ```
 
-#### Metrics from native Prometheus
+### Metrics from native Prometheus
 
 The application exposes no `/metrics` endpoint, but the platform monitoring stack already scrapes
 cAdvisor and kube-state-metrics for every namespace, so per-container resource and health metrics
@@ -2692,7 +2692,7 @@ sum by (pod) (
 )
 ```
 
-#### What metrics OpenTelemetry collects
+### What metrics OpenTelemetry collects
 
 Two distinct sets, and neither comes from the application itself:
 
@@ -2748,7 +2748,7 @@ request-level metrics from trace data for an application that publishes none.
 >
 > with `K8S_NAMESPACE` and `K8S_POD` supplied from the downward API.
 
-##### How the pieces fit together
+### How the pieces fit together
 
 The most common misreading is that the collector *scrapes* Prometheus. It does not — the collector
 **exposes** metrics and Prometheus **pulls** them. Data flows one way through the collector and is
@@ -2839,7 +2839,7 @@ oc apply -f cluster-monitoring-config.yaml
 oc -n openshift-user-workload-monitoring rollout status deployment/prometheus-operator --timeout=5m
 ```
 
-##### Add the spanmetrics connector
+### Add the spanmetrics connector
 
 A connector sits between two pipelines: it consumes the trace pipeline as an exporter and feeds a
 metrics pipeline as a receiver, turning spans into RED metrics without touching the application.
@@ -2919,7 +2919,7 @@ EOF
 oc apply -f otel-collector-spanmetrics.yaml
 ```
 
-##### Scrape the collector
+### Scrape the collector
 
 The operator creates two Services: `otel-collector` for the receiver and exporter ports, and
 `otel-collector-monitoring` for the collector's own telemetry on 8888.
@@ -2999,7 +2999,7 @@ curl -s http://localhost:8889/metrics | grep -vE '^#' | cut -d'{' -f1 | sort -u
 
   Stop the tunnel with `kill %1` when done.
 
-##### Finding them in the console
+### Finding them in the console
 
 Work down this list — each step tells you which of the four moving parts has failed, and stops you
 hunting for a metric that was never scraped.
@@ -3057,7 +3057,7 @@ Two things that make metrics look missing when they are not:
 - **In the Developer perspective**, **Observe → Metrics** is scoped to the selected project. Select
   `tracing-system` there, or use the Administrator perspective, which queries across namespaces.
 
-##### The metrics you get
+### The metrics you get
 
 **Collector internal telemetry** (port 8888) — pipeline health, not application behaviour:
 
@@ -3142,13 +3142,13 @@ topk(10, histogram_quantile(0.95,
 This is the payoff of running spanmetrics next to Tempo: the metrics tell you *which* service
 slowed down, and the trace view tells you *why*, for the same request.
 
-#### Tear down the workload
+### Tear down the workload
 
 ```bash
 oc delete -k $APP_DIR/overlays/tracing
 ```
 
-### Clean up
+## Clean up
 
 Delete the OpenShift resources before removing the AWS resources, otherwise the operators keep
 writing to buckets that are being deleted.
