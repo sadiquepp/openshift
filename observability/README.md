@@ -2144,8 +2144,18 @@ oc get pod -n $APP_NAMESPACE -l app=adservice \
 ```
 
 ```bash
-oc set env deployment/adservice -n $APP_NAMESPACE --list | grep JAVA_TOOL_OPTIONS
+oc get pod -n $APP_NAMESPACE -l app=adservice \
+  -o jsonpath='{.items[0].spec.containers[0].env[?(@.name=="JAVA_TOOL_OPTIONS")].value}{"\n"}'
 ```
+
+> **Both of these read the Pod, not the Deployment.** `oc set env
+> deployment/adservice --list` returns nothing here, and that is correct rather
+> than a failure: the operator injects through a **mutating admission webhook**,
+> which runs when the Pod is created. The Deployment's own pod template is never
+> modified — which is the entire point of auto-instrumentation, since it means
+> nothing in your manifests or your image changed. Look at the Deployment and
+> you see the application exactly as you wrote it; look at the running Pod and
+> the agent is there.
 
 - Give it a minute of traffic, then look at **Observe → Traces** again. `adservice` now appears in
   the service list, and opening a `frontend` trace shows an `adservice` span nested under the
