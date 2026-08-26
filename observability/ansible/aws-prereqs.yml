@@ -19,5 +19,11 @@
 - name: Provision the AWS S3 backends for OpenShift observability
   hosts: localhost
   gather_facts: false
+
+  # Applies to every amazon.aws module. `omit` when empty, so the default
+  # botocore credential chain is used exactly as it would be otherwise.
+  module_defaults:
+    group/amazon.aws.aws:
+      profile: "{{ aws_profile if (aws_profile | default('') | length > 0) else omit }}"
   roles:
     - role: aws_backends

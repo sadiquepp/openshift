@@ -32,6 +32,20 @@ suffix: ""
 
 aws_region: ap-south-1
 
+# Named AWS profile to authenticate with. Empty means "use botocore's normal
+# chain", which is: module parameters, then the AWS_* environment variables,
+# then ~/.aws/credentials, then an instance role.
+#
+# Set this when the box has more than one set of credentials and you want to be
+# certain which one is used - environment variables silently outrank
+# ~/.aws/credentials, so a stale exported AWS_ACCESS_KEY_ID beats the profile
+# that actually works and fails with InvalidClientTokenId / InvalidAccessKeyId.
+# `aws configure list` shows which source won.
+#
+# Mutually exclusive with AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY being set:
+# unset those if you set this.
+aws_profile: ""
+
 # ── What to deploy ────────────────────────────────────────────────────────────
 logging_enabled: true
 netobserv_enabled: true

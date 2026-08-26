@@ -16,6 +16,35 @@
   ansible.builtin.set_fact:
     aws_account_number: "{{ _caller.account }}"
 
+- name: Report which AWS identity is being used
+  ansible.builtin.debug:
+    msg:
+      # Named before anything is created. This phase needs an administrative
+      # principal - if the ARN below is one of the least-privilege
+      # `*-loki-s3-*` / `tempo-s3-*` users this automation itself mints, the
+      # wrong credentials are in play and the first S3 or IAM call will fail.
+      - "AWS account : {{ aws_account_number }}"
+      - "Identity    : {{ _caller.arn | default('unknown') }}"
+      - "Region      : {{ aws_region }}"
+
+- name: Warn when credentials come from the environment
+  ansible.builtin.debug:
+    msg: >-
+      AWS_ACCESS_KEY_ID is set in the environment. Environment variables
+      OUTRANK ~/.aws/credentials and any `aws_profile` you set here, so the
+      identity above is the one they name. A common cause is having exported
+      a key this automation itself minted: those are least-privilege S3 users
+      scoped to a single bucket and cannot create buckets or IAM users.
+      (observability/README.md now prefixes them LOKI_ / NETOBSERV_ / TEMPO_
+      for exactly this reason, but an older copy of it exported the
+      unprefixed names.) If the identity above is not the administrator you
+      expected, run
+      `unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN`
+      and try again.
+  when: lookup('ansible.builtin.env', 'AWS_ACCESS_KEY_ID') | length > 0
+  # Deliberately a warning, not a failure: supplying admin credentials through
+  # the environment is perfectly normal in CI.
+
 - name: Read any credentials already minted by a previous run
   ansible.builtin.include_vars:
     file: "{{ s3_credentials_file }}"
