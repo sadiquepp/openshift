@@ -23,8 +23,12 @@
 
   # Connection settings for every kubernetes.core module, without repeating them
   # on each task. Both `omit` when empty, so the modules fall back to KUBECONFIG
-  # and then ~/.kube/config exactly as they would otherwise. k8s_json_patch is
-  # listed separately: it is not a member of the collection's `k8s` action group.
+  # and then ~/.kube/config exactly as they would otherwise.
+  #
+  # k8s_json_patch is listed separately because its membership of the `k8s`
+  # action group is version-dependent: it is absent in kubernetes.core 3.3.1
+  # (the legacy pin) and 6.1.0, and present from 6.5.0. The explicit entry is
+  # correct either way - a module-level default simply wins over a group one.
   module_defaults:
     group/kubernetes.core.k8s: &k8s_connection
       kubeconfig: "{{ kubeconfig if (kubeconfig | default('') | length > 0) else omit }}"
