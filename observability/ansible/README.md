@@ -1,0 +1,352 @@
+# Automating the observability runbook
+
+Ansible automation of [`../README.md`](../README.md) — the OpenShift Logging,
+Network Observability, distributed tracing and test workload sections, end to
+end, on a fresh connected cluster.
+
+The runbook stays the source of truth for *why* each resource looks the way it
+does. This directory is the executable form of it: same resources, same order,
+same caveats, with the waits and the idempotency that a copy-paste session does
+not give you.
+
+## Contents
+- [Why Ansible](#why-ansible)
+- [What it deploys](#what-it-deploys)
+- [Prerequisites](#prerequisites)
+  - [Pointing at the right cluster](#pointing-at-the-right-cluster)
+- [The two phases](#the-two-phases)
+  - [Phase 1 — AWS (an AWS admin can run this alone)](#phase-1--aws-an-aws-admin-can-run-this-alone)
+  - [Phase 2 — cluster](#phase-2--cluster)
+  - [Both at once](#both-at-once)
+- [Choosing Network Observability with or without Loki](#choosing-network-observability-with-or-without-loki)
+- [Variables](#variables)
+- [Running part of the stack](#running-part-of-the-stack)
+- [The OpenTelemetry log-correlation demo](#the-opentelemetry-log-correlation-demo)
+- [Layout](#layout)
+- [Where this deviates from the runbook](#where-this-deviates-from-the-runbook)
+- [Re-running and idempotency](#re-running-and-idempotency)
+- [Troubleshooting](#troubleshooting)
+- [Teardown](#teardown)
+
+## Why Ansible
+
+The runbook is a long sequence of `aws` and `oc` commands with ordering
+constraints, waits that are described in prose, and three near-identical S3
+backends. That is the shape Ansible is good at, and it is what the rest of this
+repository already uses.
+
+The specific things it buys here:
+
+- **The AWS phase separates cleanly.** `aws-prereqs.yml` touches nothing but
+  AWS, so an AWS admin with no kubeconfig can run it and hand over one file.
+- **Waits become real.** "Verify the CSV is created" in the runbook is a
+  `oc get csv` you run until it looks right. Here it is a retry loop with a
+  deadline, and the deadline failing tells you which operator got stuck.
+- **The Loki/no-Loki choice becomes one variable** instead of two divergent
+  paths you follow by hand.
+- **Re-running is safe.** Every task is an apply or a read-modify-write, and the
+  AWS phase reuses access keys it already minted rather than rotating them.
+
+Terraform was the alternative and is the wrong tool: two of the three layers
+here are Kubernetes custom resources whose readiness is a status condition, not
+a resource that either exists or does not.
+
+## What it deploys
+
+| Layer | Components |
+|---|---|
+| OpenShift Logging | Loki Operator, LokiStack on S3, Cluster Logging Operator, collector SA + RBAC, `ClusterLogForwarder`, `LogFileMetricExporter`, Logging `UIPlugin` |
+| Cluster Observability Operator | The operator behind all three console `UIPlugin`s |
+| Network Observability | Operator, `FlowCollector` (Path A **or** Path B), the flows LokiStack + cross-namespace CA rolebindings on Path B, console plugin registration, Troubleshooting Panel |
+| Distributed tracing | Tempo Operator, `TempoStack` on S3, DistributedTracing `UIPlugin`, OpenTelemetry Operator, collector SA + Tempo tenant RBAC, `OpenTelemetryCollector` with the spanmetrics connector, user workload monitoring, two `ServiceMonitor`s |
+| Test workload | Online Boutique via the `tracing` overlay, plus the `Instrumentation` CR and the `adservice` probe/resource patches that make auto-instrumentation work |
+
+The collector is deployed **with the spanmetrics connector from the start**. The
+runbook builds a traces-only collector first and replaces it later; there is no
+reason to deploy the intermediate one.
+
+## Prerequisites
+
+- A fresh **connected** OpenShift cluster with a **default StorageClass** and
+  enough headroom (two LokiStacks at `1x.pico`, a TempoStack, a collector, the
+  eBPF agent on every node, and 12 application Deployments).
+- `cluster-admin` on it — preflight checks by attempting a `SelfSubjectAccessReview`
+  for creating Subscriptions.
+- AWS credentials that can create S3 buckets, IAM policies, IAM users and access
+  keys. The usual `AWS_PROFILE` / `AWS_ACCESS_KEY_ID` environment works.
+- `oc` on `PATH`. It is used **only** to render the workload's kustomize overlay
+  and to check its own version — it never contacts the cluster, so `oc login` is
+  not a prerequisite.
+- Ansible, the collections, and the Python Kubernetes client:
+
+```bash
+ansible-galaxy collection install -r requirements.yml
+```
+
+```bash
+pip install kubernetes
+```
+
+### Pointing at the right cluster
+
+The `kubernetes.core` modules resolve the connection in this order:
+
+1. the `kubeconfig` / `context` module parameters — set from the `kubeconfig`
+   and `kube_context` variables,
+2. `K8S_AUTH_KUBECONFIG`,
+3. the Python client's default, which reads `KUBECONFIG` and otherwise falls
+   back to `~/.kube/config`'s current-context.
+
+So **if `~/.kube/config` already points at the target cluster, you need to do
+nothing.** Otherwise either export it in the usual way:
+
+```bash
+export KUBECONFIG=~/clusters/lab/auth/kubeconfig
+```
+
+or pass it as a variable, which is the better option in CI and when one
+`~/.kube/config` holds several clusters:
+
+```bash
+ansible-playbook cluster.yml -e suffix=xipio -e kubeconfig=~/clusters/lab/auth/kubeconfig
+```
+
+```bash
+ansible-playbook cluster.yml -e suffix=xipio -e kube_context=lab-admin
+```
+
+**`aws-prereqs.yml` needs none of this** — it never contacts a cluster, which is
+what lets an AWS admin run it.
+
+The failure worth guarding against is not a *missing* kubeconfig, which fails
+immediately and harmlessly. It is a *present* one whose current-context is the
+wrong cluster: everything here is cluster-wide and takes about 45 minutes to
+undo. So preflight prints the API server URL it resolved before creating
+anything:
+
+```
+Target:    https://api.lab.example.com:6443
+Version:   OpenShift 4.18.20
+Deploying: logging=True, netobserv=True (loki=True), tracing=True, workload=True
+```
+
+Read that line before you walk away from the terminal.
+
+## The two phases
+
+### Phase 1 — AWS (an AWS admin can run this alone)
+
+```bash
+ansible-playbook aws-prereqs.yml -e suffix=xipio -e aws_region=ap-south-1
+```
+
+Creates, per enabled component, an S3 bucket (encrypted, public access blocked),
+a least-privilege IAM policy scoped to that one bucket, a dedicated IAM user,
+and an access key. Writes them to `s3-credentials.yml`, mode `0600`,
+gitignored.
+
+That file is the entire handoff. Encrypt it if it has to travel:
+
+```bash
+ansible-vault encrypt s3-credentials.yml
+```
+
+Phase 2 reads an encrypted file transparently with `--ask-vault-pass`.
+
+> Pass the **same** component toggles to both phases. `-e netobserv_use_loki=false`
+> in phase 1 means no netobserv bucket is created; passing it only to phase 2
+> leaves an orphan bucket behind, and passing it only to phase 1 makes phase 2
+> fail preflight with a missing-credentials message.
+
+### Phase 2 — cluster
+
+```bash
+ansible-playbook cluster.yml -e suffix=xipio
+```
+
+Roughly 30–45 minutes on a healthy cluster, most of it waiting for operators to
+install and for the two LokiStacks and the TempoStack to come up.
+
+### Both at once
+
+When the same person holds the AWS credentials and the kubeconfig:
+
+```bash
+ansible-playbook site.yml -e suffix=xipio
+```
+
+## Choosing Network Observability with or without Loki
+
+One variable, on both phases:
+
+```bash
+# Path B - full flow records in a dedicated LokiStack on S3 (default)
+ansible-playbook site.yml -e suffix=xipio -e netobserv_use_loki=true
+```
+
+```bash
+# Path A - metrics only, no extra storage
+ansible-playbook site.yml -e suffix=xipio -e netobserv_use_loki=false
+```
+
+|                          | `false` — Path A | `true` — Path B |
+|---|---|---|
+| Extra AWS resources | none | one bucket + IAM user |
+| Observe → Network Traffic → Overview, Topology | yes | yes |
+| Topology scope | node / namespace / owner-workload | down to pod and IP |
+| Traffic flows table (raw records) | **no** | yes |
+| Troubleshooting Panel netflow correlation | nothing to correlate | yes |
+| Cost | baseline | ~45–65% more memory, ~10–20% more CPU |
+
+**Switching later is supported and does not reinstall anything.** Run
+`aws-prereqs.yml` again to mint the extra bucket, then `cluster.yml` again — the
+`FlowCollector` is cluster-scoped and singular, so re-applying it rewrites the
+`loki` block in place, which is exactly the patch the runbook describes.
+
+## Variables
+
+Everything lives in [`group_vars/all.yml`](group_vars/all.yml), commented. The
+ones worth knowing:
+
+| Variable | Default | Notes |
+|---|---|---|
+| `suffix` | — | **Required.** Makes bucket and IAM user names unique. S3 bucket names are globally unique across all of AWS. |
+| `kubeconfig` | `""` | Empty falls back to `KUBECONFIG`, then `~/.kube/config`. Ignored by the AWS phase. |
+| `kube_context` | `""` | Empty uses the kubeconfig's current-context. |
+| `aws_region` | `ap-south-1` | |
+| `netobserv_use_loki` | `true` | Path B / Path A. |
+| `storage_class_name` | `""` | Empty means "discover the cluster default". |
+| `logging_enabled` / `netobserv_enabled` / `tracing_enabled` / `workload_enabled` | `true` | Layer toggles. |
+| `adservice_autoinstrument` | `true` | The `Instrumentation` CR demo. Needed by the OTel log demo. |
+| `grant_users` | `[]` | OpenShift usernames to grant the reader roles to. Admins already pass. |
+| `loki_channel`, `cluster_logging_channel`, … | `stable-6.6`, `stable` | Operator channels. |
+| `logging_uiplugin_schema` | `viaq` | See [deviations](#where-this-deviates-from-the-runbook). |
+
+## Running part of the stack
+
+```bash
+ansible-playbook cluster.yml -e suffix=xipio --tags logging
+```
+
+Tags: `logging`, `netobserv`, `tracing`, `workload`, `coo`. Preflight is tagged
+`always` and runs regardless.
+
+Layers can also be switched off entirely, which is what you want if the cluster
+already has one of them:
+
+```bash
+ansible-playbook cluster.yml -e suffix=xipio -e logging_enabled=false
+```
+
+## The OpenTelemetry log-correlation demo
+
+The final part of [`../demo/README.md`](../demo/README.md) shows a log record
+carrying its own trace ID, which needs three changes made in order. They are off
+by default, because the `debug` exporter is loud enough to distort log volume on
+a shared cluster.
+
+```bash
+ansible-playbook demo-otel-logs.yml -e suffix=xipio
+```
+
+```bash
+ansible-playbook demo-otel-logs.yml -e suffix=xipio -e demo_state=reverted
+```
+
+## Layout
+
+```
+aws-prereqs.yml       AWS only - buckets, IAM, access keys, credentials file
+cluster.yml           Everything cluster-side
+site.yml              Both, in order
+demo-otel-logs.yml    Enable/revert the OTel log-correlation demo
+cleanup.yml           Teardown, guarded
+
+group_vars/all.yml    Every tunable, commented
+
+roles/
+  preflight           Fail early: suffix, cluster reachable, admin, StorageClass, credentials
+  aws_backends        One bucket + policy + user + key per component
+  olm_operator        Reusable: Namespace + OperatorGroup + Subscription + waits
+  lokistack           Reusable: S3 secret + LokiStack + wait (used for logs and for flows)
+  cluster_observability   The Cluster Observability Operator
+  openshift_logging   LokiStack, forwarder, collector RBAC, Logging UIPlugin
+  network_observability   Operator, Path A/B FlowCollector, console plugin, panel
+  distributed_tracing TempoStack, OTel collector + spanmetrics, UWM, ServiceMonitors
+  test_workload       Online Boutique + adservice auto-instrumentation
+```
+
+Two roles are deliberately generic. `olm_operator` installs all six operators,
+so the "wait until it is actually usable" logic — resolve the Subscription, read
+`status.currentCSV`, wait for that CSV to reach `Succeeded`, then wait for the
+CRDs to be `Established` — exists once. `lokistack` builds both LokiStacks, which
+differ only in tenant mode.
+
+## Where this deviates from the runbook
+
+Three places, each deliberate:
+
+1. **`logging_uiplugin_schema` defaults to `viaq`, not `otel`.** The
+   `ClusterLogForwarder` writes the default ViaQ data model, and the console
+   Logging plugin's `schema` has to agree with what is actually in Loki or its
+   namespace dropdown comes up empty. The runbook documents that trap under
+   *"Label names depend on the data model"* and offers both fixes; this picks the
+   one that leaves the console working. Set `-e logging_uiplugin_schema=otel` if
+   you switch the forwarder to the OTel model.
+
+2. **The collector ships with the spanmetrics connector immediately.** The
+   runbook creates a traces-only collector and replaces it several sections
+   later. The final state is identical.
+
+3. **The Tempo tenant ID is a deterministic UUIDv5** derived from `suffix`,
+   rather than a fresh `uuidgen`. A random ID would differ on every run and
+   rewrite the `TempoStack` each time.
+
+## Re-running and idempotency
+
+Safe to re-run. Specifics worth knowing:
+
+- **Access keys are not rotated.** If `s3-credentials.yml` holds a key that still
+  exists in IAM, it is reused. Otherwise, keys the file has no secret for are
+  deleted first (IAM allows two per user) and a fresh one is minted.
+- **`cluster-monitoring-config` is read-modify-written**, so an existing
+  Alertmanager or retention configuration survives having `enableUserWorkload`
+  added.
+- **Console plugin registration appends** to `spec.plugins` and only when
+  `netobserv-plugin` is missing, so `logging-view-plugin` and `monitoring-plugin`
+  are preserved and the console is not rolled on every run.
+- **`demo-otel-logs.yml` always restarts `adservice`** — that is the point of it,
+  since the `Instrumentation` CR is read only at pod admission.
+
+## Troubleshooting
+
+| Symptom | Cause |
+|---|---|
+| "Failed to get client due to Invalid kube-config file" / connection refused | No usable kubeconfig. Export `KUBECONFIG` or pass `-e kubeconfig=…`. Nothing has been created at that point. |
+| Preflight ran against the wrong cluster | Check the `Target:` line it prints. Pin it with `-e kube_context=…` rather than relying on current-context. |
+| Preflight: "must be set to a short lowercase string" | Pass `-e suffix=…`. |
+| Preflight: "No S3 credentials for the `x` backend" | Phase 1 was not run, was run with different toggles, or the file is vault-encrypted — add `--ask-vault-pass`. |
+| Preflight: "No StorageClass is marked default" | Mark one, or pass `-e storage_class_name=…`. |
+| "wait for the Subscription to resolve" times out | Almost always a wrong channel. `oc describe subscription <name> -n <ns>` and look for `ResolutionFailed`. |
+| A LokiStack never reaches Ready | Storage or credentials. `oc get pods -n <ns> -l app.kubernetes.io/instance=<stack>` — Pending means the StorageClass cannot bind, CrashLoop means the S3 credentials are wrong. |
+| `adservice` assertion: "did not inject the Java agent" | The OpenTelemetry operator's webhook is not running, or the `Instrumentation` CR is in the wrong namespace. |
+| Metrics missing in the console | `up{namespace="tracing-system"}` — no series means the `ServiceMonitor` selector does not match the Service, which varies by operator version. Compare against `oc get svc -n tracing-system --show-labels`. |
+
+## Teardown
+
+Cluster resources only:
+
+```bash
+ansible-playbook cleanup.yml -e suffix=xipio -e cleanup_confirm=yes
+```
+
+Cluster resources **and** the AWS buckets, users and policies:
+
+```bash
+ansible-playbook cleanup.yml -e suffix=xipio -e cleanup_confirm=yes -e cleanup_aws=yes
+```
+
+Cluster first, then AWS — deleting the buckets while the operators are still
+writing leaves them retrying against storage that is gone. Operators,
+Subscriptions and CSVs are left in place; removing them is rarely what you want
+mid-iteration and they cost nothing idle.

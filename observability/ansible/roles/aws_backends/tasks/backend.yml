@@ -1,0 +1,98 @@
+---
+# One S3 backend: bucket, least-privilege policy, dedicated IAM user, access key.
+# Called once per entry in `observability_backends`. `backend` is the loop var.
+
+- name: "{{ backend.key }}: create the S3 bucket"
+  amazon.aws.s3_bucket:
+    name: "{{ backend.bucket }}"
+    region: "{{ aws_region }}"
+    state: present
+    encryption: AES256
+    public_access: "{{ s3_public_access_block }}"
+    tags: "{{ aws_resource_tags | combine({'component': backend.key}) }}"
+
+- name: "{{ backend.key }}: create the IAM policy"
+  amazon.aws.iam_managed_policy:
+    name: "{{ backend.iam_name }}"
+    description: "Least-privilege access to s3://{{ backend.bucket }} for OpenShift observability"
+    policy: "{{ lookup('ansible.builtin.template', 'iam-policy.json.j2') }}"
+    state: present
+
+- name: "{{ backend.key }}: create the IAM user and attach the policy"
+  amazon.aws.iam_user:
+    name: "{{ backend.iam_name }}"
+    state: present
+    managed_policies:
+      - "arn:aws:iam::{{ aws_account_number }}:policy/{{ backend.iam_name }}"
+    # purge_policies stays false: never strip a policy an admin attached by hand.
+    purge_policies: false
+    tags: "{{ aws_resource_tags | combine({'component': backend.key}) }}"
+
+# ── Access key ────────────────────────────────────────────────────────────────
+# A secret access key is retrievable exactly once, at creation. So the rule is:
+# reuse the recorded key if it still exists in IAM, otherwise mint a fresh one
+# and delete the orphans first (IAM allows only two keys per user, and a key we
+# have no secret for is dead weight).
+
+- name: "{{ backend.key }}: list the access keys the IAM user already has"
+  amazon.aws.iam_access_key_info:
+    user_name: "{{ backend.iam_name }}"
+  register: _existing_keys
+  # NOTE: the module documents this return value as `access_key`, but it
+  # actually exits with `access_keys` (a list). Verified against amazon.aws
+  # 10.1.1, plugins/modules/iam_access_key_info.py.
+
+- name: "{{ backend.key }}: decide whether the recorded key is still usable"
+  ansible.builtin.set_fact:
+    _recorded: "{{ _minted[backend.key] | default({}) }}"
+  no_log: true
+
+- name: "{{ backend.key }}: check the recorded key against IAM"
+  ansible.builtin.set_fact:
+    _reuse_key: >-
+      {{ (_recorded.access_key_id | default('')) | length > 0
+         and (_recorded.secret_access_key | default('')) | length > 0
+         and (_recorded.access_key_id | default('')) in
+             (_existing_keys.access_keys | default([]) | map(attribute='access_key_id') | list) }}
+  no_log: true
+
+- name: "{{ backend.key }}: reusing the access key recorded by a previous run"
+  ansible.builtin.debug:
+    msg: "{{ backend.iam_name }}: existing access key still valid, not rotating."
+  when: _reuse_key | bool
+
+- name: "{{ backend.key }}: delete access keys we hold no secret for"
+  amazon.aws.iam_access_key:
+    user_name: "{{ backend.iam_name }}"
+    id: "{{ item.access_key_id }}"
+    state: absent
+  loop: "{{ _existing_keys.access_keys | default([]) }}"
+  loop_control:
+    label: "{{ item.access_key_id }}"
+  when: not (_reuse_key | bool)
+
+- name: "{{ backend.key }}: mint an access key"
+  amazon.aws.iam_access_key:
+    user_name: "{{ backend.iam_name }}"
+    state: present
+    active: true
+  register: _new_key
+  when: not (_reuse_key | bool)
+  no_log: true
+
+- name: "{{ backend.key }}: record the credentials"
+  ansible.builtin.set_fact:
+    _minted: >-
+      {{ _minted | combine({
+           backend.key: {
+             'bucket': backend.bucket,
+             'iam_user': backend.iam_name,
+             'region': aws_region,
+             'endpoint': 'https://s3.' ~ aws_region ~ '.amazonaws.com',
+             'access_key_id': (_recorded.access_key_id if (_reuse_key | bool)
+                               else _new_key.access_key.access_key_id),
+             'secret_access_key': (_recorded.secret_access_key if (_reuse_key | bool)
+                                   else _new_key.secret_access_key)
+           }
+         }) }}
+  no_log: true

@@ -1,0 +1,105 @@
+---
+# ═══════════════════════════════════════════════════════════════════════════════
+# The OpenTelemetry log-correlation demo (observability/demo/README.md, part 5).
+#
+#   Turn on:   ansible-playbook demo-otel-logs.yml -e suffix=xipio
+#   Revert:    ansible-playbook demo-otel-logs.yml -e suffix=xipio -e demo_state=reverted
+#
+# Three things have to line up, and this playbook does all three in order:
+#
+#   1. The Instrumentation CR must stop setting OTEL_LOGS_EXPORTER=none, so the
+#      injected Java agent bridges log4j2 and pushes records over OTLP.
+#   2. The collector must have a `logs` pipeline, or /v1/logs returns 404.
+#   3. adservice must be RESTARTED - the Instrumentation CR is read only at pod
+#      admission, so a running pod ignores changes to it.
+#
+# Revert when you are done. `verbosity: detailed` prints every record to the
+# collector's stdout, which Vector then ships to Loki - so each adservice line
+# lands in Loki twice while this is on.
+# ═══════════════════════════════════════════════════════════════════════════════
+- name: Toggle the OpenTelemetry log-correlation demo
+  hosts: localhost
+  gather_facts: false
+
+  # Connection settings for every kubernetes.core module, without repeating them
+  # on each task. Both `omit` when empty, so the modules fall back to KUBECONFIG
+  # and then ~/.kube/config exactly as they would otherwise. k8s_json_patch is
+  # listed separately: it is not a member of the collection's `k8s` action group.
+  module_defaults:
+    group/kubernetes.core.k8s: &k8s_connection
+      kubeconfig: "{{ kubeconfig if (kubeconfig | default('') | length > 0) else omit }}"
+      context: "{{ kube_context if (kube_context | default('') | length > 0) else omit }}"
+    kubernetes.core.k8s_json_patch: *k8s_connection
+
+  vars:
+    demo_state: enabled          # enabled | reverted
+    otel_logs_demo_enabled: "{{ demo_state == 'enabled' }}"
+
+  tasks:
+    - name: Validate the requested state
+      ansible.builtin.assert:
+        that:
+          - demo_state in ['enabled', 'reverted']
+        fail_msg: "demo_state must be `enabled` or `reverted`."
+        quiet: true
+
+    # Order matters on the way in and on the way out. Enabling: give the
+    # collector the pipeline BEFORE the agent starts exporting, or the first
+    # records 404. Reverting: stop the agent exporting BEFORE removing the
+    # pipeline, for the same reason.
+    - name: Re-apply the collector
+      ansible.builtin.include_role:
+        name: distributed_tracing
+        tasks_from: collector.yml
+      when: otel_logs_demo_enabled | bool
+
+    - name: Re-apply the Instrumentation CR
+      ansible.builtin.include_role:
+        name: test_workload
+        tasks_from: instrumentation.yml
+
+    - name: Re-apply the collector
+      ansible.builtin.include_role:
+        name: distributed_tracing
+        tasks_from: collector.yml
+      when: not (otel_logs_demo_enabled | bool)
+
+    - name: Restart adservice so it picks up the Instrumentation change
+      kubernetes.core.k8s:
+        state: patched
+        api_version: apps/v1
+        kind: Deployment
+        name: adservice
+        namespace: "{{ app_namespace }}"
+        definition:
+          spec:
+            template:
+              metadata:
+                annotations:
+                  # Same mechanism as `oc rollout restart`: changing the pod
+                  # template forces a new ReplicaSet, which re-runs admission
+                  # and therefore re-reads the Instrumentation CR.
+                  kubectl.kubernetes.io/restartedAt: "{{ now(utc=true).isoformat() }}"
+
+    - name: Wait for adservice
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        name: adservice
+        namespace: "{{ app_namespace }}"
+      register: _ad
+      retries: 60
+      delay: 10
+      until: >-
+        _ad.resources | length > 0
+        and (_ad.resources[0].status.readyReplicas | default(0)) > 0
+        and (_ad.resources[0].status.updatedReplicas | default(0))
+            == (_ad.resources[0].spec.replicas | default(-1))
+
+    - name: How to read the records
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'Demo ON. Follow the records with: oc logs -n ' ~ tracing_namespace ~
+             ' deploy/otel-collector -f | grep --line-buffered -E "Body: Str\\(received ad request|^Trace ID:|^Span ID:"'
+             if (otel_logs_demo_enabled | bool)
+             else 'Demo reverted. The logs pipeline, the debug exporter and the resource/demo processor are gone, and the agent is back to OTEL_LOGS_EXPORTER=none.' }}

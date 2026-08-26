@@ -1,0 +1,32 @@
+# Two ServiceMonitors, because the operator creates two Services:
+#   otel-collector             -> the spanmetrics prometheus exporter on :8889
+#   otel-collector-monitoring  -> the collector's own telemetry on :8888
+#
+# The selector labels the operator puts on those Services vary between versions.
+# If `up{namespace="{{ tracing_namespace }}"}` returns no series at all,
+# Prometheus never discovered the target - compare these selectors against
+# `oc get svc -n {{ tracing_namespace }} --show-labels`. That mismatch is the
+# most common failure here, and it is silent.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: otel-collector-internal
+  namespace: {{ tracing_namespace }}
+spec:
+  selector:
+    matchLabels:
+      operator.opentelemetry.io/collector-monitoring-service: "Exists"
+  endpoints:
+    - port: monitoring
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: otel-collector-spanmetrics
+  namespace: {{ tracing_namespace }}
+spec:
+  selector:
+    matchLabels:
+      operator.opentelemetry.io/collector-service-type: base
+  endpoints:
+    - port: promexporter

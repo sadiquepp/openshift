@@ -1,0 +1,15 @@
+---
+# ═══════════════════════════════════════════════════════════════════════════════
+# Both phases, one command - for when the same person holds the AWS credentials
+# and the kubeconfig.
+#
+#   ansible-playbook site.yml -e suffix=xipio
+#
+# Split the two if an AWS admin has to mint the keys for you: they run
+# aws-prereqs.yml and hand you s3-credentials.yml, you run cluster.yml.
+# ═══════════════════════════════════════════════════════════════════════════════
+- name: AWS prerequisites
+  ansible.builtin.import_playbook: aws-prereqs.yml
+
+- name: Cluster deployment
+  ansible.builtin.import_playbook: cluster.yml

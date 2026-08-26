@@ -1,0 +1,137 @@
+---
+# ── preflight ─────────────────────────────────────────────────────────────────
+# Fails early and loudly, before anything has been created, on the four things
+# that otherwise fail deep inside a role with an unhelpful message.
+
+- name: Require a suffix
+  ansible.builtin.assert:
+    that:
+      - suffix | default('') | length > 0
+      - suffix is match('^[a-z0-9][a-z0-9-]{1,30}$')
+    fail_msg: >-
+      `suffix` must be set to a short lowercase string, e.g.
+      -e suffix=xipio. It makes the S3 bucket and IAM user names unique
+      (bucket names are globally unique across all of AWS).
+    quiet: true
+
+- name: Check the cluster is reachable and read its version
+  kubernetes.core.k8s_info:
+    api_version: config.openshift.io/v1
+    kind: ClusterVersion
+    name: version
+  register: _cv
+  # This is also the connection test. If it fails with "Failed to get client
+  # due to Invalid kube-config file" or a connection refused, nothing has been
+  # created yet - point the modules at the right cluster with KUBECONFIG, or
+  # -e kubeconfig=... and -e kube_context=... See group_vars/all.yml.
+
+- name: Read the API server URL
+  kubernetes.core.k8s_info:
+    api_version: config.openshift.io/v1
+    kind: Infrastructure
+    name: cluster
+  register: _infra
+
+- name: Report which cluster is about to be changed
+  ansible.builtin.debug:
+    msg:
+      # Named explicitly, because everything below this point is cluster-wide
+      # and takes about 45 minutes to undo. A ~/.kube/config whose
+      # current-context is not the cluster you meant is a much easier mistake
+      # than having no kubeconfig at all.
+      - "Target:    {{ (_infra.resources[0].status.apiServerURL) | default('unknown') }}"
+      - "Version:   OpenShift {{ (_cv.resources[0].status.desired.version) | default('unknown') }}"
+      - "Deploying: logging={{ logging_enabled }}, netobserv={{ netobserv_enabled }}
+         (loki={{ netobserv_use_loki }}), tracing={{ tracing_enabled }},
+         workload={{ workload_enabled }}"
+
+- name: Confirm we are cluster-admin
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: authorization.k8s.io/v1
+      kind: SelfSubjectAccessReview
+      spec:
+        resourceAttributes:
+          group: operators.coreos.com
+          resource: subscriptions
+          verb: create
+  register: _ssar
+  changed_when: false
+
+- name: Fail if the current user cannot install operators
+  ansible.builtin.assert:
+    that:
+      - _ssar.result.status.allowed | default(true) | bool
+    fail_msg: >-
+      The current kubeconfig context cannot create Subscriptions. Everything up
+      to the test workload needs cluster-admin. Run `oc whoami` and log in as an
+      admin. (The workload itself does not - see the demo README.)
+    quiet: true
+
+# ── StorageClass ──────────────────────────────────────────────────────────────
+- name: List the StorageClasses
+  kubernetes.core.k8s_info:
+    api_version: storage.k8s.io/v1
+    kind: StorageClass
+  register: _scs
+  when: storage_class_name | length == 0
+
+- name: Detect the default StorageClass
+  ansible.builtin.set_fact:
+    storage_class_name: "{{ item.metadata.name }}"
+  loop: "{{ _scs.resources | default([]) }}"
+  loop_control:
+    label: "{{ item.metadata.name }}"
+  when:
+    - storage_class_name | length == 0
+    - (item.metadata.annotations | default({}))['storageclass.kubernetes.io/is-default-class']
+        | default('false') | string | lower == 'true'
+
+- name: Fail if there is no default StorageClass
+  ansible.builtin.assert:
+    that:
+      - storage_class_name | length > 0
+    fail_msg: >-
+      No StorageClass is marked default on this cluster, and `storage_class_name`
+      was not set. Loki and Tempo both need one. Either mark a default with
+      `oc patch storageclass <name> -p
+      '{"metadata":{"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'`
+      or pass -e storage_class_name=<name>.
+    quiet: true
+
+- name: Report the StorageClass in use
+  ansible.builtin.debug:
+    msg: "Using StorageClass {{ storage_class_name }} for Loki and Tempo."
+
+# ── S3 credentials ────────────────────────────────────────────────────────────
+- name: Load the credentials written by aws-prereqs.yml
+  ansible.builtin.include_vars:
+    file: "{{ s3_credentials_file }}"
+  when: s3_credentials_file is file
+  no_log: true
+
+- name: Fail if an enabled component has no S3 backend
+  ansible.builtin.assert:
+    that:
+      - (observability_s3_backends | default({}))[item.key] is defined
+      - (observability_s3_backends | default({}))[item.key].secret_access_key | default('') | length > 0
+    fail_msg: >-
+      No S3 credentials for the `{{ item.key }}` backend. Run aws-prereqs.yml
+      first (or have an AWS admin run it and hand you
+      {{ s3_credentials_file | basename }}). If the file is vault-encrypted, add
+      --ask-vault-pass.
+    quiet: true
+  loop: "{{ observability_backends }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when: item.enabled | bool
+
+- name: Check `oc` is on PATH
+  ansible.builtin.command: oc version --client
+  register: _oc
+  changed_when: false
+  failed_when: _oc.rc != 0
+  when: workload_enabled | bool
+  # Only the test workload needs the binary - it is rendered with `oc kustomize`.
+  # Everything else goes through the Kubernetes API directly.

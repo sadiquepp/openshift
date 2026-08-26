@@ -1,0 +1,73 @@
+---
+# Path B: a dedicated LokiStack in `openshift-network` tenant mode.
+
+- name: Install the Loki Operator
+  ansible.builtin.include_role:
+    name: olm_operator
+  vars:
+    olm_namespace: openshift-operators-redhat
+    olm_operator_group_name: loki-operator
+    olm_subscription_name: loki-operator
+    olm_channel: "{{ loki_channel }}"
+    olm_wait_for_crds:
+      - lokistacks.loki.grafana.com
+  # A single Loki Operator manages every LokiStack on the cluster, so this is a
+  # no-op when the logging role already installed it. Included unconditionally
+  # so Path B works with logging_enabled=false.
+
+- name: Create the flows LokiStack
+  ansible.builtin.include_role:
+    name: lokistack
+  vars:
+    lokistack_name: "{{ netobserv_lokistack_name }}"
+    lokistack_namespace: "{{ netobserv_loki_namespace }}"
+    lokistack_backend_key: netobserv
+    lokistack_tenant_mode: openshift-network
+
+# ── Cross-namespace CA access ─────────────────────────────────────────────────
+# Only needed when the LokiStack lives somewhere other than the flow collector
+# namespace - i.e. the "alongside OpenShift Logging" layout. The operator reads
+# the LokiStack CA secret where the LokiStack runs and writes a copy into the
+# namespace where flowlogs-pipeline runs, so the pipeline can verify the Loki
+# gateway certificate. Neither ClusterRole is bound by default; without these,
+# flowlogs-pipeline logs x509 errors against the gateway.
+
+- name: Let the operator read the LokiStack CA
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: RoleBinding
+      metadata:
+        name: secret-watcher
+        namespace: "{{ netobserv_loki_namespace }}"
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRole
+        name: netobserv-secret-watcher
+      subjects:
+        - kind: ServiceAccount
+          name: netobserv-controller-manager
+          namespace: openshift-netobserv-operator
+  when: netobserv_loki_namespace != netobserv_namespace
+
+- name: Let the operator write the CA copy next to flowlogs-pipeline
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: RoleBinding
+      metadata:
+        name: secret-creator
+        namespace: "{{ netobserv_namespace }}"
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRole
+        name: netobserv-secret-creator
+      subjects:
+        - kind: ServiceAccount
+          name: netobserv-controller-manager
+          namespace: openshift-netobserv-operator
+  when: netobserv_loki_namespace != netobserv_namespace

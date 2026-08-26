@@ -1,0 +1,77 @@
+---
+# ── test_workload ─────────────────────────────────────────────────────────────
+# Online Boutique: 11 stateless microservices in Go, C#, Node, Python and Java
+# talking gRPC, plus a load generator that keeps traffic flowing on its own so
+# the dashboards are never empty.
+#
+# Deployed as cluster-admin, which is what the requirement asks for and what
+# makes it a single `apply` - the overlay contains a Namespace object, and even
+# a self-provisioner cannot create one of those directly (that role grants
+# `create` on projectrequests, not namespaces). The workload itself needs no
+# privilege: the vendored base strips upstream's runAsUser/runAsGroup/fsGroup so
+# every container is admitted by restricted-v2.
+
+- name: Render the {{ app_overlay }} overlay
+  ansible.builtin.command:
+    cmd: "oc kustomize {{ app_dir }}/overlays/{{ app_overlay }}"
+  register: _rendered
+  changed_when: false
+  # `oc` has kustomize built in, so no separate kustomize binary is needed. The
+  # base uses JSON 6902 `remove` patches, so if a future upstream refresh drops
+  # any of those fields this FAILS here rather than silently no-opping.
+
+- name: Order the rendered objects so the Namespace is created first
+  ansible.builtin.set_fact:
+    _app_objects: >-
+      {{ (_rendered.stdout | from_yaml_all | list | selectattr('kind', 'equalto', 'Namespace') | list)
+         + (_rendered.stdout | from_yaml_all | list | rejectattr('kind', 'equalto', 'Namespace') | list) }}
+  # These are applied one object at a time rather than as one stream, so unlike
+  # `oc apply -f -` there is no guarantee the Namespace lands before the objects
+  # inside it. kustomize does emit it first today; this makes that a property of
+  # the automation rather than of kustomize's output ordering.
+
+- name: Apply the workload
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition: "{{ item }}"
+  loop: "{{ _app_objects }}"
+  loop_control:
+    label: "{{ item.kind }}/{{ item.metadata.name }}"
+
+- name: Wait for every deployment to become Available
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    namespace: "{{ app_namespace }}"
+  register: _app_deploys
+  retries: 60
+  delay: 10
+  until: >-
+    _app_deploys.resources | length > 0
+    and (_app_deploys.resources
+         | map(attribute='status.availableReplicas', default=0)
+         | select('lt', 1) | list | length) == 0
+  # `default=0` on the map matters: a Deployment that has not started yet has no
+  # status.availableReplicas at all, and without it this raises instead of
+  # retrying.
+
+- name: Auto-instrument adservice
+  ansible.builtin.include_tasks: instrumentation.yml
+  when:
+    - adservice_autoinstrument | bool
+    - tracing_enabled | bool
+
+- name: Read the frontend route
+  kubernetes.core.k8s_info:
+    api_version: route.openshift.io/v1
+    kind: Route
+    name: frontend
+    namespace: "{{ app_namespace }}"
+  register: _route
+
+- name: Report the workload URL
+  ansible.builtin.debug:
+    msg: >-
+      Online Boutique is up at https://{{ _route.resources[0].spec.host }} -
+      the load generator is already driving traffic through it.

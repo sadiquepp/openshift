@@ -1,0 +1,25 @@
+---
+# ── olm_operator ──────────────────────────────────────────────────────────────
+# Namespace + OperatorGroup + Subscription + "wait until it is actually usable".
+# Every operator in this stack is installed through this role, so the waiting
+# logic exists once.
+
+olm_namespace: ""                     # required
+olm_create_namespace: true
+olm_namespace_labels:
+  openshift.io/cluster-monitoring: "true"
+
+olm_operator_group_name: ""           # empty -> no OperatorGroup (e.g. openshift-operators)
+
+olm_subscription_name: ""             # required
+olm_package: "{{ olm_subscription_name }}"
+olm_channel: stable
+olm_source: "{{ operator_catalog_source | default('redhat-operators') }}"
+olm_source_namespace: openshift-marketplace
+
+# CRDs that must be Established before the next role creates custom resources.
+# Waiting on the CSV alone is not enough on a slow cluster: the CSV can report
+# Succeeded a moment before the API server has served the new CRD.
+olm_wait_for_crds: []
+
+olm_wait_timeout: "{{ operator_wait_timeout | default(600) }}"

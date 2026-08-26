@@ -1,0 +1,8 @@
+---
+# Everything runs from the control node: the AWS modules talk to the AWS API and
+# the kubernetes.core modules talk to the cluster in your current kubeconfig
+# context. There is no managed host to reach over SSH.
+all:
+  hosts:
+    localhost:
+      ansible_connection: local

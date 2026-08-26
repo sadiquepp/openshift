@@ -1,0 +1,52 @@
+---
+# ── aws_backends ──────────────────────────────────────────────────────────────
+# Creates one S3 bucket + IAM policy + IAM user + access key per enabled
+# component, then writes them all to a single credentials file.
+#
+# This role touches AWS ONLY. It never contacts the cluster, so an AWS admin can
+# run aws-prereqs.yml with no kubeconfig and hand the resulting file to whoever
+# runs cluster.yml.
+
+- name: Resolve the AWS account number
+  amazon.aws.aws_caller_info:
+    region: "{{ aws_region }}"
+  register: _caller
+
+- name: Record the account number
+  ansible.builtin.set_fact:
+    aws_account_number: "{{ _caller.account }}"
+
+- name: Read any credentials already minted by a previous run
+  ansible.builtin.include_vars:
+    file: "{{ s3_credentials_file }}"
+    name: _previous
+  when: s3_credentials_file is file
+  no_log: true
+
+- name: Start from what a previous run recorded
+  ansible.builtin.set_fact:
+    _minted: "{{ (_previous | default({})).observability_s3_backends | default({}) }}"
+  no_log: true
+
+- name: Provision each enabled backend
+  ansible.builtin.include_tasks: backend.yml
+  loop: "{{ observability_backends }}"
+  loop_control:
+    loop_var: backend
+    label: "{{ backend.key }}"
+  when: backend.enabled | bool
+
+- name: Write the credentials handoff file
+  ansible.builtin.template:
+    src: s3-credentials.yml.j2
+    dest: "{{ s3_credentials_file }}"
+    mode: "0600"
+  no_log: true
+
+- name: Summarise
+  ansible.builtin.debug:
+    msg: >-
+      Provisioned {{ _minted | length }} S3 backend(s):
+      {{ _minted.keys() | list | join(', ') }}.
+      Credentials written to {{ s3_credentials_file }} (mode 0600) - hand this
+      file to the cluster admin, then run cluster.yml.

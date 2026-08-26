@@ -1,0 +1,29 @@
+---
+# Applied both by main.yml and, on its own, by demo-otel-logs.yml - which is why
+# it is a separate file. The only difference between the two calls is
+# `otel_logs_demo_enabled`.
+
+- name: Create the OpenTelemetryCollector
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition: "{{ lookup('ansible.builtin.template', 'otel-collector.yaml.j2') | from_yaml }}"
+  register: _otel_applied
+
+- name: Wait for the collector to roll out
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    name: "{{ otel_collector_name }}-collector"
+    namespace: "{{ tracing_namespace }}"
+  register: _otel_deploy
+  retries: 40
+  delay: 10
+  until: >-
+    _otel_deploy.resources | length > 0
+    and (_otel_deploy.resources[0].status.readyReplicas | default(0)) > 0
+    and (_otel_deploy.resources[0].status.updatedReplicas | default(0))
+        == (_otel_deploy.resources[0].spec.replicas | default(-1))
+  # The operator names the Deployment <collector name>-collector, so `otel`
+  # becomes `otel-collector`. Its Services are `otel-collector` (receivers and
+  # the prometheus exporter port) and `otel-collector-monitoring` (:8888).

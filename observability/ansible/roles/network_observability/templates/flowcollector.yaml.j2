@@ -1,0 +1,45 @@
+apiVersion: flows.netobserv.io/v1beta2
+kind: FlowCollector
+metadata:
+  name: cluster
+spec:
+  namespace: {{ netobserv_namespace }}
+  deploymentModel: Direct
+  agent:
+    type: eBPF
+    ebpf:
+      sampling: {{ netobserv_sampling | default(50) }}
+      logLevel: info
+      privileged: false
+      resources:
+        requests:
+          cpu: 100m
+          memory: 50Mi
+        limits:
+          memory: 800Mi
+  processor:
+    logTypes: Flows
+    logLevel: info
+    resources:
+      requests:
+        cpu: 100m
+        memory: 100Mi
+      limits:
+        memory: 800Mi
+{% if netobserv_use_loki | bool %}
+  loki:
+    enable: true
+    mode: LokiStack
+    lokiStack:
+      name: {{ netobserv_lokistack_name }}
+      namespace: {{ netobserv_loki_namespace }}
+{% else %}
+  # Path A: no flow store. The pipeline keeps only the Prometheus exporter and
+  # the existing cluster monitoring stack scrapes it. No Traffic flows table.
+  loki:
+    enable: false
+  prometheus:
+    querier:
+      enable: true
+      mode: Auto
+{% endif %}
