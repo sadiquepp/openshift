@@ -1,10 +1,4 @@
-## OpenShift Logging
-
-This Document describes the pre-requisites for installing and configuring the OpenShift Logging using AWS S3 as the storage backend.
-
-It then extends that into a full observability stack — Network Observability, distributed tracing
-with Tempo and OpenTelemetry — and drives the whole thing with a test workload so each signal can be
-followed end to end.
+# OpenShift Observability
 
 ## Contents
 
@@ -59,6 +53,13 @@ followed end to end.
     - [The metrics you get](#the-metrics-you-get)
   - [Tear down the workload](#tear-down-the-workload)
 - [Clean up](#clean-up)
+## OpenShift Logging
+
+This Document describes the pre-requisites for installing and configuring the OpenShift Logging using AWS S3 as the storage backend.
+
+It then extends that into a full observability stack — Network Observability, distributed tracing
+with Tempo and OpenTelemetry — and drives the whole thing with a test workload so each signal can be
+followed end to end.
 
 ### Pre-requisites
 
