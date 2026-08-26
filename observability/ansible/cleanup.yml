@@ -1,0 +1,128 @@
+---
+# ═══════════════════════════════════════════════════════════════════════════════
+# Teardown. DESTRUCTIVE - both guards are deliberate.
+#
+#   Cluster resources only:
+#     ansible-playbook cleanup.yml -e suffix=xipio -e cleanup_confirm=yes
+#
+#   Cluster resources AND the AWS buckets, IAM users and policies:
+#     ansible-playbook cleanup.yml -e suffix=xipio -e cleanup_confirm=yes \
+#                                  -e cleanup_aws=yes
+#
+# Cluster first, then AWS - deleting the buckets while the operators are still
+# writing to them leaves them stuck retrying against storage that is gone.
+# Operators, Subscriptions and CSVs are left in place: removing them is rarely
+# what you want mid-iteration, and they cost nothing idle.
+# ═══════════════════════════════════════════════════════════════════════════════
+- name: Tear down the observability stack
+  hosts: localhost
+  gather_facts: false
+
+  # Connection settings for every kubernetes.core module, without repeating them
+  # on each task. Both `omit` when empty, so the modules fall back to KUBECONFIG
+  # and then ~/.kube/config exactly as they would otherwise. k8s_json_patch is
+  # listed separately: it is not a member of the collection's `k8s` action group.
+  module_defaults:
+    group/kubernetes.core.k8s: &k8s_connection
+      kubeconfig: "{{ kubeconfig if (kubeconfig | default('') | length > 0) else omit }}"
+      context: "{{ kube_context if (kube_context | default('') | length > 0) else omit }}"
+    kubernetes.core.k8s_json_patch: *k8s_connection
+
+  vars:
+    cleanup_confirm: "no"
+    cleanup_aws: "no"
+
+  tasks:
+    - name: Require explicit confirmation
+      ansible.builtin.assert:
+        that:
+          - cleanup_confirm | string | lower in ['yes', 'true']
+        fail_msg: >-
+          Refusing to delete anything without -e cleanup_confirm=yes.
+        quiet: true
+
+    - name: Delete the test workload
+      kubernetes.core.k8s:
+        state: absent
+        api_version: v1
+        kind: Namespace
+        name: "{{ app_namespace }}"
+        wait: true
+        wait_timeout: 300
+
+    - name: Delete the custom resources
+      kubernetes.core.k8s:
+        state: absent
+        api_version: "{{ item.api_version }}"
+        kind: "{{ item.kind }}"
+        name: "{{ item.name }}"
+        namespace: "{{ item.namespace | default(omit) }}"
+      loop:
+        - { api_version: "flows.netobserv.io/v1beta2", kind: FlowCollector, name: cluster }
+        - { api_version: "opentelemetry.io/v1beta1", kind: OpenTelemetryCollector, name: "{{ otel_collector_name }}", namespace: "{{ tracing_namespace }}" }
+        - { api_version: "tempo.grafana.com/v1alpha1", kind: TempoStack, name: "{{ tempo_stack_name }}", namespace: "{{ tracing_namespace }}" }
+        - { api_version: "observability.openshift.io/v1", kind: ClusterLogForwarder, name: instance, namespace: "{{ logging_namespace }}" }
+        - { api_version: "logging.openshift.io/v1alpha1", kind: LogFileMetricExporter, name: instance, namespace: "{{ logging_namespace }}" }
+        - { api_version: "loki.grafana.com/v1", kind: LokiStack, name: "{{ logging_lokistack_name }}", namespace: "{{ logging_namespace }}" }
+        - { api_version: "loki.grafana.com/v1", kind: LokiStack, name: "{{ netobserv_lokistack_name }}", namespace: "{{ netobserv_loki_namespace }}" }
+        - { api_version: "observability.openshift.io/v1alpha1", kind: UIPlugin, name: logging }
+        - { api_version: "observability.openshift.io/v1alpha1", kind: UIPlugin, name: distributed-tracing }
+        - { api_version: "observability.openshift.io/v1alpha1", kind: UIPlugin, name: troubleshooting-panel }
+      loop_control:
+        label: "{{ item.kind }}/{{ item.name }}"
+
+    - name: Delete the AWS resources
+      when: cleanup_aws | string | lower in ['yes', 'true']
+      block:
+        - name: List the access keys for each IAM user
+          amazon.aws.iam_access_key_info:
+            user_name: "{{ item.iam_name }}"
+          loop: "{{ observability_backends }}"
+          loop_control:
+            label: "{{ item.iam_name }}"
+          when: item.enabled | bool
+          register: _keys
+          failed_when: false
+
+        - name: Delete the access keys
+          amazon.aws.iam_access_key:
+            user_name: "{{ item.0.item.iam_name }}"
+            id: "{{ item.1.access_key_id }}"
+            state: absent
+          loop: "{{ _keys.results | default([]) | subelements('access_keys', skip_missing=True) }}"
+          loop_control:
+            label: "{{ item.1.access_key_id }}"
+
+        - name: Delete the IAM users
+          amazon.aws.iam_user:
+            name: "{{ item.iam_name }}"
+            state: absent
+          loop: "{{ observability_backends }}"
+          loop_control:
+            label: "{{ item.iam_name }}"
+          when: item.enabled | bool
+
+        - name: Delete the IAM policies
+          amazon.aws.iam_managed_policy:
+            name: "{{ item.iam_name }}"
+            state: absent
+          loop: "{{ observability_backends }}"
+          loop_control:
+            label: "{{ item.iam_name }}"
+          when: item.enabled | bool
+
+        - name: Empty and delete the S3 buckets
+          amazon.aws.s3_bucket:
+            name: "{{ item.bucket }}"
+            region: "{{ aws_region }}"
+            state: absent
+            force: true          # deletes the objects too, or the bucket delete fails
+          loop: "{{ observability_backends }}"
+          loop_control:
+            label: "{{ item.bucket }}"
+          when: item.enabled | bool
+
+        - name: Remove the stale credentials file
+          ansible.builtin.file:
+            path: "{{ s3_credentials_file }}"
+            state: absent

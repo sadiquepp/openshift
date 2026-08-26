@@ -1,0 +1,3 @@
+# Minted AWS access keys. Never commit.
+s3-credentials.yml
+s3-credentials.yml.vault

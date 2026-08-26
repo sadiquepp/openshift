@@ -52,6 +52,13 @@
   - [Tear down the workload](#tear-down-the-workload)
 - [Clean up](#clean-up)
 
+> **Automated version.** Everything in this document is automated in
+> [`ansible/`](ansible/) — an AWS phase an AWS admin can run alone, a cluster
+> phase, and the Network Observability Loki/no-Loki choice as a single variable.
+> [`demo/README.md`](demo/README.md) is the walkthrough for showing the result.
+> This document remains the source of truth for *why* each resource looks the
+> way it does.
+
 ## OpenShift Logging
 
 This Document describes the pre-requisites for installing and configuring the OpenShift Logging using AWS S3 as the storage backend.

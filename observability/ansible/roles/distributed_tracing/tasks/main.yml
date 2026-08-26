@@ -1,0 +1,196 @@
+---
+# ── distributed_tracing ───────────────────────────────────────────────────────
+# Tempo stores and queries traces; the Red Hat build of OpenTelemetry provides
+# the collector that receives spans and forwards them to Tempo.
+#
+# NOTE the namespace. Neither the TempoStack nor the collector may live in an
+# `openshift-*` namespace: monitoring for user-defined projects deliberately
+# skips that prefix, so a ServiceMonitor there is silently ignored and the
+# collector metrics never get scraped. The operators themselves are in
+# openshift-tempo-operator / openshift-opentelemetry-operator, which is correct;
+# it is the workload namespace that must not carry the prefix.
+
+- name: Create the tracing namespace
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ tracing_namespace }}"
+
+- name: Create the S3 secret for Tempo
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: "{{ tempo_bucket_name }}"
+        namespace: "{{ tracing_namespace }}"
+      type: Opaque
+      stringData:
+        # Two differences from the LokiStack secrets: the key is `bucket`, not
+        # `bucketnames`, and there must be NO `region`.
+        #
+        # The Tempo operator infers the credential type from which keys are
+        # present. endpoint + access_key_id + access_key_secret means static
+        # credentials; region + role_arn means STS. Supplying region alongside
+        # the static keys puts the secret in both sets at once and the
+        # TempoStack is rejected at admission with "storage secret contains
+        # fields for long lived and short lived configuration". The region is
+        # already implicit in the endpoint hostname.
+        bucket: "{{ observability_s3_backends.tempo.bucket }}"
+        endpoint: "{{ observability_s3_backends.tempo.endpoint }}"
+        access_key_id: "{{ observability_s3_backends.tempo.access_key_id }}"
+        access_key_secret: "{{ observability_s3_backends.tempo.secret_access_key }}"
+  no_log: true
+
+- name: Drop a stale `region` key from the Tempo secret
+  kubernetes.core.k8s_json_patch:
+    api_version: v1
+    kind: Secret
+    name: "{{ tempo_bucket_name }}"
+    namespace: "{{ tracing_namespace }}"
+    patch:
+      - op: remove
+        path: /data/region
+  failed_when: false
+  changed_when: false
+  # `apply` above merges rather than replaces, so a `region` left behind by an
+  # earlier hand-run of the runbook would survive and keep the TempoStack
+  # rejected. Removing a key that is not there is not an error worth stopping
+  # for, hence failed_when: false.
+
+- name: Install the Tempo Operator
+  ansible.builtin.include_role:
+    name: olm_operator
+  vars:
+    olm_namespace: openshift-tempo-operator
+    olm_operator_group_name: openshift-tempo-operator
+    olm_subscription_name: tempo-product
+    olm_channel: "{{ tempo_channel }}"
+    olm_wait_for_crds:
+      - tempostacks.tempo.grafana.com
+
+- name: Create the TempoStack
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition:
+      apiVersion: tempo.grafana.com/v1alpha1
+      kind: TempoStack
+      metadata:
+        name: "{{ tempo_stack_name }}"
+        namespace: "{{ tracing_namespace }}"
+      spec:
+        storage:
+          secret:
+            name: "{{ tempo_bucket_name }}"
+            type: s3
+        storageSize: "{{ tempo_storage_size }}"
+        storageClassName: "{{ storage_class_name }}"
+        resources:
+          total:
+            limits:
+              cpu: 2000m
+              memory: 4Gi
+        tenants:
+          # `openshift` mode puts the Tempo gateway in front of the query and
+          # ingest paths, so OpenShift authn/authz is enforced per tenant.
+          mode: openshift
+          authentication:
+            - tenantName: "{{ tempo_tenant_name }}"
+              tenantId: "{{ tempo_tenant_id }}"
+        template:
+          gateway:
+            enabled: true
+          queryFrontend:
+            jaegerQuery:
+              enabled: true
+
+- name: Wait for the TempoStack to be Ready
+  kubernetes.core.k8s_info:
+    api_version: tempo.grafana.com/v1alpha1
+    kind: TempoStack
+    name: "{{ tempo_stack_name }}"
+    namespace: "{{ tracing_namespace }}"
+  register: _tempo
+  retries: 60
+  delay: 15
+  until: >-
+    _tempo.resources | length > 0
+    and (_tempo.resources[0].status.conditions | default([]))
+        | selectattr('type', 'equalto', 'Ready')
+        | selectattr('status', 'equalto', 'True')
+        | list | length > 0
+
+- name: Configure the console DistributedTracing UIPlugin
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition:
+      apiVersion: observability.openshift.io/v1alpha1
+      kind: UIPlugin
+      metadata:
+        name: distributed-tracing
+      spec:
+        type: DistributedTracing
+
+- name: Install the OpenTelemetry Operator
+  ansible.builtin.include_role:
+    name: olm_operator
+  vars:
+    olm_namespace: openshift-opentelemetry-operator
+    olm_operator_group_name: openshift-opentelemetry-operator
+    olm_subscription_name: opentelemetry-product
+    olm_channel: "{{ otel_channel }}"
+    olm_wait_for_crds:
+      - opentelemetrycollectors.opentelemetry.io
+      - instrumentations.opentelemetry.io
+
+- name: Create the collector ServiceAccount and Tempo write RBAC
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition: "{{ item }}"
+  loop: "{{ lookup('ansible.builtin.template', 'otel-rbac.yaml.j2') | from_yaml_all | list }}"
+  loop_control:
+    label: "{{ item.kind }}/{{ item.metadata.name }}"
+
+- name: Enable user workload monitoring
+  ansible.builtin.include_tasks: user_workload_monitoring.yml
+
+- name: Create the OpenTelemetryCollector
+  ansible.builtin.include_tasks: collector.yml
+
+- name: Scrape the collector
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition: "{{ item }}"
+  loop: "{{ lookup('ansible.builtin.template', 'servicemonitors.yaml.j2') | from_yaml_all | list }}"
+  loop_control:
+    label: "{{ item.kind }}/{{ item.metadata.name }}"
+
+- name: Grant non-admin users the trace reader role
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: "tempostack-traces-reader:{{ item }}"
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRole
+        name: tempostack-traces-reader
+      subjects:
+        - kind: User
+          apiGroup: rbac.authorization.k8s.io
+          name: "{{ item }}"
+  loop: "{{ grant_users }}"
+  when: grant_users | length > 0

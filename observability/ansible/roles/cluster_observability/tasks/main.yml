@@ -1,0 +1,20 @@
+---
+# ── cluster_observability ─────────────────────────────────────────────────────
+# The Cluster Observability Operator provides the console UIPlugins: Logging,
+# DistributedTracing and TroubleshootingPanel. Each feature role creates its own
+# UIPlugin; this role only installs the operator, once, before them.
+#
+# It subscribes in `openshift-operators`, which already has a global
+# OperatorGroup - hence no OperatorGroup and no namespace creation here.
+
+- name: Install the Cluster Observability Operator
+  ansible.builtin.include_role:
+    name: olm_operator
+  vars:
+    olm_namespace: openshift-operators
+    olm_create_namespace: false
+    olm_operator_group_name: ""
+    olm_subscription_name: cluster-observability-operator
+    olm_channel: "{{ coo_channel }}"
+    olm_wait_for_crds:
+      - uiplugins.observability.openshift.io

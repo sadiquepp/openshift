@@ -1,0 +1,18 @@
+---
+# Overridden from group_vars/all.yml; repeated here so the role is usable alone.
+aws_region: ap-south-1
+observability_backends: []
+s3_credentials_file: "{{ playbook_dir }}/s3-credentials.yml"
+
+# Block all public access on the buckets this role creates. There is no reason
+# for a log or trace bucket to be reachable from the internet.
+s3_public_access_block:
+  block_public_acls: true
+  block_public_policy: true
+  ignore_public_acls: true
+  restrict_public_buckets: true
+
+# Tags applied to every bucket and IAM user, so an admin can find and audit them.
+aws_resource_tags:
+  managed-by: ansible
+  purpose: openshift-observability

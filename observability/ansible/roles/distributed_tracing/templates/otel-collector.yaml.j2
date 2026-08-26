@@ -1,0 +1,101 @@
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: {{ otel_collector_name }}
+  namespace: {{ tracing_namespace }}
+spec:
+  mode: deployment
+  serviceAccount: otel-collector
+  ports:
+    # Publishes the prometheus exporter's listener on the generated Service
+    # under a NAME. Without this the listener is reachable only inside the pod,
+    # and the ServiceMonitor has no port to reference.
+    - name: promexporter
+      port: 8889
+      protocol: TCP
+  config:
+    extensions:
+      bearertokenauth:
+        filename: "/var/run/secrets/kubernetes.io/serviceaccount/token"
+    receivers:
+      otlp:
+        protocols:
+          grpc: {}    # :4317 - the compiled-in SDKs use this
+          http: {}    # :4318 - the injected auto-instrumentation agents use this
+    processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_percentage: 50
+        spike_limit_percentage: 30
+      batch: {}
+{% if otel_logs_demo_enabled | bool %}
+      # Demo only. Exists to make the processing step visible: every log record
+      # gains a `cluster` attribute on its way through the pipeline.
+      resource/demo:
+        attributes:
+          - key: cluster
+            value: {{ otel_logs_demo_cluster_attribute | default('lab') }}
+            action: insert
+{% endif %}
+    connectors:
+      # A connector is an exporter on one pipeline and a receiver on the next.
+      # This one counts spans and records their durations, manufacturing RED
+      # metrics for an application that exposes no /metrics endpoint of its own.
+      spanmetrics:
+        metrics_flush_interval: 15s
+        histogram:
+          explicit:
+            buckets: [10ms, 50ms, 100ms, 250ms, 500ms, 1s, 5s]
+        dimensions:
+          - name: http.method
+          - name: http.status_code
+    exporters:
+      otlp:
+        endpoint: tempo-{{ tempo_stack_name }}-gateway.{{ tracing_namespace }}.svc.cluster.local:8090
+        tls:
+          insecure: false
+          ca_file: "/var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt"
+        auth:
+          authenticator: bearertokenauth
+        headers:
+          # Selects the Tempo tenant.
+          X-Scope-OrgID: "{{ tempo_tenant_name }}"
+      prometheus:
+        # Despite the name this pushes nothing. It opens an HTTP listener on
+        # 0.0.0.0:8889, serves /metrics in Prometheus text format, and waits for
+        # user workload monitoring to pull. (The prometheus *receiver* does the
+        # opposite; same name, opposite direction.)
+        endpoint: "0.0.0.0:8889"
+        resource_to_telemetry_conversion:
+          # Promotes OTel resource attributes to Prometheus labels, so the
+          # spanmetrics series can carry pod/namespace identity and be joined to
+          # the container_* series.
+          enabled: true
+{% if otel_logs_demo_enabled | bool %}
+      debug:
+        # Terminal sink: renders each record to the collector's own stdout and
+        # that is the end of the pipeline. Fine for showing what a record
+        # contains, useless for storing it. `detailed` is loud - the collector's
+        # stdout is itself collected by Vector, so every adservice line reaches
+        # Loki twice while this is on.
+        verbosity: detailed
+{% endif %}
+    service:
+      extensions: [bearertokenauth]
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          # Forked: the same spans go to Tempo for storage AND into the
+          # spanmetrics connector.
+          exporters: [otlp, spanmetrics]
+        metrics:
+          receivers: [spanmetrics]
+          processors: [memory_limiter, batch]
+          exporters: [prometheus]
+{% if otel_logs_demo_enabled | bool %}
+        logs:
+          receivers: [otlp]
+          processors: [memory_limiter, resource/demo, batch]
+          exporters: [debug]
+{% endif %}

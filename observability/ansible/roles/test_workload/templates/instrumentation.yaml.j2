@@ -1,0 +1,37 @@
+apiVersion: opentelemetry.io/v1alpha1
+kind: Instrumentation
+metadata:
+  name: online-boutique
+  namespace: {{ app_namespace }}
+spec:
+  exporter:
+    # The injected agents default to OTLP over HTTP, which is port 4318 on the
+    # collector - not the 4317 the compiled-in SDKs use.
+    endpoint: http://otel-collector.{{ tracing_namespace }}.svc.cluster.local:4318
+  propagators:
+    - tracecontext
+    - baggage
+  sampler:
+    type: parentbased_traceidratio
+    argument: "1"
+  env:
+    # The Java agent exports traces, metrics AND logs by default. The collector
+    # serves only the pipelines it is configured with, so a signal nothing is
+    # listening for POSTs to /v1/logs or /v1/metrics and gets a 404 every couple
+    # of seconds - harmless WARNs that drown the container log.
+    #
+    # Metrics stay off in both modes: container stdout is already collected into
+    # Loki by the ClusterLogForwarder, and the JVM metrics need the OTLP
+    # receiver added to the collector's metrics pipeline to go anywhere.
+    - name: OTEL_METRICS_EXPORTER
+      value: none
+{% if not (otel_logs_demo_enabled | bool) %}
+    - name: OTEL_LOGS_EXPORTER
+      value: none
+{% else %}
+    # Logs left ON: demo-otel-logs.yml added the matching logs pipeline to the
+    # collector, so /v1/logs no longer 404s. Records emitted inside an active
+    # span carry that span's Trace ID and Span ID as first-class fields - which
+    # is the one thing Vector cannot do, because by the time it reads the line
+    # from disk the trace context is gone.
+{% endif %}

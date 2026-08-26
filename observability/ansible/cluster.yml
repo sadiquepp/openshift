@@ -1,0 +1,58 @@
+---
+# ═══════════════════════════════════════════════════════════════════════════════
+# CLUSTER PHASE - needs cluster-admin on a fresh connected cluster, and the
+# s3-credentials.yml written by aws-prereqs.yml.
+#
+#   ansible-playbook cluster.yml -e suffix=xipio
+#
+# Tags let you run one layer at a time:
+#   --tags logging | netobserv | tracing | workload
+# ═══════════════════════════════════════════════════════════════════════════════
+- name: Deploy the OpenShift observability stack
+  hosts: localhost
+  gather_facts: false
+
+  # Connection settings for every kubernetes.core module, without repeating them
+  # on each task. Both `omit` when empty, so the modules fall back to KUBECONFIG
+  # and then ~/.kube/config exactly as they would otherwise. k8s_json_patch is
+  # listed separately: it is not a member of the collection's `k8s` action group.
+  module_defaults:
+    group/kubernetes.core.k8s: &k8s_connection
+      kubeconfig: "{{ kubeconfig if (kubeconfig | default('') | length > 0) else omit }}"
+      context: "{{ kube_context if (kube_context | default('') | length > 0) else omit }}"
+    kubernetes.core.k8s_json_patch: *k8s_connection
+
+  roles:
+    - role: preflight
+      tags: always
+
+    # The Cluster Observability Operator provides the console UIPlugins the
+    # logging and tracing roles create, so it goes first.
+    - role: cluster_observability
+      when: (logging_enabled | bool) or (tracing_enabled | bool) or (troubleshooting_panel_enabled | bool)
+      tags: [coo, logging, tracing, netobserv]
+
+    - role: openshift_logging
+      when: logging_enabled | bool
+      tags: [logging]
+
+    - role: network_observability
+      when: netobserv_enabled | bool
+      tags: [netobserv]
+
+    - role: distributed_tracing
+      when: tracing_enabled | bool
+      tags: [tracing]
+
+    - role: test_workload
+      when: workload_enabled | bool
+      tags: [workload]
+
+  post_tasks:
+    - name: What to do next
+      ansible.builtin.debug:
+        msg: >-
+          Stack deployed. Give the load generator ten minutes to fill Loki,
+          Tempo and Prometheus, then follow observability/demo/README.md.
+          Console: {{ 'Observe -> Logs, Network Traffic, Traces, Metrics' }}.
+      tags: always

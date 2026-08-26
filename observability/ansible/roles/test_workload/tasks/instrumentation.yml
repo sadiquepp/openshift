@@ -1,0 +1,127 @@
+---
+# ── Auto-instrument adservice ─────────────────────────────────────────────────
+# The seven services the tracing overlay configures already ship the OTel SDK
+# compiled in - they only needed environment variables. The Instrumentation CR
+# solves the opposite problem: telemetry for an application whose code you
+# cannot change. The operator injects an init container that copies a language
+# agent into a shared volume, then sets the runtime's agent hook on the app
+# container.
+#
+# adservice is the right demonstration: Java, so the most mature agent applies;
+# called by frontend on every page render, so traffic is continuous; and because
+# frontend already propagates W3C trace context on that gRPC call, the injected
+# agent's spans JOIN the existing trace rather than starting a new one.
+#
+# Do NOT apply this to the seven already-instrumented services - they would be
+# instrumented twice.
+#
+# This file is also called on its own by demo-otel-logs.yml, which is why the
+# OTEL_LOGS_EXPORTER value is driven by otel_logs_demo_enabled.
+
+- name: Create the Instrumentation CR
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition: "{{ lookup('ansible.builtin.template', 'instrumentation.yaml.j2') | from_yaml }}"
+
+- name: Give adservice room to start with the agent attached
+  kubernetes.core.k8s:
+    state: patched
+    api_version: apps/v1
+    kind: Deployment
+    name: adservice
+    namespace: "{{ app_namespace }}"
+    definition:
+      spec:
+        template:
+          spec:
+            containers:
+              - name: server
+                resources:
+                  requests:
+                    cpu: 300m
+                    memory: 300Mi
+                  limits:
+                    cpu: "1"
+                    memory: 512Mi
+                startupProbe:
+                  grpc:
+                    port: 9555
+                  periodSeconds: 10
+                  failureThreshold: 30
+                readinessProbe:
+                  grpc:
+                    port: 9555
+                  periodSeconds: 15
+                  timeoutSeconds: 5
+                livenessProbe:
+                  grpc:
+                    port: 9555
+                  periodSeconds: 15
+                  timeoutSeconds: 5
+  # Without this, the pod restarts forever. adservice's probes are tuned for a
+  # plain JVM: timeoutSeconds is unset, so it defaults to 1 second, and the CPU
+  # limit is 300m. The agent rewrites bytecode as classes load, which is
+  # CPU-bound, so the container is killed by the liveness probe before it can
+  # serve gRPC. A startupProbe is the right fix - liveness and readiness are
+  # suspended until it first succeeds, so slow startup stops counting as
+  # failure while the steady-state probes stay strict. Raising the CPU limit
+  # matters as much: most of the extra startup time is class transformation.
+  # failureThreshold 30 at periodSeconds 10 allows five minutes to start.
+
+- name: Annotate the adservice pod template for Java injection
+  kubernetes.core.k8s:
+    state: patched
+    api_version: apps/v1
+    kind: Deployment
+    name: adservice
+    namespace: "{{ app_namespace }}"
+    definition:
+      spec:
+        template:
+          metadata:
+            annotations:
+              # On the POD TEMPLATE, not the Deployment's own metadata. A value
+              # of "true" makes the operator look for an Instrumentation CR in
+              # the pod's own namespace.
+              instrumentation.opentelemetry.io/inject-java: "true"
+
+- name: Wait for adservice to roll out with the agent
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    name: adservice
+    namespace: "{{ app_namespace }}"
+  register: _ad
+  retries: 60
+  delay: 10
+  until: >-
+    _ad.resources | length > 0
+    and (_ad.resources[0].status.readyReplicas | default(0)) > 0
+    and (_ad.resources[0].status.updatedReplicas | default(0))
+        == (_ad.resources[0].spec.replicas | default(-1))
+
+- name: Confirm the agent was injected
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: "{{ app_namespace }}"
+    label_selectors:
+      - app=adservice
+    field_selectors:
+      - status.phase=Running
+  register: _ad_pods
+
+- name: Fail if no init container was added
+  ansible.builtin.assert:
+    that:
+      - _ad_pods.resources | length > 0
+      - "'opentelemetry-auto-instrumentation-java' in
+         (_ad_pods.resources[0].spec.initContainers | default([]) | map(attribute='name') | join(','))"
+    fail_msg: >-
+      The OpenTelemetry operator did not inject the Java agent into adservice.
+      A successful injection adds an init container and sets JAVA_TOOL_OPTIONS
+      on the application container. Check that the Instrumentation CR exists in
+      {{ app_namespace }} and that the operator's webhook is running:
+      oc get pods -n openshift-opentelemetry-operator
+    quiet: true

@@ -1,0 +1,17 @@
+---
+# ── lokistack ─────────────────────────────────────────────────────────────────
+# One LokiStack: its S3 secret, the custom resource, and the wait. Used twice -
+# once for logs (openshift-logging tenant mode) and once for network flows
+# (openshift-network tenant mode).
+#
+# A LokiStack has exactly one spec.tenants.mode, which is why the flows store
+# cannot reuse the logging one. See "Why Network Observability cannot reuse the
+# logging-loki stack" in observability/README.md.
+
+lokistack_name: ""            # required
+lokistack_namespace: ""       # required
+lokistack_backend_key: ""     # required - index into observability_s3_backends
+lokistack_tenant_mode: ""     # required - openshift-logging | openshift-network
+lokistack_secret_name: "{{ observability_s3_backends[lokistack_backend_key].bucket }}"
+lokistack_size: "{{ loki_size | default('1x.pico') }}"
+lokistack_wait_timeout: 900

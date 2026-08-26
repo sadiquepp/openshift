@@ -1,0 +1,23 @@
+---
+# ═══════════════════════════════════════════════════════════════════════════════
+# AWS PHASE - runnable on its own, by an AWS admin, with no cluster access.
+#
+#   ansible-playbook aws-prereqs.yml -e suffix=xipio -e aws_region=ap-south-1
+#
+# Creates one S3 bucket + least-privilege IAM policy + IAM user + access key per
+# enabled component, and writes them to s3-credentials.yml (mode 0600).
+#
+# Which backends get created follows the same toggles the cluster phase uses, so
+# pass the SAME values to both. In particular:
+#
+#   -e netobserv_use_loki=false     skips the netobserv bucket entirely
+#   -e tracing_enabled=false        skips the Tempo bucket
+#
+# Re-running is safe: existing keys recorded in s3-credentials.yml are reused,
+# not rotated.
+# ═══════════════════════════════════════════════════════════════════════════════
+- name: Provision the AWS S3 backends for OpenShift observability
+  hosts: localhost
+  gather_facts: false
+  roles:
+    - role: aws_backends

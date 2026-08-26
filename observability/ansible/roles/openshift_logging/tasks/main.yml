@@ -1,0 +1,159 @@
+---
+# ── openshift_logging ─────────────────────────────────────────────────────────
+# Loki Operator -> LokiStack on S3 -> Cluster Logging Operator -> collector
+# ServiceAccount/RBAC -> ClusterLogForwarder -> LogFileMetricExporter -> the
+# console Logging plugin.
+#
+# Mirrors "OpenShift Logging" in observability/README.md.
+
+- name: Install the Loki Operator
+  ansible.builtin.include_role:
+    name: olm_operator
+  vars:
+    olm_namespace: openshift-operators-redhat
+    olm_operator_group_name: loki-operator
+    olm_subscription_name: loki-operator
+    olm_channel: "{{ loki_channel }}"
+    olm_wait_for_crds:
+      - lokistacks.loki.grafana.com
+
+- name: Create the openshift-logging namespace
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ logging_namespace }}"
+        labels:
+          openshift.io/cluster-monitoring: "true"
+
+- name: Create the logging LokiStack
+  ansible.builtin.include_role:
+    name: lokistack
+  vars:
+    lokistack_name: "{{ logging_lokistack_name }}"
+    lokistack_namespace: "{{ logging_namespace }}"
+    lokistack_backend_key: logging
+    lokistack_tenant_mode: openshift-logging
+
+- name: Install the Cluster Logging Operator
+  ansible.builtin.include_role:
+    name: olm_operator
+  vars:
+    olm_namespace: "{{ logging_namespace }}"
+    olm_create_namespace: false          # created above, with the monitoring label
+    olm_operator_group_name: cluster-logging
+    olm_subscription_name: cluster-logging
+    olm_channel: "{{ cluster_logging_channel }}"
+    olm_wait_for_crds:
+      - clusterlogforwarders.observability.openshift.io
+      - logfilemetricexporters.logging.openshift.io
+
+- name: Create the collector ServiceAccount and RBAC
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition: "{{ item }}"
+  loop: "{{ lookup('ansible.builtin.template', 'collector-rbac.yaml.j2') | from_yaml_all | list }}"
+  loop_control:
+    label: "{{ item.kind }}/{{ item.metadata.name }}"
+
+- name: Create the ClusterLogForwarder
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition:
+      apiVersion: observability.openshift.io/v1
+      kind: ClusterLogForwarder
+      metadata:
+        name: instance
+        namespace: "{{ logging_namespace }}"
+      spec:
+        serviceAccount:
+          name: logging-collector
+        outputs:
+          - name: lokistack-out
+            type: lokiStack
+            lokiStack:
+              target:
+                name: "{{ logging_lokistack_name }}"
+                namespace: "{{ logging_namespace }}"
+              authentication:
+                token:
+                  from: serviceAccount
+            tls:
+              ca:
+                key: service-ca.crt
+                configMapName: openshift-service-ca.crt
+        pipelines:
+          - name: infra-app-logs
+            inputRefs:
+              - application
+              - infrastructure
+            outputRefs:
+              - lokistack-out
+
+- name: Create the LogFileMetricExporter
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition:
+      apiVersion: logging.openshift.io/v1alpha1
+      kind: LogFileMetricExporter
+      metadata:
+        name: instance
+        namespace: "{{ logging_namespace }}"
+      spec:
+        nodeSelector: {}
+        resources:
+          limits:
+            cpu: 500m
+            memory: 256Mi
+          requests:
+            cpu: 200m
+            memory: 128Mi
+        tolerations: []
+
+- name: Wait for the log collector DaemonSet to roll out
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: DaemonSet
+    namespace: "{{ logging_namespace }}"
+    label_selectors:
+      - app.kubernetes.io/component=collector
+  register: _collector_ds
+  retries: 60
+  delay: 10
+  until: >-
+    _collector_ds.resources | length > 0
+    and (_collector_ds.resources[0].status.numberReady | default(0)) > 0
+    and (_collector_ds.resources[0].status.numberReady | default(0))
+        == (_collector_ds.resources[0].status.desiredNumberScheduled | default(-1))
+
+- name: Configure the console Logging UIPlugin
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition:
+      apiVersion: observability.openshift.io/v1alpha1
+      kind: UIPlugin
+      metadata:
+        name: logging
+      spec:
+        type: Logging
+        logging:
+          lokiStack:
+            name: "{{ logging_lokistack_name }}"
+          logsLimit: 50
+          timeout: 30s
+          # DELIBERATE DEVIATION from observability/README.md, which sets `otel`.
+          # The ClusterLogForwarder above writes the default ViaQ data model
+          # (kubernetes_namespace_name, ...), and the plugin's schema has to
+          # agree with what is actually in Loki or the console's namespace
+          # dropdown comes up empty. The README documents that trap under "Label
+          # names depend on the data model"; this picks the side that works.
+          # Override with -e logging_uiplugin_schema=otel if you switch the
+          # forwarder to the OTel data model.
+          schema: "{{ logging_uiplugin_schema }}"

@@ -1,0 +1,116 @@
+---
+# ── network_observability ─────────────────────────────────────────────────────
+# The operator install is identical for both deployment modes. Only the
+# FlowCollector differs, and only Path B needs storage.
+#
+#   netobserv_use_loki: false -> Path A, metrics only
+#   netobserv_use_loki: true  -> Path B, LokiStack on S3 + raw flow records
+
+- name: Install the Network Observability Operator
+  ansible.builtin.include_role:
+    name: olm_operator
+  vars:
+    olm_namespace: openshift-netobserv-operator
+    olm_operator_group_name: netobserv-operator
+    olm_subscription_name: netobserv-operator
+    olm_package: netobserv-operator
+    olm_channel: "{{ netobserv_channel }}"
+    olm_wait_for_crds:
+      - flowcollectors.flows.netobserv.io
+
+- name: Create the flow collector namespace
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ netobserv_namespace }}"
+
+- name: Path B - Loki-backed flow storage
+  ansible.builtin.include_tasks: path_b_loki.yml
+  when: netobserv_use_loki | bool
+
+- name: Create the FlowCollector
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition: "{{ lookup('ansible.builtin.template', 'flowcollector.yaml.j2') | from_yaml }}"
+  # Cluster-scoped and must be named `cluster`; only one can exist. Re-applying
+  # with netobserv_use_loki flipped is exactly the documented Path A -> Path B
+  # switch: the loki block is rewritten in place, nothing is reinstalled.
+
+- name: Wait for the FlowCollector to be Ready
+  kubernetes.core.k8s_info:
+    api_version: flows.netobserv.io/v1beta2
+    kind: FlowCollector
+    name: cluster
+  register: _fc
+  retries: 60
+  delay: 10
+  until: >-
+    _fc.resources | length > 0
+    and (_fc.resources[0].status.conditions | default([]))
+        | selectattr('type', 'equalto', 'Ready')
+        | selectattr('status', 'equalto', 'True')
+        | list | length > 0
+
+- name: Wait for the eBPF agent DaemonSet on every node
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: DaemonSet
+    name: netobserv-ebpf-agent
+    namespace: "{{ netobserv_namespace }}-privileged"
+  register: _ebpf
+  retries: 40
+  delay: 10
+  until: >-
+    _ebpf.resources | length > 0
+    and (_ebpf.resources[0].status.numberReady | default(0)) > 0
+    and (_ebpf.resources[0].status.numberReady | default(0))
+        == (_ebpf.resources[0].status.desiredNumberScheduled | default(-1))
+
+- name: Register the console plugin
+  ansible.builtin.include_tasks: console_plugin.yml
+
+- name: Enable the Troubleshooting Panel UIPlugin
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition:
+      apiVersion: observability.openshift.io/v1alpha1
+      kind: UIPlugin
+      metadata:
+        name: troubleshooting-panel
+      spec:
+        type: TroubleshootingPanel
+  when: troubleshooting_panel_enabled | bool
+  # Korrel8r correlates alerts <-> metrics <-> logs <-> netflows. It reads flow
+  # records from Loki, so on Path A there is no per-flow data to correlate and
+  # the panel has nothing to show for network traffic.
+
+- name: Grant non-admin users the flow reader roles
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: "netobserv-{{ item.1 }}:{{ item.0 }}"
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRole
+        name: "{{ item.1 }}"
+      subjects:
+        - kind: User
+          apiGroup: rbac.authorization.k8s.io
+          name: "{{ item.0 }}"
+  loop: "{{ grant_users | product(['netobserv-reader'] if (netobserv_use_loki | bool) else ['netobserv-metrics-reader']) | list }}"
+  loop_control:
+    label: "{{ item.0 }} -> {{ item.1 }}"
+  when: grant_users | length > 0
+  # netobserv-reader reads flows from Loki (Path B); netobserv-metrics-reader
+  # reads the flow metrics from Prometheus (both paths, and the only one that
+  # means anything on Path A). Cluster admins already pass these checks.

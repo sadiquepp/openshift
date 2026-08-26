@@ -1,0 +1,66 @@
+---
+- name: "{{ lokistack_name }}: create the S3 secret"
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: "{{ lokistack_secret_name }}"
+        namespace: "{{ lokistack_namespace }}"
+      type: Opaque
+      stringData:
+        # LokiStack static credentials. `bucketnames` (plural) and `region` are
+        # both part of the valid static key set here - unlike Tempo, where
+        # supplying `region` alongside the keys is rejected at admission.
+        bucketnames: "{{ observability_s3_backends[lokistack_backend_key].bucket }}"
+        endpoint: "{{ observability_s3_backends[lokistack_backend_key].endpoint }}"
+        access_key_id: "{{ observability_s3_backends[lokistack_backend_key].access_key_id }}"
+        access_key_secret: "{{ observability_s3_backends[lokistack_backend_key].secret_access_key }}"
+        region: "{{ observability_s3_backends[lokistack_backend_key].region }}"
+  no_log: true
+
+- name: "{{ lokistack_name }}: create the LokiStack"
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition:
+      apiVersion: loki.grafana.com/v1
+      kind: LokiStack
+      metadata:
+        name: "{{ lokistack_name }}"
+        namespace: "{{ lokistack_namespace }}"
+      spec:
+        size: "{{ lokistack_size }}"
+        storage:
+          schemas:
+            - effectiveDate: "2023-10-15"
+              version: v13
+          secret:
+            name: "{{ lokistack_secret_name }}"
+            type: s3
+            credentialMode: static
+        storageClassName: "{{ storage_class_name }}"
+        tenants:
+          mode: "{{ lokistack_tenant_mode }}"
+
+- name: "{{ lokistack_name }}: wait for Ready"
+  kubernetes.core.k8s_info:
+    api_version: loki.grafana.com/v1
+    kind: LokiStack
+    name: "{{ lokistack_name }}"
+    namespace: "{{ lokistack_namespace }}"
+  register: _lokistack
+  retries: "{{ ((lokistack_wait_timeout | int) / 15) | int }}"
+  delay: 15
+  until: >-
+    _lokistack.resources | length > 0
+    and (_lokistack.resources[0].status.conditions | default([]))
+        | selectattr('type', 'equalto', 'Ready')
+        | selectattr('status', 'equalto', 'True')
+        | list | length > 0
+  # If this times out, the usual cause is storage: the ingester/compactor
+  # StatefulSets sit Pending because the StorageClass cannot bind, or the S3
+  # credentials are wrong and the pods CrashLoop. Check:
+  #   oc get pods -n {{ lokistack_namespace }} -l app.kubernetes.io/instance={{ lokistack_name }}

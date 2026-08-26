@@ -1,0 +1,155 @@
+---
+# ═══════════════════════════════════════════════════════════════════════════════
+# Automation of observability/README.md
+#
+# Every value here can be overridden on the command line with -e, or by dropping
+# a file into group_vars/. The only variable with no sensible default is
+# `suffix`, which makes the AWS resource names unique per deployment.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ── Cluster connection ────────────────────────────────────────────────────────
+# Both empty is the normal case: the modules fall back to the KUBECONFIG
+# environment variable, then to ~/.kube/config's current-context.
+#
+# Set them when you do not want to rely on the environment - a kubeconfig
+# dropped by openshift-install, or a ~/.kube/config holding several clusters
+# where current-context is not the one you mean:
+#
+#   -e kubeconfig=~/clusters/lab/auth/kubeconfig
+#   -e kube_context=admin/api-lab-example-com:6443/system:admin
+#
+# Preflight prints the API server URL it resolved, so you can see which cluster
+# you are about to install into before anything is created.
+#
+# The AWS phase ignores both - it never contacts a cluster.
+kubeconfig: ""
+kube_context: ""
+
+# ── Identity ──────────────────────────────────────────────────────────────────
+# REQUIRED. Appended to every bucket and IAM user name, exactly as $SUFFIX is in
+# the runbook. Preflight fails if it is empty.
+suffix: ""
+
+aws_region: ap-south-1
+
+# ── What to deploy ────────────────────────────────────────────────────────────
+logging_enabled: true
+netobserv_enabled: true
+tracing_enabled: true
+workload_enabled: true
+
+# THE NETWORK OBSERVABILITY CHOICE.
+#
+#   true  -> Path B. A dedicated LokiStack on S3 (openshift-network tenant).
+#            Adds the Observe -> Network Traffic "Traffic flows" table with raw
+#            per-flow records, and pod/IP-level Topology. Costs an S3 bucket,
+#            an IAM user and roughly 45-65% more memory than Path A.
+#   false -> Path A. Metrics only, scraped by the existing cluster monitoring
+#            stack. No extra storage, no per-flow records. Overview and Topology
+#            still work, at node/namespace/owner-workload scope.
+#
+# Switching false -> true later is supported: re-run cluster.yml (and
+# aws-prereqs.yml first, for the extra bucket). The FlowCollector is patched in
+# place, nothing is reinstalled.
+netobserv_use_loki: true
+
+# Auto-instrument adservice (Java) with the Instrumentation CR, so it joins the
+# frontend traces without a code change. Required by the OpenTelemetry log
+# correlation demo.
+adservice_autoinstrument: true
+
+# The Cluster Observability Operator Troubleshooting Panel (Korrel8r). It
+# correlates alerts <-> metrics <-> logs <-> netflows, and needs Loki-backed
+# flows to have any flow data to correlate.
+troubleshooting_panel_enabled: "{{ (netobserv_enabled | bool) and (netobserv_use_loki | bool) }}"
+
+# ── Storage ───────────────────────────────────────────────────────────────────
+# Empty means "discover the StorageClass marked default on this cluster".
+storage_class_name: ""
+loki_size: 1x.pico
+tempo_storage_size: 10Gi
+
+# ── Namespaces ────────────────────────────────────────────────────────────────
+logging_namespace: openshift-logging
+netobserv_namespace: netobserv
+tracing_namespace: tracing-system
+app_namespace: online-boutique
+
+# Where the flows LokiStack lives. With OpenShift Logging also deployed the two
+# LokiStacks are kept together in openshift-logging, which is what needs the two
+# extra rolebindings; on its own it goes next to the flow collector and needs
+# none.
+netobserv_loki_namespace: "{{ logging_namespace if (logging_enabled | bool) else netobserv_namespace }}"
+
+# ── Operator channels ─────────────────────────────────────────────────────────
+loki_channel: stable-6.6
+cluster_logging_channel: stable-6.6
+coo_channel: stable
+netobserv_channel: stable
+tempo_channel: stable
+otel_channel: stable
+operator_catalog_source: redhat-operators
+operator_wait_timeout: 600      # seconds, per operator
+
+# ── Resource names ────────────────────────────────────────────────────────────
+logging_lokistack_name: logging-loki
+netobserv_lokistack_name: netobserv-loki
+tempo_stack_name: tempo
+tempo_tenant_name: dev
+# Deterministic UUIDv5 - stable across re-runs, unique per suffix, so the
+# TempoStack is never rewritten with a fresh tenant id on the second run.
+tempo_tenant_id: "{{ (suffix ~ '-tempo-' ~ tempo_tenant_name) | to_uuid }}"
+otel_collector_name: otel
+
+# The console Logging plugin has to agree with the data model the
+# ClusterLogForwarder writes, or the namespace dropdown comes up empty. This
+# automation writes the default ViaQ model, so the plugin is set to `viaq`.
+# See observability/README.md "Label names depend on the data model".
+logging_uiplugin_schema: viaq
+
+# ── AWS resource names ────────────────────────────────────────────────────────
+logging_bucket_name: "logging-loki-s3-{{ suffix }}"
+logging_iam_name: "logging-loki-s3-{{ suffix }}"
+netobserv_bucket_name: "netobserv-loki-s3-{{ suffix }}"
+netobserv_iam_name: "netobserv-loki-s3-{{ suffix }}"
+tempo_bucket_name: "tempo-s3-{{ suffix }}"
+tempo_iam_name: "tempo-s3-{{ suffix }}"
+
+# The single list both aws-prereqs.yml and cluster.yml iterate over. Adding a
+# fourth S3-backed component means adding one entry here.
+observability_backends:
+  - key: logging
+    enabled: "{{ logging_enabled | bool }}"
+    bucket: "{{ logging_bucket_name }}"
+    iam_name: "{{ logging_iam_name }}"
+  - key: netobserv
+    enabled: "{{ (netobserv_enabled | bool) and (netobserv_use_loki | bool) }}"
+    bucket: "{{ netobserv_bucket_name }}"
+    iam_name: "{{ netobserv_iam_name }}"
+  - key: tempo
+    enabled: "{{ tracing_enabled | bool }}"
+    bucket: "{{ tempo_bucket_name }}"
+    iam_name: "{{ tempo_iam_name }}"
+
+# The handoff file aws-prereqs.yml writes and cluster.yml reads. Mode 0600,
+# gitignored. Hand it to the cluster admin over a channel you trust.
+s3_credentials_file: "{{ playbook_dir }}/s3-credentials.yml"
+
+# ── Test workload ─────────────────────────────────────────────────────────────
+app_dir: "{{ playbook_dir }}/../../test-workloads/online-boutique"
+# `tracing` = default overlay plus the OTel environment variables.
+# `no-loadgenerator` for a quiet cluster - but then nothing generates traffic.
+app_overlay: "{{ 'tracing' if (tracing_enabled | bool) else 'default' }}"
+
+# ── OpenTelemetry log-correlation demo ────────────────────────────────────────
+# Off by default: `verbosity: detailed` on the debug exporter prints every log
+# record to the collector's stdout, which Vector then ships to Loki. Turned on
+# by demo-otel-logs.yml.
+otel_logs_demo_enabled: false
+
+# ── Non-admin access ──────────────────────────────────────────────────────────
+# OpenShift usernames to grant the reader roles to (netobserv-reader,
+# netobserv-metrics-reader, tempostack-traces-reader). Cluster admins already
+# pass these checks. A User object only exists after that person has logged in
+# at least once, so add them here on a later run if the grant fails.
+grant_users: []
