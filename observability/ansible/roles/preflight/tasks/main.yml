@@ -135,3 +135,28 @@
   when: workload_enabled | bool
   # Only the test workload needs the binary - it is rendered with `oc kustomize`.
   # Everything else goes through the Kubernetes API directly.
+
+# ── Last chance to bail ───────────────────────────────────────────────────────
+# Everything above is read-only; the first role after this one starts creating
+# operators, LokiStacks and a TempoStack, which is roughly 45 minutes to undo.
+# The target is restated here rather than relying on it still being on screen -
+# by this point the operator-install output has usually scrolled it away.
+
+- name: Pause before making any changes
+  ansible.builtin.pause:
+    seconds: "{{ confirm_pause_seconds | int }}"
+    prompt: |
+
+      About to make cluster-wide changes to:
+
+          {{ (_infra.resources[0].status.apiServerURL) | default('unknown') }}
+          OpenShift {{ (_cv.resources[0].status.desired.version) | default('unknown') }}
+
+          logging={{ logging_enabled }}  netobserv={{ netobserv_enabled }} (loki={{ netobserv_use_loki }})
+          tracing={{ tracing_enabled }}  workload={{ workload_enabled }}
+
+      Ctrl-C then 'A' to abort if that is not the cluster you meant.
+      Ctrl-C then 'C' to continue immediately.
+      Set -e confirm_pause_seconds=0 to skip this entirely.
+
+  when: (confirm_pause_seconds | int) > 0

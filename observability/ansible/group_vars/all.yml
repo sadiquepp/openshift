@@ -25,6 +25,14 @@
 kubeconfig: ""
 kube_context: ""
 
+# ── Safety ────────────────────────────────────────────────────────────────────
+# Seconds to hold at the end of preflight, after the target cluster has been
+# named and every read-only check has passed, before anything is created.
+# Ctrl-C then 'A' aborts; Ctrl-C then 'C' continues immediately.
+#
+# Set to 0 for unattended runs - a pause with nobody watching is just latency.
+confirm_pause_seconds: 30
+
 # ── Identity ──────────────────────────────────────────────────────────────────
 # REQUIRED. Appended to every bucket and IAM user name, exactly as $SUFFIX is in
 # the runbook. Preflight fails if it is empty.

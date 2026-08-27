@@ -276,7 +276,29 @@ Version:   OpenShift 4.18.20
 Deploying: logging=True, netobserv=True (loki=True), tracing=True, workload=True
 ```
 
-Read that line before you walk away from the terminal.
+Then it **pauses for 30 seconds** before creating anything, so a wrong cluster
+can be caught with Ctrl-C rather than 45 minutes later:
+
+```
+About to make cluster-wide changes to:
+
+    https://api.hub.mylab.com:6443
+    OpenShift 4.21.15
+
+    logging=True  netobserv=True (loki=False)
+    tracing=True  workload=True
+
+Ctrl-C then 'A' to abort if that is not the cluster you meant.
+Ctrl-C then 'C' to continue immediately.
+```
+
+The pause sits at the very end of preflight — after every read-only check has
+passed, so you never wait through it only to fail on a missing StorageClass.
+For unattended runs, skip it:
+
+```bash
+ansible-playbook cluster.yml -e suffix=xipio -e confirm_pause_seconds=0
+```
 
 ## The two phases
 
@@ -357,6 +379,7 @@ ones worth knowing:
 | Variable | Default | Notes |
 |---|---|---|
 | `suffix` | — | **Required.** Makes bucket and IAM user names unique. S3 bucket names are globally unique across all of AWS. |
+| `confirm_pause_seconds` | `30` | Hold before the first change, so a wrong cluster can be caught. `0` for unattended runs. |
 | `aws_profile` | `""` | Empty uses botocore's normal chain. Set it when several credential sources exist. |
 | `kubeconfig` | `""` | Empty falls back to `KUBECONFIG`, then `~/.kube/config`. Ignored by the AWS phase. |
 | `kube_context` | `""` | Empty uses the kubeconfig's current-context. |
