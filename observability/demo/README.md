@@ -277,8 +277,17 @@ oc get pod -n $APP_NAMESPACE -l app=adservice \
 ```
 
 ```bash
-oc set env deployment/adservice -n $APP_NAMESPACE --list | grep JAVA_TOOL_OPTIONS
+oc get pod -n $APP_NAMESPACE -l app=adservice \
+  -o jsonpath='{.items[0].spec.containers[0].env[?(@.name=="JAVA_TOOL_OPTIONS")].value}{"\n"}'
 ```
+
+> **Worth saying out loud during the demo:** both commands read the **Pod**, and
+> deliberately so. `oc set env deployment/adservice --list` shows nothing,
+> because the operator injects through a mutating admission webhook that runs at
+> Pod creation — the Deployment is never touched. That is not a caveat, it *is*
+> the feature: the manifest and the image are unchanged, and the agent appears
+> only in the running Pod. Showing the Deployment first and then the Pod makes
+> the point better than either alone.
 
 Then open a `frontend` trace and point at the `adservice` span — **nested under
 the frontend client span, not a separate trace.** That nesting is the whole
