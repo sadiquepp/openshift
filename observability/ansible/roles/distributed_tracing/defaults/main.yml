@@ -1,0 +1,14 @@
+---
+# ── distributed_tracing ───────────────────────────────────────────────────────
+# Overridden from group_vars/all.yml; repeated here so the role reads on its own.
+
+# Object storage CA. Non-empty `observability_s3_ca_bundle_file` publishes the
+# bundle as a ConfigMap in the tracing namespace and points spec.storage.tls at
+# it - the private-CA HTTPS MinIO case. Empty leaves the TLS block out, which is
+# what AWS S3 (public CA) and a plain-HTTP MinIO both want.
+observability_s3_ca_bundle_file: ""
+tempo_ca_configmap_name: "{{ tempo_stack_name }}-s3-ca"
+# `service-ca.crt` is the Tempo operator's own default for
+# spec.storage.tls.caKey, and older builds assume that name with no way to say
+# otherwise - so use it whatever the file on disk is called.
+tempo_ca_configmap_key: service-ca.crt

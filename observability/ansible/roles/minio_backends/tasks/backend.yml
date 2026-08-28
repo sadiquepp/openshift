@@ -1,0 +1,223 @@
+---
+# One MinIO backend: bucket, least-privilege policy, dedicated user, access key.
+# Called once per entry in `observability_backends`. `backend` is the loop var.
+#
+# `backend.iam_name` names the policy AND doubles as the access key, exactly as
+# it names the IAM user on the AWS side - so a bucket, its policy and its
+# credential all carry the same name on either provider.
+
+- name: "{{ backend.key }}: create the bucket"
+  ansible.builtin.command:
+    argv: "{{ _mc + ['mb', '--ignore-existing', minio_mc_alias ~ '/' ~ backend.bucket] }}"
+  register: _mb
+  changed_when: "'created successfully' in (_mb.stdout | default(''))"
+  delegate_to: "{{ minio_mc_host }}"
+
+# ── Policy ────────────────────────────────────────────────────────────────────
+# The same statement the AWS role attaches, and it is the same dialect: MinIO
+# implements AWS's policy language, ARNs included, so `arn:aws:s3:::<bucket>` is
+# correct here too and is not a copy-paste slip.
+
+- name: "{{ backend.key }}: read the policy MinIO already has"
+  ansible.builtin.command:
+    argv: "{{ _mc + ['admin', 'policy', 'info', minio_mc_alias, backend.iam_name] }}"
+  register: _policy_info
+  changed_when: false
+  failed_when: false
+  delegate_to: "{{ minio_mc_host }}"
+
+- name: "{{ backend.key }}: decide whether the policy needs writing"
+  ansible.builtin.set_fact:
+    _policy_matches: >-
+      {{ _policy_info.rc == 0
+         and (_policy_info.stdout | default('') | length > 0)
+         and ((_policy_info.stdout | from_json).Statement | default([]))
+             == (_minio_policy.Statement) }}
+  vars: &policy_vars
+    _minio_policy:
+      Version: "2012-10-17"
+      Statement:
+        - Effect: Allow
+          Action:
+            - s3:ListBucket
+          Resource: "arn:aws:s3:::{{ backend.bucket }}"
+        - Effect: Allow
+          Action:
+            - s3:PutObject
+            - s3:GetObject
+            - s3:DeleteObject
+            - s3:GetObjectTagging
+            - s3:PutObjectTagging
+          Resource: "arn:aws:s3:::{{ backend.bucket }}/*"
+  # Compared rather than blindly re-applied, so a re-run is genuinely `ok` and a
+  # policy edited by hand shows up as a change. `mc admin policy info` prints
+  # the document as JSON; older clients print it with the statements in the
+  # order given, which is the order below.
+
+- name: "{{ backend.key }}: write and attach the policy"
+  when: not (_policy_matches | bool)
+  block:
+    - name: "{{ backend.key }}: create a temporary file for the policy document"
+      ansible.builtin.tempfile:
+        state: file
+        suffix: "-{{ backend.iam_name }}.json"
+      register: _policy_file
+      delegate_to: "{{ minio_mc_host }}"
+
+    - name: "{{ backend.key }}: render the policy document"
+      ansible.builtin.copy:
+        content: "{{ _minio_policy | to_nice_json }}"
+        dest: "{{ _policy_file.path }}"
+        mode: "0600"
+      vars: *policy_vars
+      delegate_to: "{{ minio_mc_host }}"
+
+    - name: "{{ backend.key }}: create the MinIO policy"
+      ansible.builtin.command:
+        argv: >-
+          {{ _mc + ['admin', 'policy',
+                    'create' if (minio_mc_policy_modern | bool) else 'add',
+                    minio_mc_alias, backend.iam_name, _policy_file.path] }}
+      delegate_to: "{{ minio_mc_host }}"
+      changed_when: true
+  always:
+    - name: "{{ backend.key }}: remove the temporary policy document"
+      ansible.builtin.file:
+        path: "{{ _policy_file.path }}"
+        state: absent
+      when: _policy_file.path is defined
+      delegate_to: "{{ minio_mc_host }}"
+
+# ── User and access key ───────────────────────────────────────────────────────
+# MinIO's user API takes the secret as an argument, so - unlike IAM, where a
+# secret is shown exactly once - a recorded secret can simply be asserted again.
+# Reuse is therefore always possible as long as s3-credentials.yml survives, and
+# a lost file means minting a fresh secret, which is the same outcome AWS gives.
+
+- name: "{{ backend.key }}: read the user MinIO already has"
+  ansible.builtin.command:
+    argv: "{{ _mc + ['--json', 'admin', 'user', 'info', minio_mc_alias, backend.iam_name] }}"
+  register: _user_info
+  changed_when: false
+  failed_when: false
+  delegate_to: "{{ minio_mc_host }}"
+  # --json so the same call answers both "does the user exist" (rc) and "which
+  # policies are already attached to it" (policyName, comma-separated).
+
+- name: "{{ backend.key }}: note which policies the user already carries"
+  ansible.builtin.set_fact:
+    _attached_policies: >-
+      {{ ((_user_info.stdout | from_json).policyName | default('')).split(',') | map('trim') | list
+         if (_user_info.rc == 0 and (_user_info.stdout | default('')) | length > 0)
+         else [] }}
+
+- name: "{{ backend.key }}: settle on the secret key"
+  ansible.builtin.set_fact:
+    _recorded: "{{ _minted[backend.key] | default({}) }}"
+    _generated_secret: >-
+      {{ lookup('ansible.builtin.password', '/dev/null',
+                length=minio_secret_key_length,
+                chars=['ascii_letters', 'digits']) }}
+  no_log: true
+  # `/dev/null` is the documented way to ask the password lookup for a value it
+  # does not persist: the secret's only home is s3-credentials.yml.
+
+- name: "{{ backend.key }}: reuse or mint"
+  ansible.builtin.set_fact:
+    _reuse_key: "{{ (_recorded.secret_access_key | default('')) | length > 0 }}"
+    _secret_key: >-
+      {{ _recorded.secret_access_key
+         if ((_recorded.secret_access_key | default('')) | length > 0)
+         else _generated_secret }}
+  no_log: true
+
+- name: "{{ backend.key }}: reusing the secret key recorded by a previous run"
+  ansible.builtin.debug:
+    msg: "{{ backend.iam_name }}: recorded secret key re-asserted, not rotated."
+  when: _reuse_key | bool
+
+- name: "{{ backend.key }}: minting a new secret key"
+  ansible.builtin.debug:
+    msg: >-
+      {{ backend.iam_name }}: no secret recorded in
+      {{ s3_credentials_file | basename }}, generating one.
+      {{ 'The existing MinIO user is overwritten with it.'
+         if _user_info.rc == 0 else '' }}
+  when: not (_reuse_key | bool)
+
+- name: "{{ backend.key }}: create the user"
+  ansible.builtin.command:
+    argv: "{{ _mc + ['admin', 'user', 'add', minio_mc_alias, backend.iam_name, _secret_key] }}"
+  changed_when: (_user_info.rc != 0) or not (_reuse_key | bool)
+  delegate_to: "{{ minio_mc_host }}"
+  no_log: true
+  # `user add` is create-or-replace on MinIO, so this is also how a recorded
+  # secret is re-asserted. Reported as changed only when the user is new or the
+  # secret is new - re-asserting the same value changes nothing.
+
+- name: "{{ backend.key }}: attach the policy to the user"
+  ansible.builtin.command:
+    argv: >-
+      {{ _mc + ['admin', 'policy', 'attach', minio_mc_alias, backend.iam_name,
+                '--user', backend.iam_name]
+         if (minio_mc_policy_modern | bool)
+         else _mc + ['admin', 'policy', 'set', minio_mc_alias, backend.iam_name,
+                     'user=' ~ backend.iam_name] }}
+  register: _attach
+  changed_when: _attach.rc == 0
+  failed_when: >-
+    _attach.rc != 0
+    and 'already in effect' not in ((_attach.stderr | default('')) ~ (_attach.stdout | default('')))
+  when: backend.iam_name not in _attached_policies
+  delegate_to: "{{ minio_mc_host }}"
+  # Skipped when the user already carries the policy, which is what keeps a
+  # re-run honest: modern mc refuses a second attach with "The specified policy
+  # change is already in effect" (a no-op, not a failure, hence failed_when),
+  # while the legacy `policy set` spelling silently succeeds every time and
+  # would otherwise report a change on every run.
+
+# ── Prove the credential works ────────────────────────────────────────────────
+# Cheap, and it turns "LokiStack sits NotReady for fifteen minutes and the
+# ingester CrashLoops on 403" into a failure here with the reason attached.
+
+- name: "{{ backend.key }}: verify the new credential against its bucket"
+  block:
+    - name: "{{ backend.key }}: register a throwaway alias for the component user"
+      ansible.builtin.command:
+        argv: "{{ _mc + ['alias', 'set', _verify_alias, minio_mc_endpoint, backend.iam_name, _secret_key] }}"
+      changed_when: false
+      delegate_to: "{{ minio_mc_host }}"
+      no_log: true
+
+    - name: "{{ backend.key }}: list the bucket as the component user"
+      ansible.builtin.command:
+        argv: "{{ _mc + ['ls', _verify_alias ~ '/' ~ backend.bucket] }}"
+      changed_when: false
+      delegate_to: "{{ minio_mc_host }}"
+  always:
+    - name: "{{ backend.key }}: drop the throwaway alias"
+      ansible.builtin.command:
+        argv: "{{ _mc + ['alias', 'remove', _verify_alias] }}"
+      changed_when: false
+      failed_when: false
+      delegate_to: "{{ minio_mc_host }}"
+  vars:
+    _verify_alias: "{{ minio_mc_alias }}-verify-{{ backend.key }}"
+
+- name: "{{ backend.key }}: record the credentials"
+  ansible.builtin.set_fact:
+    _minted: >-
+      {{ _minted | combine({
+           backend.key: {
+             'bucket': backend.bucket,
+             'iam_user': backend.iam_name,
+             'region': minio_region,
+             'endpoint': minio_endpoint,
+             'access_key_id': backend.iam_name,
+             'secret_access_key': _secret_key
+           }
+         }) }}
+  no_log: true
+  # Same shape as the AWS role writes, key for key. `iam_user` and
+  # `access_key_id` are both the component name here: MinIO's access key IS the
+  # user name, where IAM keeps them separate.

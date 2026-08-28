@@ -7,9 +7,18 @@
 #
 # Split the two if an AWS admin has to mint the keys for you: they run
 # aws-prereqs.yml and hand you s3-credentials.yml, you run cluster.yml.
+#
+# Both storage phases are imported; `s3_provider` decides which one does the
+# work and which one skips. For a disconnected cluster backed by MinIO:
+#
+#   ansible-playbook site.yml -e suffix=xipio -e s3_provider=minio \
+#                    -e @minio-vault.yml --ask-vault-pass
 # ═══════════════════════════════════════════════════════════════════════════════
-- name: AWS prerequisites
+- name: Storage prerequisites - AWS S3
   ansible.builtin.import_playbook: aws-prereqs.yml
+
+- name: Storage prerequisites - MinIO
+  ansible.builtin.import_playbook: minio-prereqs.yml
 
 - name: Cluster deployment
   ansible.builtin.import_playbook: cluster.yml

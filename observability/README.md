@@ -50,11 +50,13 @@
     - [Finding them in the console](#finding-them-in-the-console)
     - [The metrics you get](#the-metrics-you-get)
   - [Tear down the workload](#tear-down-the-workload)
+- [Disconnected: MinIO instead of AWS S3](#disconnected-minio-instead-of-aws-s3)
 - [Clean up](#clean-up)
 
 > **Automated version.** Everything in this document is automated in
-> [`ansible/`](ansible/) — an AWS phase an AWS admin can run alone, a cluster
-> phase, and the Network Observability Loki/no-Loki choice as a single variable.
+> [`ansible/`](ansible/) — a storage phase an admin can run alone (AWS S3, or
+> MinIO for a disconnected cluster), a cluster phase, and the Network
+> Observability Loki/no-Loki choice as a single variable.
 > [`demo/README.md`](demo/README.md) is the walkthrough for showing the result.
 > This document remains the source of truth for *why* each resource looks the
 > way it does.
@@ -158,6 +160,11 @@ echo "LOKI_AWS_SECRET_ACCESS_KEY: $LOKI_AWS_SECRET_ACCESS_KEY"
 > ```bash
 > unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
 > ```
+
+> **No route to AWS?** Loki and Tempo need *S3*, not *AWS*. On a disconnected
+> cluster, create the three buckets and their credentials on a MinIO server
+> instead and change nothing else — see
+> [Disconnected: MinIO instead of AWS S3](#disconnected-minio-instead-of-aws-s3).
 
 
 
@@ -3178,6 +3185,166 @@ slowed down, and the trace view tells you *why*, for the same request.
 
 ```bash
 oc delete -k $APP_DIR/overlays/tracing
+```
+
+## Disconnected: MinIO instead of AWS S3
+
+A disconnected cluster cannot reach `s3.$REGION.amazonaws.com`, but nothing in
+this document actually requires *AWS* — it requires *S3*. MinIO speaks the same
+API, including the same policy language, so every `LokiStack` and `TempoStack`
+above works unchanged against a MinIO server on the lab network. Only the
+credential-minting steps change.
+
+Everything below is automated: [`ansible/`](ansible/) does it as a second,
+interchangeable storage phase, selected with one variable.
+
+```bash
+ansible-playbook minio-prereqs.yml -e suffix=$SUFFIX -e s3_provider=minio \
+                 -e minio_host=minio.hub.mylab.com -e @minio-vault.yml --ask-vault-pass
+ansible-playbook cluster.yml -e suffix=$SUFFIX -e s3_provider=minio
+```
+
+See [Disconnected: MinIO instead of AWS
+S3](ansible/README.md#disconnected-minio-instead-of-aws-s3) for the full
+treatment. What follows is the same thing by hand.
+
+### Stand up MinIO
+
+Any MinIO will do. For a libvirt lab,
+[`hcp-backup-restore`](https://github.com/sadiquepp/hcp-backup-restore) already
+builds one — `setup_minio.yaml` creates the VM and installs the MinIO server and
+`mc` as a systemd service, which is where the OADP backup target for its
+disconnected simulation lives. The same server can hold the observability
+buckets; they are separate buckets with their own users.
+
+```bash
+export MINIO_HOST=minio.hub.mylab.com      # as the CLUSTER resolves it
+export MINIO_ENDPOINT=http://$MINIO_HOST:9000
+export MINIO_REGION=us-east-1              # what MinIO signs with unless MINIO_REGION says otherwise
+
+mc alias set lab $MINIO_ENDPOINT $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD
+```
+
+> **`$MINIO_HOST` is resolved by the cluster, not by your laptop.** It is copied
+> verbatim into the storage secrets that Loki and Tempo read, so it has to be an
+> address cluster DNS can resolve and the nodes can reach. An IP always works.
+> This is the single most common reason a `LokiStack` never reaches Ready on a
+> lab MinIO.
+
+### Create the bucket, policy and user
+
+Per component — `logging-loki-s3-$SUFFIX`, `netobserv-loki-s3-$SUFFIX` (Path B
+only) and `tempo-s3-$SUFFIX`. Shown here for the logging bucket; repeat with the
+other two names.
+
+```bash
+mc mb --ignore-existing lab/$BUCKET_NAME
+```
+
+The policy document is the *same one* used with `aws iam create-policy` earlier
+in this document — MinIO implements AWS's policy language, `arn:aws:s3:::` ARNs
+included:
+
+```bash
+mc admin policy create lab $LOKI_USERNAME iam-policy-$SUFFIX.json
+```
+
+> On an `mc` older than the 2023 releases the verbs are different:
+> `mc admin policy add` to create it and `mc admin policy set lab $LOKI_USERNAME
+> user=$LOKI_USERNAME` to attach it.
+
+MinIO has no separate access key id — **the user name is the access key**. Pick
+the secret yourself, rather than being handed one:
+
+```bash
+export LOKI_AWS_ACCESS_KEY_ID=$LOKI_USERNAME
+export LOKI_AWS_SECRET_ACCESS_KEY=$(openssl rand -base64 30 | tr -dc 'A-Za-z0-9' | head -c 40)
+
+mc admin user add lab $LOKI_AWS_ACCESS_KEY_ID $LOKI_AWS_SECRET_ACCESS_KEY
+mc admin policy attach lab $LOKI_USERNAME --user $LOKI_AWS_ACCESS_KEY_ID
+```
+
+Prove the credential works before going near the cluster — a `403` here is
+thirty seconds to fix, and fifteen minutes of `CrashLoopBackOff` to diagnose
+later:
+
+```bash
+mc alias set verify $MINIO_ENDPOINT $LOKI_AWS_ACCESS_KEY_ID $LOKI_AWS_SECRET_ACCESS_KEY
+mc ls verify/$BUCKET_NAME && mc alias remove verify
+```
+
+### What changes in the secrets
+
+The `LokiStack` and `TempoStack` manifests do not change at all. Their storage
+secrets change in exactly one place each — the endpoint:
+
+```bash
+oc create secret generic $LOKI_SECRET_NAME -n openshift-logging \
+  --from-literal=bucketnames="$BUCKET_NAME" \
+  --from-literal=endpoint="$MINIO_ENDPOINT" \
+  --from-literal=region="$MINIO_REGION" \
+  --from-literal=access_key_id="$LOKI_AWS_ACCESS_KEY_ID" \
+  --from-literal=access_key_secret="$LOKI_AWS_SECRET_ACCESS_KEY"
+```
+
+- **`region` still matters**, even though MinIO has no regions: it takes part in
+  the request signature. It must match what the server signs with — `us-east-1`
+  unless `MINIO_REGION` / `MINIO_SITE_REGION` is set on the server. A mismatch
+  is `SignatureDoesNotMatch` on every write.
+- **The Tempo secret keeps its two differences**: `bucket`, not `bucketnames`,
+  and still no `region` — the endpoint is what tells the operator this is
+  static, long-lived credentials.
+- **`http://` in the endpoint is how you ask for no TLS.** Both operators read
+  the scheme; there is no separate "insecure" switch.
+- Path-style addressing (`$MINIO_ENDPOINT/$BUCKET_NAME`, rather than a
+  bucket-named virtual host) is what both operators already emit for a custom
+  endpoint, so no bucket DNS is needed.
+
+### HTTPS with a lab CA
+
+For a MinIO serving TLS from a private CA, publish the CA next to each stack and
+reference it — neither Loki nor Tempo can be told to skip verification, and
+without this every write fails `x509: certificate signed by unknown authority`.
+
+```bash
+oc create configmap logging-loki-s3-ca -n openshift-logging \
+  --from-file=service-ca.crt=lab-ca.pem
+```
+
+```yaml
+# LokiStack
+spec:
+  storage:
+    secret:
+      name: logging-loki-s3-xipio
+      type: s3
+    tls:
+      caName: logging-loki-s3-ca
+      caKey: service-ca.crt
+```
+
+```yaml
+# TempoStack
+spec:
+  storage:
+    secret:
+      name: tempo-s3-xipio
+      type: s3
+    tls:
+      enabled: true
+      caName: tempo-s3-ca
+      caKey: service-ca.crt
+```
+
+`service-ca.crt` is the default key name both operators look for, so use it
+whatever the PEM is called on disk.
+
+### Removing them again
+
+```bash
+mc rb --force lab/$BUCKET_NAME
+mc admin user remove lab $LOKI_USERNAME
+mc admin policy remove lab $LOKI_USERNAME
 ```
 
 ## Clean up

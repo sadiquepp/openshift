@@ -1,0 +1,86 @@
+---
+# ── minio_backends: teardown ──────────────────────────────────────────────────
+# Included by cleanup.yml as
+#   include_role: { name: minio_backends, tasks_from: cleanup.yml }
+# so the mc plumbing and the defaults live in one place.
+#
+# DESTRUCTIVE: removes the buckets AND everything in them - every log line,
+# flow record and trace the stack ever stored.
+
+- name: Require the MinIO connection settings
+  ansible.builtin.assert:
+    that:
+      - minio_host | default('') | length > 0
+      - minio_root_user | default('') | length > 0
+      - minio_root_password | default('') | length > 0
+    fail_msg: >-
+      Removing the buckets and users needs the MinIO root credentials, the same
+      ones minio-prereqs.yml took: -e @minio-vault.yml --ask-vault-pass.
+    quiet: true
+
+- name: Build the mc command prefix
+  ansible.builtin.set_fact:
+    _mc: "{{ [minio_mc_bin] + _config_dir_args + _insecure_args }}"
+  vars:
+    _config_dir_args: "{{ ['--config-dir', minio_mc_config_dir] if (minio_mc_config_dir | length > 0) else [] }}"
+    _insecure_args: "{{ ['--insecure'] if (minio_mc_insecure | bool) else [] }}"
+
+- name: Register the mc alias for this MinIO
+  ansible.builtin.command:
+    argv: "{{ _mc + ['alias', 'set', minio_mc_alias, minio_mc_endpoint, minio_root_user, minio_root_password] }}"
+  changed_when: false
+  delegate_to: "{{ minio_mc_host }}"
+  no_log: true
+
+- name: Remove the buckets and everything in them
+  ansible.builtin.command:
+    argv: "{{ _mc + ['rb', '--force', minio_mc_alias ~ '/' ~ item.bucket] }}"
+  register: _rb
+  changed_when: _rb.rc == 0
+  failed_when: >-
+    _rb.rc != 0
+    and 'does not exist' not in ((_rb.stderr | default('')) ~ (_rb.stdout | default('')))
+  loop: "{{ observability_backends }}"
+  loop_control:
+    label: "{{ item.bucket }}"
+  when: item.enabled | bool
+  delegate_to: "{{ minio_mc_host }}"
+  # Buckets first, users second: a user with no bucket is harmless, a bucket
+  # nobody can reach is just wasted disk on the MinIO VM.
+
+- name: Remove the component users
+  ansible.builtin.command:
+    argv: "{{ _mc + ['admin', 'user', 'remove', minio_mc_alias, item.iam_name] }}"
+  register: _rm_user
+  changed_when: _rm_user.rc == 0
+  failed_when: >-
+    _rm_user.rc != 0
+    and 'does not exist' not in ((_rm_user.stderr | default('')) ~ (_rm_user.stdout | default('')))
+  loop: "{{ observability_backends }}"
+  loop_control:
+    label: "{{ item.iam_name }}"
+  when: item.enabled | bool
+  delegate_to: "{{ minio_mc_host }}"
+
+- name: Remove the component policies
+  ansible.builtin.command:
+    argv: "{{ _mc + ['admin', 'policy', 'remove', minio_mc_alias, item.iam_name] }}"
+  register: _rm_policy
+  changed_when: _rm_policy.rc == 0
+  failed_when: >-
+    _rm_policy.rc != 0
+    and 'does not exist' not in ((_rm_policy.stderr | default('')) ~ (_rm_policy.stdout | default('')))
+  loop: "{{ observability_backends }}"
+  loop_control:
+    label: "{{ item.iam_name }}"
+  when: item.enabled | bool
+  delegate_to: "{{ minio_mc_host }}"
+  # `policy remove` is spelled the same by both mc generations, so unlike
+  # create/attach it needs no version detection.
+
+- name: Report
+  ansible.builtin.debug:
+    msg: >-
+      Removed the buckets, users and policies for
+      {{ observability_backends | selectattr('enabled') | map(attribute='key') | list | join(', ') }}
+      from {{ minio_endpoint }}. The MinIO server itself is left running.

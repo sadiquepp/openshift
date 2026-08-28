@@ -1,4 +1,22 @@
 ---
+- name: "{{ lokistack_name }}: publish the object storage CA bundle"
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: "{{ lokistack_ca_configmap_name }}"
+        namespace: "{{ lokistack_namespace }}"
+      data:
+        "{{ lokistack_ca_configmap_key }}": "{{ lookup('ansible.builtin.file', observability_s3_ca_bundle_file) }}"
+  when: observability_s3_ca_bundle_file | length > 0
+  # Only for object storage behind a private CA - an HTTPS MinIO in the lab.
+  # Loki verifies the endpoint certificate and offers no way to skip it, so
+  # without this the ingester and compactor fail every write with
+  # "x509: certificate signed by unknown authority".
+
 - name: "{{ lokistack_name }}: create the S3 secret"
   kubernetes.core.k8s:
     state: present
@@ -41,6 +59,10 @@
             name: "{{ lokistack_secret_name }}"
             type: s3
             credentialMode: static
+          # Dropped entirely unless a CA bundle was given: `omit` removes the
+          # key rather than sending an empty caName, which the operator rejects.
+          tls: "{{ {'caName': lokistack_ca_configmap_name, 'caKey': lokistack_ca_configmap_key}
+                   if (observability_s3_ca_bundle_file | length > 0) else omit }}"
         storageClassName: "{{ storage_class_name }}"
         tenants:
           mode: "{{ lokistack_tenant_mode }}"

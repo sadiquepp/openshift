@@ -14,6 +14,16 @@
       (bucket names are globally unique across all of AWS).
     quiet: true
 
+- name: Require a known storage provider
+  ansible.builtin.assert:
+    that:
+      - s3_provider in ['aws', 'minio']
+    fail_msg: >-
+      `s3_provider` must be `aws` (real S3, phase 1 is aws-prereqs.yml) or
+      `minio` (an S3-compatible MinIO on the lab network, phase 1 is
+      minio-prereqs.yml). Got '{{ s3_provider | default("") }}'.
+    quiet: true
+
 - name: Check the cluster is reachable and read its version
   kubernetes.core.k8s_info:
     api_version: config.openshift.io/v1
@@ -44,6 +54,8 @@
       - "Deploying: logging={{ logging_enabled }}, netobserv={{ netobserv_enabled }}
          (loki={{ netobserv_use_loki }}), tracing={{ tracing_enabled }},
          workload={{ workload_enabled }}"
+      - "Storage:   {{ 'AWS S3 in ' ~ aws_region if s3_provider == 'aws'
+                       else 'MinIO at ' ~ minio_endpoint }}"
 
 - name: Confirm we are cluster-admin
   kubernetes.core.k8s:
@@ -117,15 +129,43 @@
       - (observability_s3_backends | default({}))[item.key] is defined
       - (observability_s3_backends | default({}))[item.key].secret_access_key | default('') | length > 0
     fail_msg: >-
-      No S3 credentials for the `{{ item.key }}` backend. Run aws-prereqs.yml
-      first (or have an AWS admin run it and hand you
-      {{ s3_credentials_file | basename }}). If the file is vault-encrypted, add
-      --ask-vault-pass.
+      No S3 credentials for the `{{ item.key }}` backend. Run
+      {{ 'aws-prereqs.yml' if s3_provider == 'aws' else 'minio-prereqs.yml' }}
+      first (or have whoever holds the
+      {{ 'AWS admin credentials' if s3_provider == 'aws' else 'MinIO root credentials' }}
+      run it and hand you {{ s3_credentials_file | basename }}). If the file is
+      vault-encrypted, add --ask-vault-pass.
     quiet: true
   loop: "{{ observability_backends }}"
   loop_control:
     label: "{{ item.key }}"
   when: item.enabled | bool
+
+- name: Fail if the credentials file was written by the other storage phase
+  ansible.builtin.assert:
+    that:
+      - ('amazonaws.com' in (observability_s3_backends[item.key].endpoint | default('')))
+        == (s3_provider == 'aws')
+    fail_msg: >-
+      {{ s3_credentials_file | basename }} points the `{{ item.key }}` backend at
+      {{ observability_s3_backends[item.key].endpoint | default('nothing') }},
+      which is not where s3_provider={{ s3_provider }} expects it. This is what a
+      leftover file from the other storage phase looks like: the LokiStack and
+      TempoStack would come up pointing at storage this cluster may not even be
+      able to reach. Delete the file and re-run
+      {{ 'aws-prereqs.yml' if s3_provider == 'aws' else 'minio-prereqs.yml' }}.
+    quiet: true
+  loop: "{{ observability_backends }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when:
+    - item.enabled | bool
+    - (observability_s3_backends | default({}))[item.key] is defined
+
+# ── MinIO ─────────────────────────────────────────────────────────────────────
+- name: MinIO checks
+  ansible.builtin.include_tasks: minio.yml
+  when: s3_provider == 'minio'
 
 - name: Check `oc` is on PATH
   ansible.builtin.command: oc version --client

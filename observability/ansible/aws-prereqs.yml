@@ -15,6 +15,11 @@
 #
 # Re-running is safe: existing keys recorded in s3-credentials.yml are reused,
 # not rotated.
+#
+# DISCONNECTED CLUSTERS: there is a second, interchangeable storage phase.
+# minio-prereqs.yml does all of the above against a MinIO server on the lab
+# network and writes the same s3-credentials.yml, so nothing cluster-side
+# changes. Pick one with `s3_provider` (group_vars/all.yml).
 # ═══════════════════════════════════════════════════════════════════════════════
 - name: Provision the AWS S3 backends for OpenShift observability
   hosts: localhost
@@ -27,3 +32,14 @@
       profile: "{{ aws_profile if (aws_profile | default('') | length > 0) else omit }}"
   roles:
     - role: aws_backends
+      when: s3_provider == 'aws'
+
+  post_tasks:
+    - name: Explain the skip
+      ansible.builtin.debug:
+        msg: >-
+          Nothing to do: s3_provider is '{{ s3_provider }}', so MinIO owns the
+          buckets. Run minio-prereqs.yml instead, or pass -e s3_provider=aws.
+      when: s3_provider != 'aws'
+      # A skip rather than a failure, so site.yml can import both phases and let
+      # the variable pick one.

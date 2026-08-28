@@ -38,6 +38,18 @@ confirm_pause_seconds: 30
 # the runbook. Preflight fails if it is empty.
 suffix: ""
 
+# ── Where the object storage lives ────────────────────────────────────────────
+# `aws`   -> real S3. Phase 1 is aws-prereqs.yml.
+# `minio` -> a MinIO server on the lab network, for a DISCONNECTED cluster with
+#            no route to AWS. Phase 1 is minio-prereqs.yml.
+#
+# The two are interchangeable because the seam between the phases is a file, not
+# a provider: both write the same s3-credentials.yml, and Loki and Tempo both
+# speak plain S3 to whatever `endpoint` it names. Nothing in the cluster phase
+# branches on this - the LokiStack and TempoStack manifests are identical either
+# way. See "Disconnected: MinIO instead of AWS S3" in README.md.
+s3_provider: aws
+
 aws_region: ap-south-1
 
 # Named AWS profile to authenticate with. Empty means "use botocore's normal
@@ -70,8 +82,8 @@ workload_enabled: true
 #            stack. No extra storage, no per-flow records. Overview and Topology
 #            still work, at node/namespace/owner-workload scope.
 #
-# Switching false -> true later is supported: re-run cluster.yml (and
-# aws-prereqs.yml first, for the extra bucket). The FlowCollector is patched in
+# Switching false -> true later is supported: re-run cluster.yml (and the
+# storage phase first, for the extra bucket). The FlowCollector is patched in
 # place, nothing is reinstalled.
 netobserv_use_loki: true
 
@@ -129,7 +141,9 @@ otel_collector_name: otel
 # See observability/README.md "Label names depend on the data model".
 logging_uiplugin_schema: viaq
 
-# ── AWS resource names ────────────────────────────────────────────────────────
+# ── Bucket and credential names ───────────────────────────────────────────────
+# Used by both storage phases. On AWS `iam_name` names the IAM policy and user;
+# on MinIO it names the policy and IS the access key.
 logging_bucket_name: "logging-loki-s3-{{ suffix }}"
 logging_iam_name: "logging-loki-s3-{{ suffix }}"
 netobserv_bucket_name: "netobserv-loki-s3-{{ suffix }}"
@@ -137,7 +151,7 @@ netobserv_iam_name: "netobserv-loki-s3-{{ suffix }}"
 tempo_bucket_name: "tempo-s3-{{ suffix }}"
 tempo_iam_name: "tempo-s3-{{ suffix }}"
 
-# The single list both aws-prereqs.yml and cluster.yml iterate over. Adding a
+# The single list every storage phase and cluster.yml iterate over. Adding a
 # fourth S3-backed component means adding one entry here.
 observability_backends:
   - key: logging
@@ -153,9 +167,62 @@ observability_backends:
     bucket: "{{ tempo_bucket_name }}"
     iam_name: "{{ tempo_iam_name }}"
 
-# The handoff file aws-prereqs.yml writes and cluster.yml reads. Mode 0600,
+# The handoff file the storage phase writes and cluster.yml reads. Mode 0600,
 # gitignored. Hand it to the cluster admin over a channel you trust.
 s3_credentials_file: "{{ playbook_dir }}/s3-credentials.yml"
+
+# ── MinIO (s3_provider: minio) ────────────────────────────────────────────────
+# Ignored entirely when s3_provider is `aws`.
+#
+# The bucket, policy and user names above are reused as-is: `iam_name` names the
+# MinIO policy and doubles as the access key, since MinIO has no separate key id.
+
+# REQUIRED. The address of the MinIO server AS THE CLUSTER RESOLVES IT - this
+# string is written verbatim into the LokiStack and TempoStack storage secrets.
+# Loki and Tempo resolve it through cluster DNS, which for a lab hostname means
+# the cluster's upstream resolver has to know it; an IP address always works.
+minio_host: ""
+minio_scheme: http
+minio_api_port: 9000
+minio_endpoint: "{{ minio_scheme }}://{{ minio_host }}:{{ minio_api_port }}"
+
+# MinIO has no regions, but a LokiStack storage secret requires the key and the
+# value takes part in the request signature, so it has to match what the server
+# signs with. That is `us-east-1` unless MINIO_REGION / MINIO_SITE_REGION is set
+# on the server.
+minio_region: us-east-1
+
+# REQUIRED. MINIO_ROOT_USER / MINIO_ROOT_PASSWORD on the MinIO server. Needed
+# only by the storage phase, to mint the per-component users - the cluster never
+# sees them. Keep them in a vault file:
+#
+#   ansible-vault create minio-vault.yml
+#   ansible-playbook minio-prereqs.yml -e @minio-vault.yml --ask-vault-pass
+minio_root_user: ""
+minio_root_password: ""
+
+# The inventory host `mc` runs on. localhost needs mc installed on the control
+# node and a route to the MinIO API port. Point it at the MinIO VM instead when
+# only SSH gets you there - hcp-backup-restore's `setup-minio` role already
+# leaves mc at /usr/local/bin/mc on that VM:
+#
+#   -e minio_mc_host=minio.hub.mylab.com -e minio_mc_endpoint=http://127.0.0.1:9000
+minio_mc_host: localhost
+minio_mc_bin: mc
+minio_mc_endpoint: "{{ minio_endpoint }}"
+minio_mc_alias: observability
+minio_mc_config_dir: ""
+minio_mc_insecure: false        # --insecure for mc only; see the CA bundle below
+
+# PEM bundle of the CA that signed MinIO's serving certificate, on the control
+# node. Needed only for an HTTPS MinIO with a private CA: Loki and Tempo verify
+# the endpoint certificate, and neither has a way to skip that. Non-empty
+# publishes it as a ConfigMap next to each LokiStack and the TempoStack, and
+# points `spec.storage.tls.caName` at it.
+#
+# Leave empty for a plain-HTTP MinIO (the default the lab MinIO runs with) or
+# one whose CA the cluster already trusts.
+observability_s3_ca_bundle_file: ""
 
 # ── Test workload ─────────────────────────────────────────────────────────────
 app_dir: "{{ playbook_dir }}/../../test-workloads/online-boutique"

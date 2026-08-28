@@ -15,3 +15,14 @@ lokistack_tenant_mode: ""     # required - openshift-logging | openshift-network
 lokistack_secret_name: "{{ observability_s3_backends[lokistack_backend_key].bucket }}"
 lokistack_size: "{{ loki_size | default('1x.pico') }}"
 lokistack_wait_timeout: 900
+
+# Object storage CA. Non-empty `observability_s3_ca_bundle_file` publishes the
+# bundle as a ConfigMap beside the LokiStack and points spec.storage.tls at it -
+# the private-CA HTTPS MinIO case. Empty leaves the TLS block out entirely,
+# which is what AWS S3 (public CA) and a plain-HTTP MinIO both want.
+observability_s3_ca_bundle_file: ""
+lokistack_ca_configmap_name: "{{ lokistack_name }}-s3-ca"
+# The key inside the ConfigMap. `service-ca.crt` is the Loki operator's own
+# default for spec.storage.tls.caKey, and older operator builds have no caKey
+# field at all and assume that name - so use it whatever the file is called.
+lokistack_ca_configmap_key: service-ca.crt
