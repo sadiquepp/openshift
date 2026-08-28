@@ -1,0 +1,150 @@
+# ── A SECOND, INDEPENDENT COLLECTOR ───────────────────────────────────────────
+# Nothing in here touches the `{{ otel_collector_name }}` OpenTelemetryCollector. That CR keeps
+# receiving 100% of spans, keeps writing all of them to Tempo, and keeps
+# producing spanmetrics from the full stream - which is what parts 3 and 4 of
+# the demo depend on.
+#
+# This collector sits IN FRONT of it and forks the same spans two ways:
+#
+#   traces/passthrough  every span, unchanged, on to `{{ otel_collector_name }}`   <- the existing path
+#   traces/sampled      the same spans through tail_sampling      <- the new thing
+#
+# Putting it in front rather than teeing off the back is the only arrangement
+# that leaves the existing CR byte-for-byte unmodified. The cost is that this
+# pod is briefly in the critical path: if it will not start, spans stop reaching
+# Tempo. The role applies it and waits for it to be Ready BEFORE repointing any
+# workload, so a collector that fails to come up never breaks the existing
+# pipeline - and `demo_state=reverted` puts the endpoints back in one command.
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: {{ otel_tailsampling_collector_name }}
+  namespace: {{ tracing_namespace }}
+spec:
+  # `statefulset`, not `deployment`, and exactly ONE replica. Tail sampling is a
+  # stateful component: it buffers every span of a trace until it can see the
+  # whole trace and decide. A trace whose spans land on two different collector
+  # instances is evaluated twice, on two partial views, so an error in the half
+  # the sampler did not see is silently dropped - which destroys the "all errors
+  # are captured" guarantee this demo exists to make.
+  #
+  # A Deployment rolling update briefly runs two pods, which reproduces exactly
+  # that split; a StatefulSet replaces its pod in place instead. Scaling out is
+  # a real architecture (a first tier of collectors with the `loadbalancing`
+  # exporter routing by trace ID to a second tier of samplers) and is out of
+  # scope here.
+  mode: statefulset
+  replicas: 1
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: {{ otel_tailsampling_memory_limit }}
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc: {}    # :4317 - the compiled-in SDKs
+          http: {}    # :4318 - the injected Java agent on adservice
+    processors:
+      memory_limiter:
+        check_interval: 1s
+        # Deliberately higher than the {{ otel_collector_name }} collector's 50%. Tail sampling holds
+        # up to `num_traces` traces in memory for `decision_wait`, so the working
+        # set is genuinely larger and a 50% ceiling would refuse data during
+        # normal operation.
+        limit_percentage: 75
+        spike_limit_percentage: 15
+      batch: {}
+      tail_sampling:
+        # How long to hold a trace before deciding. The sampler has no way to
+        # know a trace is finished, so it waits this long after the FIRST span
+        # arrives and then evaluates whatever it has. Online Boutique traces
+        # complete in tens of milliseconds, so {{ otel_tailsampling_decision_wait }} is generous; the
+        # visible consequence is that the sampled stream lags real time by about
+        # that much, which is worth saying out loud during the demo.
+        decision_wait: {{ otel_tailsampling_decision_wait }}
+        # The memory bound, in traces held simultaneously. Exceeding it evicts
+        # the oldest trace undecided and increments
+        # otelcol_processor_tail_sampling_sampling_trace_dropped_too_early.
+        num_traces: {{ otel_tailsampling_num_traces }}
+        expected_new_traces_per_sec: {{ otel_tailsampling_expected_new_traces_per_sec }}
+        # POLICIES ARE OR'd, NOT AND'd. A trace is kept if ANY policy votes to
+        # keep it. That is the whole trick behind "every error, plus {{ otel_tailsampling_percentage }}% of the
+        # rest": the probabilistic policy below is evaluated against ALL traces,
+        # errors included, but an error trace has already been kept by the first
+        # policy, so the only traces the {{ otel_tailsampling_percentage }}% actually decides are the
+        # successful ones. People routinely try to express this with `and` /
+        # `not` sub-policies and get it wrong.
+        policies:
+          - name: errors
+            type: status_code
+            status_code:
+              # Span status, set by the instrumentation - otelgrpc and otelhttp
+              # both mark a span Error on a non-OK gRPC code or a 5xx. Matches if
+              # ANY span in the trace is Error, which is what makes this catch a
+              # failure deep in the call graph even when the root span succeeded.
+              status_codes: [ERROR]
+{% if otel_tailsampling_capture_exceptions | bool %}
+
+          - name: exceptions
+            type: ottl_condition
+            ottl_condition:
+              # Belt and braces for the "and exceptions" half of the ask. A
+              # recorded exception is a span EVENT named `exception`, and a
+              # library can record one without also setting the span's status to
+              # Error - the Java agent does exactly that for handled exceptions.
+              # Such a trace is invisible to the status_code policy above.
+              error_mode: ignore
+              spanevent:
+                - 'name == "exception"'
+{% endif %}
+{% if (otel_tailsampling_latency_threshold_ms | int) > 0 %}
+
+          - name: slow
+            type: latency
+            latency:
+              # Off by default (threshold 0). Useful extension of the same idea:
+              # keep the traces you would actually open, which is the broken ones
+              # AND the slow ones.
+              threshold_ms: {{ otel_tailsampling_latency_threshold_ms }}
+{% endif %}
+
+          - name: baseline
+            type: probabilistic
+            probabilistic:
+              # The floor of healthy traffic kept for baselining. Deterministic
+              # on the trace ID, so it is a stable {{ otel_tailsampling_percentage }}% of traces rather than
+              # {{ otel_tailsampling_percentage }}% of spans - every span of a kept trace is kept.
+              sampling_percentage: {{ otel_tailsampling_percentage }}
+    exporters:
+      otlp/passthrough:
+        # The existing collector's OTLP gRPC receiver. Plaintext, because that
+        # receiver is configured with `grpc: {}` and terminates no TLS.
+        endpoint: {{ otel_collector_name }}-collector.{{ tracing_namespace }}.svc.cluster.local:4317
+        tls:
+          insecure: true
+      debug:
+        # `normal` prints about one line per span - name, trace ID, span ID -
+        # which is what makes the surviving traces readable without drowning the
+        # container log. `detailed` renders every span as a multi-line block and
+        # is what the log-correlation demo uses; it is far too loud here, because
+        # this pipeline emits whole traces rather than the occasional log record.
+        verbosity: {{ otel_tailsampling_debug_verbosity }}
+    service:
+      pipelines:
+        # One receiver, two pipelines. This is the fork: the same spans are
+        # consumed twice, and the two pipelines share nothing downstream.
+        traces/passthrough:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [otlp/passthrough]
+        traces/sampled:
+          receivers: [otlp]
+          # memory_limiter FIRST and batch LAST, as always. tail_sampling goes
+          # between them: batching before sampling would be pointless work, and
+          # batching after keeps the export efficient.
+          processors: [memory_limiter, tail_sampling, batch]
+          exporters: [debug]

@@ -1,0 +1,55 @@
+---
+# Order is the safety property here. The collector is created and proved Ready
+# BEFORE anything is repointed at it, so a collector that fails to start - a
+# rejected OTTL condition, an unschedulable pod - leaves the existing pipeline
+# completely untouched rather than black-holing the cluster's spans.
+
+- name: Create the tail-sampling OpenTelemetryCollector
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition: "{{ lookup('ansible.builtin.template', 'otel-tailsampling.yaml.j2') | from_yaml }}"
+
+- name: Wait for the tail-sampling collector to be Ready
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: StatefulSet
+    name: "{{ otel_tailsampling_collector_name }}-collector"
+    namespace: "{{ tracing_namespace }}"
+  register: _ts_sts
+  retries: 40
+  delay: 10
+  until: >-
+    _ts_sts.resources | length > 0
+    and (_ts_sts.resources[0].status.readyReplicas | default(0))
+        == (_ts_sts.resources[0].spec.replicas | default(-1))
+  failed_when: false
+  # failed_when: false so the assert below can say what is actually wrong. A
+  # collector whose config the operator accepted but the binary rejects starts,
+  # crashes, and CrashLoopBackOffs - the StatefulSet just never becomes Ready,
+  # and "until timed out" alone sends people looking in the wrong place.
+
+- name: Confirm the tail-sampling collector started
+  ansible.builtin.assert:
+    that:
+      - _ts_sts.resources | default([]) | length > 0
+      - (_ts_sts.resources[0].status.readyReplicas | default(0)) > 0
+    fail_msg: >-
+      {{ otel_tailsampling_collector_name }}-collector never became Ready, so nothing was repointed
+      at it and the existing pipeline is untouched. Read the pod's log first -
+      `oc logs -n {{ tracing_namespace }} statefulset/{{ otel_tailsampling_collector_name }}-collector`.
+      A config the operator accepted but the collector binary rejects fails
+      there, on startup, naming the component. The usual candidate is the
+      `exceptions` policy: the `ottl_condition` policy type and the spanevent
+      OTTL context are newer than the rest of this config, and tail sampling as
+      a whole is a Technology Preview component in the Red Hat build. Re-run
+      with `-e otel_tailsampling_capture_exceptions=false` to drop that policy;
+      the `errors` policy alone still captures everything the instrumentation
+      marks as failed.
+    quiet: true
+
+- name: Repoint the workload at the tail-sampling collector
+  ansible.builtin.include_tasks: repoint.yml
+  vars:
+    _otlp_grpc_target: "{{ otel_tailsampling_collector_name }}-collector.{{ tracing_namespace }}.svc.cluster.local:4317"
+    _otlp_http_target: "http://{{ otel_tailsampling_collector_name }}-collector.{{ tracing_namespace }}.svc.cluster.local:4318"

@@ -66,6 +66,7 @@
       loop:
         - { api_version: "flows.netobserv.io/v1beta2", kind: FlowCollector, name: cluster }
         - { api_version: "opentelemetry.io/v1beta1", kind: OpenTelemetryCollector, name: "{{ otel_collector_name }}", namespace: "{{ tracing_namespace }}" }
+        - { api_version: "opentelemetry.io/v1beta1", kind: OpenTelemetryCollector, name: "{{ otel_tailsampling_collector_name }}", namespace: "{{ tracing_namespace }}" }
         - { api_version: "tempo.grafana.com/v1alpha1", kind: TempoStack, name: "{{ tempo_stack_name }}", namespace: "{{ tracing_namespace }}" }
         - { api_version: "observability.openshift.io/v1", kind: ClusterLogForwarder, name: instance, namespace: "{{ logging_namespace }}" }
         - { api_version: "logging.openshift.io/v1alpha1", kind: LogFileMetricExporter, name: instance, namespace: "{{ logging_namespace }}" }

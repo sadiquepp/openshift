@@ -1,0 +1,130 @@
+---
+# ═══════════════════════════════════════════════════════════════════════════════
+# The tail-sampling demo (observability/demo/README.md, part 6).
+#
+#   Turn on:   ansible-playbook demo-tail-sampling.yml -e suffix=xipio
+#   Break it:  ansible-playbook demo-tail-sampling.yml -e suffix=xipio \
+#                                                      -e break_service=paymentservice
+#   Revert:    ansible-playbook demo-tail-sampling.yml -e suffix=xipio \
+#                                                      -e demo_state=reverted
+#
+# Stands up a SECOND OpenTelemetryCollector that keeps 100% of traces containing
+# an error or a recorded exception and only 5% of the healthy ones, and moves the
+# workload's OTLP endpoints to it. That collector forwards every span, unsampled,
+# to the existing `otel` collector - so Tempo still holds 100% of traces,
+# spanmetrics is still computed on the full stream, and the existing
+# OpenTelemetryCollector CR is not modified in any way.
+#
+# `break_service` scales one service to zero so the calls into it fail, which is
+# what gives the demo error traces to catch. It is off by default, because a
+# playbook that breaks your application without being asked is a bad playbook.
+# Reverting heals whatever was broken, whether or not you name it again.
+# ═══════════════════════════════════════════════════════════════════════════════
+- name: Toggle the tail-sampling demo
+  hosts: localhost
+  gather_facts: false
+
+  # Connection settings for every kubernetes.core module, without repeating them
+  # on each task. Both `omit` when empty, so the modules fall back to KUBECONFIG
+  # and then ~/.kube/config exactly as they would otherwise.
+  #
+  # k8s_json_patch is listed separately because its membership of the `k8s`
+  # action group is version-dependent: it is absent in kubernetes.core 3.3.1
+  # (the legacy pin) and 6.1.0, and present from 6.5.0. The explicit entry is
+  # correct either way - a module-level default simply wins over a group one.
+  module_defaults:
+    group/kubernetes.core.k8s: &k8s_connection
+      kubeconfig: "{{ kubeconfig if (kubeconfig | default('') | length > 0) else omit }}"
+      context: "{{ kube_context if (kube_context | default('') | length > 0) else omit }}"
+    kubernetes.core.k8s_json_patch: *k8s_connection
+
+  vars:
+    demo_state: enabled          # enabled | reverted
+    otel_tailsampling_enabled: "{{ demo_state == 'enabled' }}"
+    # Name of a Deployment in the app namespace to scale to zero, so its callers
+    # produce error spans. "" means inject nothing.
+    break_service: ""
+
+  tasks:
+    - name: Validate the requested state
+      ansible.builtin.assert:
+        that:
+          - demo_state in ['enabled', 'reverted']
+        fail_msg: "demo_state must be `enabled` or `reverted`."
+        quiet: true
+
+    - name: Apply or remove the tail-sampling collector
+      ansible.builtin.include_role:
+        name: tail_sampling
+
+    # ── Failure injection ────────────────────────────────────────────────────
+    # Scaling to zero rather than patching in a bad address, because it is
+    # obvious, instant, and unmistakably reversible. The Service keeps existing
+    # with no endpoints, so callers get an immediate gRPC UNAVAILABLE rather
+    # than a slow DNS failure, and the caller's client span is marked Error.
+
+    - name: Break a service so the demo has failing traces
+      kubernetes.core.k8s:
+        state: patched
+        api_version: apps/v1
+        kind: Deployment
+        name: "{{ break_service }}"
+        namespace: "{{ app_namespace }}"
+        definition:
+          metadata:
+            annotations:
+              # Stamped on whatever gets scaled to zero, so reverting can find
+              # it again without being told which service to heal. Healing every
+              # zero-replica Deployment in the namespace would also "heal" one
+              # you scaled down for your own reasons.
+              demo.observability/tail-sampling-scaled-to-zero: "1"
+          spec:
+            replicas: 0
+      when:
+        - otel_tailsampling_enabled | bool
+        - break_service | length > 0
+
+    - name: Find anything this demo scaled to zero
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        namespace: "{{ app_namespace }}"
+      register: _broken
+      when: not (otel_tailsampling_enabled | bool)
+
+    - name: Heal it
+      kubernetes.core.k8s:
+        state: patched
+        api_version: apps/v1
+        kind: Deployment
+        name: "{{ item.metadata.name }}"
+        namespace: "{{ app_namespace }}"
+        definition:
+          metadata:
+            annotations:
+              # null removes the key in a strategic merge patch, so the marker
+              # does not linger and make a later revert heal a service somebody
+              # has since scaled down on purpose.
+              demo.observability/tail-sampling-scaled-to-zero: null
+          spec:
+            replicas: 1
+      loop: "{{ _broken.resources | default([]) }}"
+      loop_control:
+        label: "{{ item.metadata.name }}"
+      when:
+        - not (otel_tailsampling_enabled | bool)
+        - "'demo.observability/tail-sampling-scaled-to-zero' in (item.metadata.annotations | default({}))"
+
+    - name: What to do next
+      ansible.builtin.debug:
+        msg: >-
+          {{ ('Tail sampling ON. Every trace containing an error or a recorded exception is kept; '
+              ~ otel_tailsampling_percentage ~ '% of the healthy ones are. Watch what survives with: oc logs -n '
+              ~ tracing_namespace ~ ' statefulset/' ~ otel_tailsampling_collector_name
+              ~ '-collector -f | grep --line-buffered -E "[0-9a-f]{32}"'
+              ~ (('  |  No failures injected yet - add -e break_service=paymentservice to break checkout.')
+                 if (break_service | length == 0) else ('  |  ' ~ break_service ~ ' is scaled to zero; its callers are now failing.')))
+             if (otel_tailsampling_enabled | bool)
+             else ('Tail sampling reverted. The ' ~ otel_tailsampling_collector_name
+                   ~ ' collector is gone, the workload exports to ' ~ otel_collector_name
+                   ~ '-collector again, and anything this demo scaled to zero is back.') }}

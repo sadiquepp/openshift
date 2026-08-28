@@ -1,0 +1,22 @@
+---
+# The mirror image of enable.yml, and the order is inverted for the same reason:
+# stop sending spans to the tail-sampling collector BEFORE deleting it, or the
+# workload spends the gap exporting into a Service with no endpoints.
+
+- name: Point the workload back at the {{ otel_collector_name }} collector
+  ansible.builtin.include_tasks: repoint.yml
+  vars:
+    _otlp_grpc_target: "{{ otel_collector_name }}-collector.{{ tracing_namespace }}.svc.cluster.local:4317"
+    _otlp_http_target: "http://{{ otel_collector_name }}-collector.{{ tracing_namespace }}.svc.cluster.local:4318"
+
+- name: Delete the tail-sampling OpenTelemetryCollector
+  kubernetes.core.k8s:
+    state: absent
+    api_version: opentelemetry.io/v1beta1
+    kind: OpenTelemetryCollector
+    name: "{{ otel_tailsampling_collector_name }}"
+    namespace: "{{ tracing_namespace }}"
+    wait: true
+    wait_timeout: 120
+  # The operator garbage-collects the StatefulSet, both Services and the
+  # ServiceAccount it created, because they are all owned by this CR.

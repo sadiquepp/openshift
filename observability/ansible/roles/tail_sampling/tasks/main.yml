@@ -1,0 +1,17 @@
+---
+# ── tail_sampling ─────────────────────────────────────────────────────────────
+# A second OpenTelemetryCollector that keeps every failing trace and a fixed
+# small percentage of the healthy ones. Driven by demo-tail-sampling.yml; see
+# ../../demo/README.md part 6 for what it demonstrates and why.
+#
+# The existing `otel` collector is not read, patched or re-applied anywhere in
+# this role. The only existing objects touched are the workload's OTLP endpoints,
+# and both directions are one variable apart.
+
+- name: Stand up the tail-sampling collector
+  ansible.builtin.include_tasks: enable.yml
+  when: otel_tailsampling_enabled | bool
+
+- name: Remove the tail-sampling collector
+  ansible.builtin.include_tasks: revert.yml
+  when: not (otel_tailsampling_enabled | bool)

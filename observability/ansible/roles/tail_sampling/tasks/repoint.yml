@@ -1,0 +1,159 @@
+---
+# Move the workload's OTLP endpoints between the two collectors. Called from
+# enable.yml and revert.yml with `_otlp_grpc_target` / `_otlp_http_target` set
+# to whichever collector should receive spans; nothing else differs between the
+# two directions.
+#
+# Repointing the workload is what keeps the existing OpenTelemetryCollector CR
+# unmodified. The alternative - adding a second `otlp` exporter to that CR's
+# traces pipeline so it mirrors spans sideways - is the gentler change
+# operationally, but it is a change to the object this demo was asked to leave
+# alone. Note it as the production shape and move on.
+
+- name: Find the deployments that export spans
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    namespace: "{{ app_namespace }}"
+  register: _ts_deploys
+
+- name: Repoint every deployment that exports spans
+  kubernetes.core.k8s:
+    state: patched
+    api_version: apps/v1
+    kind: Deployment
+    name: "{{ item.metadata.name }}"
+    namespace: "{{ app_namespace }}"
+    definition:
+      spec:
+        template:
+          spec:
+            containers:
+              - name: server
+                env:
+                  - name: COLLECTOR_SERVICE_ADDR
+                    value: "{{ _otlp_grpc_target }}"
+  loop: "{{ _ts_deploys.resources | default([]) }}"
+  loop_control:
+    label: "{{ item.metadata.name }}"
+  when: >-
+    item.spec.template.spec.containers
+    | map(attribute='env', default=[]) | flatten
+    | map(attribute='name') | select('equalto', 'COLLECTOR_SERVICE_ADDR')
+    | list | length > 0
+  register: _ts_patch
+  # Discovered rather than listed, so this keeps working if the overlay's set of
+  # instrumented services changes. `env` is a list with `name` as its strategic
+  # merge key, so the patch replaces that ONE entry and leaves the rest of the
+  # container spec alone. loadgenerator is filtered out by the same test: it has
+  # no COLLECTOR_SERVICE_ADDR because it is not instrumented, and neither has
+  # adservice - its endpoint comes from the Instrumentation CR, handled below.
+
+- name: Collect what was repointed
+  ansible.builtin.set_fact:
+    _ts_repointed: >-
+      {{ _ts_patch.results | default([])
+         | rejectattr('skipped', 'defined')
+         | map(attribute='item.metadata.name')
+         | reject('equalto', 'adservice') | list }}
+
+- name: Wait for each repointed deployment to roll out
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    name: "{{ item }}"
+    namespace: "{{ app_namespace }}"
+  register: _ts_one
+  retries: 60
+  delay: 5
+  until: >-
+    _ts_one.resources | length > 0
+    and (_ts_one.resources[0].status.observedGeneration | default(-1))
+        >= (_ts_one.resources[0].metadata.generation | default(0))
+    and (_ts_one.resources[0].status.updatedReplicas | default(0))
+        == (_ts_one.resources[0].spec.replicas | default(-1))
+    and (_ts_one.resources[0].status.readyReplicas | default(0))
+        == (_ts_one.resources[0].spec.replicas | default(-1))
+  loop: "{{ _ts_repointed }}"
+  # Waited per deployment, and on observedGeneration rather than on readiness
+  # alone: immediately after a patch the controller has not reconciled yet, so
+  # updatedReplicas and readyReplicas still describe the PREVIOUS pod template
+  # and briefly look complete. Comparing readyReplicas to spec.replicas rather
+  # than to 1 also keeps this correct for a service deliberately scaled to zero
+  # by the failure injection.
+
+# ── adservice, whose endpoint lives in the Instrumentation CR ─────────────────
+# The injected Java agent is configured by the Instrumentation CR, not by the
+# Deployment, so it is repointed separately. Skipping it would leave a hole in
+# the guarantee this demo makes: a trace whose adservice span is Error would be
+# evaluated by the sampler without that span present, and dropped as healthy.
+
+- name: Look for the Instrumentation CR
+  kubernetes.core.k8s_info:
+    api_version: opentelemetry.io/v1alpha1
+    kind: Instrumentation
+    name: online-boutique
+    namespace: "{{ app_namespace }}"
+  register: _ts_instr
+  failed_when: false
+
+- name: Repoint and restart adservice
+  when:
+    - otel_tailsampling_include_adservice | bool
+    - _ts_instr.resources | default([]) | length > 0
+  block:
+    - name: Repoint the Instrumentation CR
+      kubernetes.core.k8s:
+        state: patched
+        api_version: opentelemetry.io/v1alpha1
+        kind: Instrumentation
+        name: online-boutique
+        namespace: "{{ app_namespace }}"
+        merge_type: merge
+        definition:
+          spec:
+            exporter:
+              endpoint: "{{ _otlp_http_target }}"
+      # Port 4318, not 4317: the injected agents default to OTLP over HTTP.
+      #
+      # merge_type: merge because this is a custom resource. The module's
+      # default tries a strategic merge patch first, and the API server has no
+      # strategic merge metadata for a CRD - it answers 415. An RFC 7386 merge
+      # patch descends into `spec.exporter` and replaces only `endpoint`, so
+      # `sampler`, `propagators` and `env` survive untouched.
+      # A plain patch, not a re-render of the template in test_workload - that
+      # template is shared with the log-correlation demo and re-rendering it
+      # here would also rewrite OTEL_LOGS_EXPORTER out from under it.
+
+    - name: Restart adservice so it picks up the new endpoint
+      kubernetes.core.k8s:
+        state: patched
+        api_version: apps/v1
+        kind: Deployment
+        name: adservice
+        namespace: "{{ app_namespace }}"
+        definition:
+          spec:
+            template:
+              metadata:
+                annotations:
+                  kubectl.kubernetes.io/restartedAt: "{{ now(utc=true).isoformat() }}"
+      # The Instrumentation CR is read by the mutating webhook at pod admission
+      # and never again, so a running pod keeps exporting to the old endpoint
+      # until its pod template changes. Same mechanism as `oc rollout restart`.
+
+    - name: Wait for adservice
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        name: adservice
+        namespace: "{{ app_namespace }}"
+      register: _ts_ad
+      retries: 60
+      delay: 10
+      until: >-
+        _ts_ad.resources | length > 0
+        and (_ts_ad.resources[0].status.observedGeneration | default(-1))
+            >= (_ts_ad.resources[0].metadata.generation | default(0))
+        and (_ts_ad.resources[0].status.readyReplicas | default(0))
+            == (_ts_ad.resources[0].spec.replicas | default(-1))

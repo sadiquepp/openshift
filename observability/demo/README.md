@@ -1,13 +1,14 @@
 # Demoing the OpenShift observability stack
 
 A walkthrough of a cluster built by [`../ansible`](../ansible), driven by the
-Online Boutique test workload. Five parts, roughly 35 minutes end to end, each
+Online Boutique test workload. Six parts, roughly 45 minutes end to end, each
 one usable on its own.
 
 The through-line: **one application, four signals, and the question each signal
-can answer that the others cannot.** The last part is the interesting one — it
-shows the single thing OpenTelemetry gives you that the platform's own log
-pipeline structurally cannot.
+can answer that the others cannot.** Part 5 shows the single thing OpenTelemetry
+gives you that the platform's own log pipeline structurally cannot. Part 6 answers
+the question every audience asks the moment they have seen a trace — *surely you
+are not keeping all of these?*
 
 ## Contents
 - [Before you start](#before-you-start)
@@ -17,6 +18,7 @@ pipeline structurally cannot.
 - [Part 3 — Traces](#part-3--traces)
 - [Part 4 — Metrics](#part-4--metrics)
 - [Part 5 — Logs through OpenTelemetry, and why they are different](#part-5--logs-through-opentelemetry-and-why-they-are-different)
+- [Part 6 — Tail sampling: keep every failure, throw away most of the rest](#part-6--tail-sampling-keep-every-failure-throw-away-most-of-the-rest)
 - [Closing the loop](#closing-the-loop)
 - [Reverting](#reverting)
 
@@ -567,6 +569,288 @@ Harmless for a demo, confusing on a shared cluster, and the reason to revert.
 > `OTEL_LOGS_EXPORTER: none`; the collector must have a `logs` pipeline
 > (`oc get opentelemetrycollector otel -n $TRACING_NAMESPACE -o jsonpath='{.spec.config.service.pipelines}'`);
 > and `adservice` must have been restarted *after* both.
+
+## Part 6 — Tail sampling: keep every failure, throw away most of the rest
+
+*≈10 minutes. **The collector's stdout, then Observe → Metrics and Observe → Traces.***
+
+Ask the audience the question Part 3 leaves hanging. One page render was **24
+spans**. The load generator drives roughly 15 requests a second, all day. That is
+tens of millions of spans a day from eleven services — and this is a demo shop,
+not a real estate.
+
+Nobody keeps all of it. The question is *which* traces you keep, and **when you
+decide.**
+
+### Head sampling decides too early to be useful
+
+The knob everybody reaches for first is a head sampler, and there is one on this
+cluster already — in the `Instrumentation` CR that drives adservice's injected
+agent, currently set to keep everything:
+
+```bash
+oc get instrumentation online-boutique -n $APP_NAMESPACE -o jsonpath='{.spec.sampler}{"\n"}'
+```
+
+```json
+{"argument":"1","type":"parentbased_traceidratio"}
+```
+
+The seven SDK-instrumented services have no sampler configured at all, which
+means the same thing by default. Change that `1` to `0.05`, set
+`OTEL_TRACES_SAMPLER_ARG=0.05` on the other seven, and you have cut trace volume
+by 95% in two minutes. Do not — and the reason is the whole of this section.
+
+That decision is made **on the root span, before the request has done anything**.
+The frontend has not called checkout yet, checkout has not called payment,
+nothing has failed yet, because nothing has happened yet. All the sampler knows
+is the trace ID. So it keeps a random 5% — and the checkout that will fail in
+12 milliseconds' time has a 95% chance of being discarded before it fails.
+
+**You would be throwing away exactly the traces you built this for.**
+
+| | Head sampling | Tail sampling |
+|---|---|---|
+| Decides | at the root span, before the work happens | after the trace is complete |
+| Knows | the trace ID | every span, every status, the total duration |
+| Can keep all errors | **no** — the error has not happened yet | yes |
+| Costs | nothing; spans are never emitted | every span must be sent, buffered and held |
+| Runs in | the application SDK | the collector, statefully |
+
+Tail sampling is the other end of that trade: the application emits **everything**,
+the collector holds each trace until it can see the whole thing, and only then
+decides. You pay full network and collector cost to save storage cost — which is
+a good trade, because storage is where the money is and it is the only decision
+you cannot take back.
+
+### What was deployed
+
+A **second** `OpenTelemetryCollector`, in front of the existing one:
+
+```
+Online Boutique                 otel-tailsampling-collector            otel-collector
+  7 SDK services  ── OTLP ──▶  ┌────────────────────────────┐        ┌────────────────┐
+  + adservice's                │ traces/passthrough         │─ OTLP ▶│ 100% ──▶ Tempo │
+    injected agent             │   every span, unsampled    │        │ 100% ──▶ spanmetrics
+                               ├────────────────────────────┤        └────────────────┘
+                               │ traces/sampled             │            UNCHANGED
+                               │   tail_sampling ──▶ debug ──▶ collector stdout
+                               └────────────────────────────┘
+```
+
+One receiver, two pipelines, forked. **The `otel` collector CR is not modified —
+at all.** It still receives 100% of spans, still writes all of them to Tempo,
+still computes spanmetrics from the full stream. Everything you showed in Parts
+3, 4 and 5 keeps working, and you can flip back and forth in front of people
+without breaking anything.
+
+```bash
+ansible-playbook demo-tail-sampling.yml -e suffix=xipio
+```
+
+From [`../ansible`](../ansible). It creates the collector, waits for it to be
+Ready, and only *then* moves the workload's OTLP endpoints onto it — so a
+collector that fails to start cannot take the cluster's tracing down with it.
+
+```bash
+oc get opentelemetrycollector -n $TRACING_NAMESPACE
+```
+
+```
+NAME                MODE          VERSION   AGE
+otel                deployment    0.127.0   3h
+otel-tailsampling   statefulset   0.127.0   2m
+```
+
+### Give it something to catch
+
+Online Boutique in steady state barely fails, and a sampler that has caught no
+errors proves nothing. Break checkout:
+
+```bash
+ansible-playbook demo-tail-sampling.yml -e suffix=xipio -e break_service=paymentservice
+```
+
+That scales `paymentservice` to zero. Its Service still exists with no endpoints,
+so `checkoutservice`'s call fails immediately with gRPC `UNAVAILABLE`, the client
+span is marked `Error`, and the frontend returns a 500. Place an order in the
+browser and watch it fail — the load generator is doing the same thing about once
+every twenty requests.
+
+### The policies, and the one thing everybody gets wrong
+
+```bash
+oc get opentelemetrycollector otel-tailsampling -n $TRACING_NAMESPACE \
+  -o jsonpath='{.spec.config.processors.tail_sampling}' | python3 -m json.tool
+```
+
+Three policies:
+
+- **`errors`** — `status_code: [ERROR]`. Matches if **any** span in the trace is
+  Error, which is what makes it catch a failure buried four levels deep in the
+  call graph even when the root span returned 200.
+- **`exceptions`** — an OTTL condition on span *events* named `exception`. A
+  library can record an exception without setting the span's status to Error —
+  the Java agent does exactly that for handled exceptions — and such a trace is
+  invisible to the policy above.
+- **`baseline`** — `probabilistic: 5%`. Deterministic on the trace ID, so it is
+  5% of *traces*, not 5% of spans: every span of a kept trace is kept.
+
+**Policies are OR'd, not AND'd.** A trace is kept if *any* policy votes to keep
+it. That is the entire trick behind "all errors plus 5% of the rest": the
+probabilistic policy is evaluated against every trace, errors included, but an
+error trace has already been claimed by the first policy — so the 5% only ever
+decides the fate of the successful ones. People reliably try to express this with
+nested `and` / `not` sub-policies, get the logic inverted, and quietly drop
+errors. Show the three flat policies and say it out loud.
+
+### Watch what survives
+
+```bash
+oc logs -n $TRACING_NAMESPACE statefulset/otel-tailsampling-collector -f \
+  | grep --line-buffered -E '[0-9a-f]{32}'
+```
+
+Each line is one surviving span — name, trace ID, span ID:
+
+```
+hipstershop.CheckoutService/PlaceOrder 4bf92f3577b34da6a3ce929d0e0e4736 00f067aa0ba902b7 ...
+hipstershop.PaymentService/Charge      4bf92f3577b34da6a3ce929d0e0e4736 b7ad6b7169203331 ...
+```
+
+> `--line-buffered` matters, exactly as in Part 5. Without it `grep` buffers in
+> blocks and the stream appears to stall.
+
+Two things to point out while it scrolls:
+
+1. **It arrives in bursts, about ten seconds late.** That is `decision_wait`. The
+   sampler cannot know a trace has finished, so it holds each one for ten seconds
+   after its first span and then judges whatever it has. Tail sampling is never
+   real time, and that lag is the reason.
+2. **Whole traces, or none of it.** You never see three spans of a trace and not
+   the other twenty-one. The decision is per trace, which is the point — a
+   half-sampled trace is worse than no trace.
+
+Count distinct traces over five minutes:
+
+```bash
+oc logs -n $TRACING_NAMESPACE statefulset/otel-tailsampling-collector --since=5m \
+  | grep -oE '[0-9a-f]{32}' | sort -u | wc -l
+```
+
+### Prove the ratio, rather than asserting it
+
+The processor publishes its own decisions as metrics, and the existing
+`otel-collector-internal` ServiceMonitor already scrapes them — its selector
+matches every collector's monitoring Service in this namespace, so the new one
+was picked up with no extra configuration. Confirm three targets:
+
+```promql
+up{namespace="tracing-system"}
+```
+
+Decisions per policy:
+
+```promql
+sum by (policy, decision) (
+  rate(otelcol_processor_tail_sampling_count_traces_sampled_total[5m])
+)
+```
+
+`errors` sampled at whatever your failure rate is, `baseline` sampled at about
+one twentieth of everything. The kept share overall:
+
+```promql
+sum(rate(otelcol_processor_tail_sampling_global_count_traces_sampled_total{sampled="true"}[5m]))
+  / sum(rate(otelcol_processor_tail_sampling_global_count_traces_sampled_total[5m]))
+```
+
+And the number that pays for the exercise — spans out of the sampled pipeline
+versus spans out of the passthrough pipeline, on the same collector:
+
+```promql
+sum(rate(otelcol_exporter_sent_spans_total{job="otel-tailsampling-collector-monitoring", exporter="debug"}[5m]))
+  / sum(rate(otelcol_exporter_sent_spans_total{job="otel-tailsampling-collector-monitoring", exporter="otlp/passthrough"}[5m]))
+```
+
+**With `paymentservice` broken this sits at roughly double the 5% floor.** The
+load generator's task weights make checkout about one request in twenty, every
+one of those now fails, and every one of those is kept — on top of the 5% of the
+healthy nineteen. Heal the service and watch it settle back towards 0.05. That
+movement is the demo: *the sampler is not keeping a fixed fraction, it is keeping
+a fixed fraction **plus** everything that went wrong.*
+
+> **If a metric returns nothing**, check the label names before anything else.
+> The `decision` label is newer than the metric; older builds carry only
+> `sampled="true"/"false"`. And counters from the collector's `:8888` endpoint
+> may or may not carry the `_total` suffix depending on version — drop it and
+> retry rather than concluding the processor is not running.
+
+### Then pivot into Tempo
+
+Copy a trace ID from the error traces in the stream and look it up in
+**Observe → Traces**, or in TraceQL:
+
+```traceql
+{ trace:id = "4bf92f3577b34da6a3ce929d0e0e4736" }
+```
+
+The waterfall opens on the failing checkout: `CheckoutService/PlaceOrder` red,
+`PaymentService/Charge` red beneath it, nothing below that because there is no
+`paymentservice` left to answer. Also worth running:
+
+```traceql
+{ span:status = error }
+```
+
+Say the sentence: *of the several thousand traces in the last five minutes, the
+sampler kept a few hundred — and every single failure is among them.*
+
+### The honest caveats
+
+Four, and they are the interesting part of the section.
+
+1. **The sampled traces are not stored anywhere.** `debug` is a terminal sink,
+   exactly as in Part 5 — it renders to stdout and that is the end. Doing this
+   for real means pointing that pipeline at storage instead: a second Tempo
+   instance, or a second tenant on this TempoStack, so the sampled stream lands
+   somewhere you can query *separately* from the 100% stream. Sending it back
+   into the `dev` tenant would just write duplicate spans alongside the ones the
+   `otel` collector already stored. And note that while the `debug` exporter is
+   running, every sampled span is also printed to a container's stdout, which
+   Vector dutifully ships to Loki — harmless for a demo, another reason to revert
+   on a shared cluster.
+2. **One replica, and it must stay one replica.** Tail sampling is stateful. A
+   trace whose spans reach two sampler instances is judged twice, on two partial
+   views, and an error in the half a given instance did not see is dropped as
+   healthy. Hence `mode: statefulset` — a Deployment rolling update briefly runs
+   two pods and reproduces exactly that. Scaling out is a real architecture, and
+   it is not "set replicas to 3": it is a first tier of collectors using the
+   `loadbalancing` exporter to route by trace ID to a second tier of samplers.
+3. **Memory is the constraint, and it is bounded by `num_traces` × trace size ×
+   `decision_wait`.** Raise `decision_wait` and you hold more traces at once.
+   Watch `otelcol_processor_tail_sampling_sampling_trace_dropped_too_early_total`
+   — anything above zero means traces were evicted before they could be judged,
+   and those are unjudged, not unsampled.
+4. **Everything is still emitted and still crosses the network.** Tail sampling
+   saves storage, not bandwidth or application CPU. If your problem is that the
+   SDK is too expensive, this is the wrong tool and head sampling is the right
+   one.
+
+> Tail sampling is a **Technology Preview** component in the Red Hat build of
+> OpenTelemetry. Worth saying to a customer audience before they design a
+> production estate around what you just showed them.
+
+### Reverting
+
+```bash
+ansible-playbook demo-tail-sampling.yml -e suffix=xipio -e demo_state=reverted
+```
+
+Deletes the second collector, points the workload back at `otel-collector`, and
+scales up whatever the demo scaled to zero — it finds that by the annotation it
+stamped, so you do not have to remember which service you broke. The `otel`
+collector was never modified, so there is nothing to put back.
 
 ## Closing the loop
 

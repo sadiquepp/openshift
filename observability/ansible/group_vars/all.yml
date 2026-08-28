@@ -161,6 +161,60 @@ app_overlay: "{{ 'tracing' if (tracing_enabled | bool) else 'default' }}"
 # by demo-otel-logs.yml.
 otel_logs_demo_enabled: false
 
+# ── Tail-sampling demo ────────────────────────────────────────────────────────
+# A SECOND collector, standing in front of the first, that keeps every trace
+# containing an error or a recorded exception and only a small percentage of the
+# healthy ones. Off by default and never applied by cluster.yml: it is turned on
+# and off by demo-tail-sampling.yml alone.
+#
+# The existing `otel` OpenTelemetryCollector is not modified by any of this. It
+# keeps receiving 100% of spans - the tail-sampling collector forwards them all
+# on unsampled - so Tempo and spanmetrics see exactly what they see today.
+otel_tailsampling_enabled: false
+otel_tailsampling_collector_name: otel-tailsampling
+
+# The floor of healthy traffic kept for baselining. Errors are kept regardless:
+# tail sampling policies are OR'd, so this percentage only ever decides the fate
+# of traces no other policy already claimed.
+otel_tailsampling_percentage: 5
+
+# How long a trace is held before it is judged. The sampler cannot know a trace
+# has finished, so it waits this long after the trace's first span arrives and
+# evaluates whatever it has by then. Online Boutique traces complete in tens of
+# milliseconds; the visible cost is that the sampled stream lags real time.
+otel_tailsampling_decision_wait: 10s
+
+# Memory bound, in traces held simultaneously, and the hint the processor uses
+# to size its map. Together with the pod's memory limit these are the three
+# knobs that decide whether tail sampling stays inside its budget.
+otel_tailsampling_num_traces: 20000
+otel_tailsampling_expected_new_traces_per_sec: 100
+otel_tailsampling_memory_limit: 2Gi
+
+# Also keep any trace carrying a span event named `exception`. Worth having,
+# because a library can record an exception without marking the span's status
+# Error - the Java agent does exactly that for handled exceptions - and such a
+# trace is invisible to the status_code policy. Set false if the collector
+# rejects the `ottl_condition` policy type on your build.
+otel_tailsampling_capture_exceptions: true
+
+# Also keep any trace slower than this many milliseconds. 0 disables the policy.
+# A natural extension of the same idea - keep the traces you would actually open
+# - but not part of the errors-plus-5% story, so off by default.
+otel_tailsampling_latency_threshold_ms: 0
+
+# `normal` prints roughly one line per span - name, trace ID, span ID - which is
+# what makes the surviving traces readable. `detailed` renders every span as a
+# multi-line block and is far too loud for whole traces.
+otel_tailsampling_debug_verbosity: normal
+
+# Repoint adservice's injected Java agent too, by patching the Instrumentation
+# CR and restarting the pod. Costs a JVM restart in each direction. Leaving it
+# false puts a hole in the guarantee: adservice spans would reach the other
+# collector directly, so a trace whose only Error is in adservice would be
+# judged healthy and dropped.
+otel_tailsampling_include_adservice: true
+
 # ── Non-admin access ──────────────────────────────────────────────────────────
 # OpenShift usernames to grant the reader roles to (netobserv-reader,
 # netobserv-metrics-reader, tempostack-traces-reader). Cluster admins already

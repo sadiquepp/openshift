@@ -25,6 +25,7 @@ not give you.
 - [Variables](#variables)
 - [Running part of the stack](#running-part-of-the-stack)
 - [The OpenTelemetry log-correlation demo](#the-opentelemetry-log-correlation-demo)
+- [The tail-sampling demo](#the-tail-sampling-demo)
 - [Layout](#layout)
 - [Where this deviates from the runbook](#where-this-deviates-from-the-runbook)
 - [Re-running and idempotency](#re-running-and-idempotency)
@@ -365,6 +366,8 @@ ones worth knowing:
 | `storage_class_name` | `""` | Empty means "discover the cluster default". |
 | `logging_enabled` / `netobserv_enabled` / `tracing_enabled` / `workload_enabled` | `true` | Layer toggles. |
 | `adservice_autoinstrument` | `true` | The `Instrumentation` CR demo. Needed by the OTel log demo. |
+| `otel_tailsampling_percentage` | `5` | Share of *healthy* traces the tail-sampling demo keeps. Errors are kept regardless. |
+| `otel_tailsampling_latency_threshold_ms` | `0` | Also keep traces slower than this. `0` disables the policy. |
 | `grant_users` | `[]` | OpenShift usernames to grant the reader roles to. Admins already pass. |
 | `loki_channel`, `cluster_logging_channel`, … | `stable-6.6`, `stable` | Operator channels. |
 | `logging_uiplugin_schema` | `viaq` | See [deviations](#where-this-deviates-from-the-runbook). |
@@ -400,6 +403,52 @@ ansible-playbook demo-otel-logs.yml -e suffix=xipio
 ansible-playbook demo-otel-logs.yml -e suffix=xipio -e demo_state=reverted
 ```
 
+## The tail-sampling demo
+
+Part 6 of [`../demo/README.md`](../demo/README.md). A **second**
+`OpenTelemetryCollector` that keeps every trace containing an error or a
+recorded exception, and only `otel_tailsampling_percentage` (5%) of the healthy
+ones.
+
+```bash
+ansible-playbook demo-tail-sampling.yml -e suffix=xipio
+```
+
+Nothing to catch yet — Online Boutique in steady state barely fails. Break one
+service so its callers produce error spans:
+
+```bash
+ansible-playbook demo-tail-sampling.yml -e suffix=xipio -e break_service=paymentservice
+```
+
+```bash
+ansible-playbook demo-tail-sampling.yml -e suffix=xipio -e demo_state=reverted
+```
+
+Reverting deletes the second collector, points the workload back at `otel`, and
+scales up whatever it scaled to zero — it finds that by the annotation it
+stamped, so you do not have to name the service again.
+
+**The existing `otel` collector CR is never read, patched or re-applied by any
+of this.** The new collector sits *in front* of it and forks the same spans two
+ways: `traces/passthrough` forwards all of them onward unsampled, so Tempo still
+stores 100% and spanmetrics is still computed on the full stream; `traces/sampled`
+runs them through `tail_sampling` and out to a `debug` exporter. Parts 3, 4 and 5
+of the demo behave exactly as they did before.
+
+What it does change is the workload's OTLP endpoints — the seven SDK-instrumented
+Deployments and, so the sampler sees whole traces, the `Instrumentation` CR that
+configures adservice's injected agent. That is the trade: leaving the existing
+collector untouched means something else has to move. The playbook applies the
+new collector and waits for it to be **Ready before** repointing anything, so a
+collector that fails to start leaves the existing pipeline completely alone.
+
+> Tail sampling is a **Technology Preview** component in the Red Hat build of
+> OpenTelemetry, and stateful by nature — hence `mode: statefulset` and exactly
+> one replica. A trace whose spans reach two sampler instances is judged twice on
+> two partial views, which is precisely how "we capture every error" quietly
+> stops being true.
+
 ## Layout
 
 ```
@@ -410,6 +459,7 @@ aws-prereqs.yml       AWS only - buckets, IAM, access keys, credentials file
 cluster.yml           Everything cluster-side
 site.yml              Both, in order
 demo-otel-logs.yml    Enable/revert the OTel log-correlation demo
+demo-tail-sampling.yml   Enable/revert the tail-sampling demo
 cleanup.yml           Teardown, guarded
 
 group_vars/all.yml    Every tunable, commented
@@ -424,6 +474,7 @@ roles/
   network_observability   Operator, Path A/B FlowCollector, console plugin, panel
   distributed_tracing TempoStack, OTel collector + spanmetrics, UWM, ServiceMonitors
   test_workload       Online Boutique + adservice auto-instrumentation
+  tail_sampling       Second collector: all errors + 5% of healthy traces (demo only)
 ```
 
 Two roles are deliberately generic. `olm_operator` installs all six operators,
