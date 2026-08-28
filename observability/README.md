@@ -49,6 +49,14 @@
     - [Scrape the collector](#scrape-the-collector)
     - [Finding them in the console](#finding-them-in-the-console)
     - [The metrics you get](#the-metrics-you-get)
+  - [Sampling: keeping every failure without keeping everything](#sampling-keeping-every-failure-without-keeping-everything)
+    - [Create the tail-sampling collector](#create-the-tail-sampling-collector)
+    - [Mirror the existing collector's spans into it](#mirror-the-existing-collectors-spans-into-it)
+    - [Give it something to catch](#give-it-something-to-catch)
+    - [Read what survived](#read-what-survived)
+    - [Prove the ratio](#prove-the-ratio)
+    - [What this costs, and where the sampled traces go](#what-this-costs-and-where-the-sampled-traces-go)
+    - [Revert](#revert)
   - [Tear down the workload](#tear-down-the-workload)
 - [Clean up](#clean-up)
 
@@ -3163,6 +3171,374 @@ topk(10, histogram_quantile(0.95,
 
 This is the payoff of running spanmetrics next to Tempo: the metrics tell you *which* service
 slowed down, and the trace view tells you *why*, for the same request.
+
+### Sampling: keeping every failure without keeping everything
+
+Everything so far has kept **100%** of traces. One Online Boutique page render is 24 spans, the load
+generator drives roughly 15 requests a second, and that is tens of millions of spans a day from a
+demo shop. Nobody keeps all of it in production. The question is which traces you keep, and — the
+part that decides everything else — **when you decide**.
+
+**Head sampling decides at the root span**, before the request has done anything. There is already
+one on this cluster, in the `Instrumentation` CR from
+[Auto-instrument a service](#auto-instrument-a-service-with-the-instrumentation-cr):
+
+```bash
+oc get instrumentation online-boutique -n $APP_NAMESPACE -o jsonpath='{.spec.sampler}{"\n"}'
+```
+
+```json
+{"argument":"1","type":"parentbased_traceidratio"}
+```
+
+`1` means keep everything. Change it to `0.05`, add `OTEL_TRACES_SAMPLER_ARG=0.05` to the seven
+SDK-instrumented services, and trace volume drops 95% in two minutes. **Do not** — the decision is
+made when the frontend has not yet called checkout, checkout has not yet called payment, and nothing
+has failed because nothing has happened. All the sampler knows is the trace ID, so it keeps a random
+5%, and a checkout that fails 12ms later has a 95% chance of being discarded before it fails.
+
+**Tail sampling decides after the trace is complete.** The application emits everything, the
+collector buffers each trace until it can see the whole thing, and only then judges it.
+
+| | Head sampling | Tail sampling |
+|---|---|---|
+| Decides | At the root span, before the work happens | After the trace is complete |
+| Knows | The trace ID | Every span, every status, the total duration |
+| Can keep all errors | **No** — the error has not happened yet | Yes |
+| Costs | Nothing; spans are never emitted | Every span must be sent, buffered and held |
+| Runs in | The application SDK | The collector, statefully |
+
+You pay full network and collector cost to save storage cost. That is usually the right trade:
+storage is where the money is, and discarding a trace is the one decision you cannot take back.
+
+The rest of this section keeps **every trace containing an error or a recorded exception, plus 5% of
+the healthy ones**, in a second collector that leaves the existing one's behaviour untouched.
+
+> The `tail_sampling` processor is a **Technology Preview** feature in the Red Hat build of
+> OpenTelemetry. Worth stating before anyone designs a production estate around it.
+
+#### Create the tail-sampling collector
+
+A second `OpenTelemetryCollector`, alongside `otel` rather than replacing it.
+
+Two things about this CR are load-bearing rather than stylistic. **`mode: statefulset` with exactly
+one replica**, because tail sampling is stateful: a trace whose spans reach two instances is judged
+twice on two partial views, and an error in the half a given instance did not see is dropped as
+healthy — which destroys the guarantee the whole exercise exists to make. A Deployment rolling
+update briefly runs two pods and reproduces exactly that; a StatefulSet replaces its pod in place.
+And **no `serviceAccount`**, unlike the `otel` collector — this one never talks to the Tempo
+gateway, so it needs none of that RBAC and the operator can create its own.
+
+```bash
+cat <<EOF > otel-tailsampling.yaml
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: otel-tailsampling
+  namespace: $TRACING_NAMESPACE
+spec:
+  mode: statefulset
+  replicas: 1
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 2Gi
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc: {}
+          http: {}
+    processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_percentage: 75
+        spike_limit_percentage: 15
+      batch: {}
+      tail_sampling:
+        decision_wait: 10s
+        num_traces: 20000
+        expected_new_traces_per_sec: 100
+        policies:
+        - name: errors
+          type: status_code
+          status_code:
+            status_codes: [ERROR]
+        - name: exceptions
+          type: ottl_condition
+          ottl_condition:
+            error_mode: ignore
+            spanevent:
+            - 'name == "exception"'
+        - name: baseline
+          type: probabilistic
+          probabilistic:
+            sampling_percentage: 5
+    exporters:
+      debug:
+        verbosity: normal
+    service:
+      pipelines:
+        traces/sampled:
+          receivers: [otlp]
+          processors: [memory_limiter, tail_sampling, batch]
+          exporters: [debug]
+EOF
+```
+
+```bash
+oc apply -f otel-tailsampling.yaml
+```
+
+```bash
+oc rollout status statefulset/otel-tailsampling-collector -n $TRACING_NAMESPACE --timeout=3m
+```
+
+**Wait for that rollout before the next step.** The mirror below points the existing collector at
+this Service; adding it first would have `otel` exporting into a Service with no endpoints.
+
+The three settings that decide the memory footprint are `decision_wait` (how long each trace is
+held), `num_traces` (how many are held at once) and the pod's memory limit. `decision_wait: 10s` is
+generous for Online Boutique, whose traces complete in tens of milliseconds — the visible
+consequence is that the sampled output lags real time by about that much.
+
+> **Policies are OR'd, not AND'd.** A trace is kept if *any* policy votes to keep it. That is the
+> whole trick behind "every error plus 5% of the rest": `baseline` is evaluated against every trace,
+> errors included, but an error trace has already been claimed by `errors`, so the 5% only ever
+> decides the fate of the successful ones. Trying to express this with nested `and` / `not`
+> sub-policies is the standard way to get it wrong and silently drop errors.
+>
+> `errors` matches if **any** span in the trace has status Error, so it catches a failure buried
+> four levels deep even when the root span returned 200. `exceptions` is not redundant with it: a
+> recorded exception is a span *event* named `exception`, and a library can record one without
+> setting the span's status — the Java agent does exactly that for handled exceptions. If your build
+> rejects the `ottl_condition` policy type, drop that policy; the collector names the offending
+> component in its startup log.
+
+#### Mirror the existing collector's spans into it
+
+One exporter is added to the `otel` collector's traces pipeline. Its `otlp` exporter to Tempo, its
+`spanmetrics` connector and every processor are untouched, so **Tempo still stores 100% of traces
+and the RED metrics are still computed on the full stream**.
+
+Read the current exporter list first — the patch below has to restate it in full:
+
+```bash
+oc get opentelemetrycollector otel -n $TRACING_NAMESPACE \
+  -o jsonpath='{.spec.config.service.pipelines.traces.exporters}{"\n"}'
+```
+
+```
+["otlp","spanmetrics"]
+```
+
+> **A merge patch replaces arrays, it does not append to them.** The logs-pipeline patch earlier in
+> this document could avoid the question because it only added map keys. This one modifies
+> `pipelines.traces.exporters`, which is an array, so RFC 7386 overwrites it wholesale — every
+> exporter that must survive has to be named. If the command above returned something other than
+> `["otlp","spanmetrics"]`, edit the patch to match before applying it, or you will silently remove
+> an exporter. This is the single most likely way to break the pipeline here.
+
+```bash
+cat <<EOF > otel-mirror-patch.json
+{
+  "spec": {
+    "config": {
+      "exporters": {
+        "otlp/tailsampling": {
+          "endpoint": "otel-tailsampling-collector.$TRACING_NAMESPACE.svc.cluster.local:4317",
+          "tls": {"insecure": true},
+          "retry_on_failure": {"enabled": false},
+          "sending_queue": {"enabled": true, "queue_size": 2000}
+        }
+      },
+      "service": {
+        "pipelines": {
+          "traces": {
+            "exporters": ["otlp", "spanmetrics", "otlp/tailsampling"]
+          }
+        }
+      }
+    }
+  }
+}
+EOF
+```
+
+```bash
+oc patch opentelemetrycollector otel -n $TRACING_NAMESPACE --type=merge --patch-file otel-mirror-patch.json
+```
+
+`tls.insecure: true` because the receiver on the other end is configured with `grpc: {}` and
+terminates no TLS.
+
+**`retry_on_failure` is deliberately off.** This is the non-authoritative copy: if the sampler is
+down its spans should be dropped on the floor, not retried. Retrying keeps failed batches in the
+sending queue, the queue fills, and a full queue is the one condition that returns an error back
+through the fanout to the OTLP receiver — which is how a broken demo collector would end up
+degrading the pipeline that actually matters.
+
+Confirm the pipeline came out right, then wait for the roll:
+
+```bash
+oc get opentelemetrycollector otel -n $TRACING_NAMESPACE \
+  -o jsonpath='{.spec.config.service.pipelines}{"\n"}'
+```
+
+```bash
+oc rollout status deployment/otel-collector -n $TRACING_NAMESPACE --timeout=3m
+```
+
+#### Give it something to catch
+
+Online Boutique in steady state barely fails, and a sampler that has caught no errors proves
+nothing. Break checkout by removing the payment service:
+
+```bash
+oc scale deployment/paymentservice -n $APP_NAMESPACE --replicas=0
+```
+
+The Service still exists with no endpoints, so `checkoutservice`'s call fails immediately with gRPC
+`UNAVAILABLE` rather than hanging on DNS, the client span is marked `Error`, and the frontend returns
+a 500. The load generator attempts a checkout roughly once every twenty requests, so failures arrive
+continuously without scripting anything.
+
+#### Read what survived
+
+```bash
+oc logs -n $TRACING_NAMESPACE statefulset/otel-tailsampling-collector -f \
+  | grep --line-buffered -E '[0-9a-f]{32}'
+```
+
+At `verbosity: normal` the debug exporter prints roughly one line per span — name, trace ID, span ID:
+
+```
+hipstershop.CheckoutService/PlaceOrder 4bf92f3577b34da6a3ce929d0e0e4736 00f067aa0ba902b7 ...
+hipstershop.PaymentService/Charge      4bf92f3577b34da6a3ce929d0e0e4736 b7ad6b7169203331 ...
+```
+
+Two things are worth noticing in that stream. It arrives **in bursts, about ten seconds late** —
+that is `decision_wait`, and it is why tail sampling is never real time. And you see **whole traces
+or none of a trace**, never three spans out of twenty-four: the decision is per trace, which is the
+point, since a half-sampled trace is worse than no trace.
+
+Count distinct traces kept over five minutes:
+
+```bash
+oc logs -n $TRACING_NAMESPACE statefulset/otel-tailsampling-collector --since=5m \
+  | grep -oE '[0-9a-f]{32}' | sort -u | wc -l
+```
+
+Then take a trace ID from one of the failing checkouts and open it in **Observe → Traces**, either
+through the **Trace ID** lookup field or in TraceQL. Tempo still holds 100% of traces, so it is
+there, and the waterfall shows `CheckoutService/PlaceOrder` red with `PaymentService/Charge` red
+beneath it and nothing below that.
+
+```traceql
+{ trace:id = "4bf92f3577b34da6a3ce929d0e0e4736" }
+```
+
+#### Prove the ratio
+
+The processor publishes its own decisions as metrics, and the `otel-collector-internal`
+`ServiceMonitor` from [Scrape the collector](#scrape-the-collector) **already scrapes them** — its
+selector matches every collector monitoring Service in this namespace, so the new collector was
+picked up with no extra configuration. There should now be three targets:
+
+```promql
+up{namespace="tracing-system"}
+```
+
+Decisions per policy — `errors` at whatever your failure rate is, `baseline` at about one twentieth
+of everything:
+
+```promql
+sum by (policy, decision) (
+  rate(otelcol_processor_tail_sampling_count_traces_sampled_total[5m])
+)
+```
+
+The share of traces kept overall:
+
+```promql
+sum(rate(otelcol_processor_tail_sampling_global_count_traces_sampled_total{sampled="true"}[5m]))
+  / sum(rate(otelcol_processor_tail_sampling_global_count_traces_sampled_total[5m]))
+```
+
+And the number that pays for the exercise — spans that survived over spans that arrived:
+
+```promql
+sum(rate(otelcol_exporter_sent_spans_total{job="otel-tailsampling-collector-monitoring", exporter="debug"}[5m]))
+  / sum(rate(otelcol_receiver_accepted_spans_total{job="otel-tailsampling-collector-monitoring"}[5m]))
+```
+
+With `paymentservice` scaled to zero this sits at roughly **double** the 5% floor: checkout is about
+one request in twenty, all of those now fail, and all of those are kept on top of the 5% of the
+healthy nineteen. Scale it back up and watch the ratio settle towards 0.05. That movement is the
+whole demonstration — the sampler is not keeping a fixed fraction, it is keeping a fixed fraction
+**plus** everything that went wrong.
+
+> **If a metric returns nothing, check the label names before the metric name.** The `decision`
+> label is newer than the metric itself; older builds carry only `sampled="true"/"false"`. The
+> `_total` suffix caveat from [The metrics you get](#the-metrics-you-get) applies here too.
+> Also watch `otelcol_processor_tail_sampling_sampling_trace_dropped_too_early_total` — anything
+> above zero means traces were evicted from the buffer before they could be judged, and those are
+> unjudged rather than unsampled. Raise `num_traces` or the memory limit, or lower `decision_wait`.
+
+#### What this costs, and where the sampled traces go
+
+**Nowhere.** `debug` is a terminal sink, exactly as in the log-correlation demo: it renders each
+trace to the collector's stdout and the pipeline ends there. Nothing is stored and nothing is
+queryable. That is fine for showing *which* traces a policy set keeps, and useless for using them.
+
+Doing this for real means pointing `traces/sampled` at storage instead — a second Tempo instance, or
+a second tenant on this TempoStack, so the sampled stream lands somewhere you can query
+**separately** from the 100% stream. Exporting it back into the `dev` tenant would only write
+duplicate spans alongside the ones `otel` already stored.
+
+The same double-collection caveat applies as before: the collector's stdout is ordinary container
+output, so Vector ships every sampled span to Loki while this is running. Harmless for a demo,
+noisy on a shared cluster, and a reason to revert.
+
+And note what tail sampling does **not** save. Every span is still created, still serialized, still
+sent over the network, still buffered in a collector. It saves storage, not application CPU or
+bandwidth. If the SDK cost is your problem, head sampling is the right tool and this is the wrong
+one.
+
+Scaling beyond one replica is a real architecture rather than a replica count: a first tier of
+collectors using the `loadbalancing` exporter to route by trace ID to a second tier of samplers, so
+that every span of a trace still lands on one instance.
+
+#### Revert
+
+Remove the mirror **before** deleting the collector, for the same reason it was added second:
+
+```bash
+oc patch opentelemetrycollector otel -n $TRACING_NAMESPACE --type=merge -p '{
+  "spec": {
+    "config": {
+      "service": {"pipelines": {"traces": {"exporters": ["otlp", "spanmetrics"]}}}
+    }
+  }
+}'
+```
+
+```bash
+oc rollout status deployment/otel-collector -n $TRACING_NAMESPACE --timeout=3m
+```
+
+```bash
+oc delete opentelemetrycollector otel-tailsampling -n $TRACING_NAMESPACE
+oc scale deployment/paymentservice -n $APP_NAMESPACE --replicas=1
+```
+
+The `otlp/tailsampling` exporter definition stays behind in `spec.config.exporters` — harmless,
+since nothing references it, and a merge patch cannot remove a map key without setting it to `null`.
+Add `"exporters": {"otlp/tailsampling": null}` alongside the pipeline patch above if you want the CR
+back to exactly its earlier shape.
 
 ### Tear down the workload
 
