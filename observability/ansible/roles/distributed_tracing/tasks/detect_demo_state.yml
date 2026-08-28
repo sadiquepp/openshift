@@ -1,0 +1,35 @@
+---
+# ── Read which demos the live collector already has switched on ───────────────
+# The `otel` collector CR is rendered from ONE template with a flag per demo, so
+# whichever playbook re-applies it decides the state of every flag - including
+# the ones it knows nothing about. Without this, turning on the log-correlation
+# demo would silently strip the tail-sampling mirror, and vice versa: each demo
+# would quietly revert the other.
+#
+# Included by both demo playbooks before they re-apply the collector. Each one
+# then drives its OWN flag from demo_state and takes the other flag from what is
+# actually running.
+#
+# cluster.yml deliberately does NOT include this. Re-running it renders both
+# flags from their defaults and puts the collector back to baseline, which is
+# what a re-run of the installer should do.
+
+- name: Read the collector as it exists on the cluster
+  kubernetes.core.k8s_info:
+    api_version: opentelemetry.io/v1beta1
+    kind: OpenTelemetryCollector
+    name: "{{ otel_collector_name }}"
+    namespace: "{{ tracing_namespace }}"
+  register: _otel_live
+  failed_when: false
+  # failed_when: false covers the first run, where neither the CRD nor the
+  # collector exists yet. Both facts below then read false, which is correct.
+
+- name: Note which demos it already has switched on
+  ansible.builtin.set_fact:
+    otel_collector_live_logs_demo: >-
+      {{ 'logs' in (_otel_live.resources[0].spec.config.service.pipelines | default({})) }}
+    otel_collector_live_mirror: >-
+      {{ 'otlp/tailsampling' in (_otel_live.resources[0].spec.config.exporters | default({})) }}
+  # Indexing [0] on an empty list yields Undefined rather than raising, so
+  # `default({})` covers "no collector" and "collector without that key" alike.

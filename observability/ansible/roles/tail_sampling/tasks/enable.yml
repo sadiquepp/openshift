@@ -1,8 +1,9 @@
 ---
 # Order is the safety property here. The collector is created and proved Ready
-# BEFORE anything is repointed at it, so a collector that fails to start - a
-# rejected OTTL condition, an unschedulable pod - leaves the existing pipeline
-# completely untouched rather than black-holing the cluster's spans.
+# BEFORE anything is pointed at it - before the mirror exporter is added in
+# mirror mode, before the workload moves in inline mode - so a collector that
+# fails to start (a rejected OTTL condition, an unschedulable pod) leaves the
+# existing pipeline completely untouched rather than black-holing spans.
 
 - name: Create the tail-sampling OpenTelemetryCollector
   kubernetes.core.k8s:
@@ -35,7 +36,7 @@
       - _ts_sts.resources | default([]) | length > 0
       - (_ts_sts.resources[0].status.readyReplicas | default(0)) > 0
     fail_msg: >-
-      {{ otel_tailsampling_collector_name }}-collector never became Ready, so nothing was repointed
+      {{ otel_tailsampling_collector_name }}-collector never became Ready, so nothing was pointed
       at it and the existing pipeline is untouched. Read the pod's log first -
       `oc logs -n {{ tracing_namespace }} statefulset/{{ otel_tailsampling_collector_name }}-collector`.
       A config the operator accepted but the collector binary rejects fails
@@ -48,8 +49,30 @@
       marks as failed.
     quiet: true
 
+# Only now, with a collector proved to be up, is anything pointed at it.
+
+- name: Reconcile the mirror on the {{ otel_collector_name }} collector
+  ansible.builtin.include_role:
+    name: distributed_tracing
+    tasks_from: collector.yml
+  when: (otel_collector_mirror_enabled | bool)
+        or (otel_collector_live_mirror | default(false) | bool)
+  # Re-renders the `otel` collector from its own template. In mirror mode
+  # otel_collector_mirror_enabled is true and one exporter is appended to its
+  # traces pipeline; its `otlp` and `spanmetrics` exporters and every processor
+  # are unchanged, so Tempo and spanmetrics see exactly what they saw before.
+  #
+  # It ALSO runs when the flag is false but the live collector still carries a
+  # mirror, which is what makes switching feed modes without reverting first
+  # safe. Leaving a stale mirror in place while the inline feed is set up builds
+  # a LOOP - workload to sampler, sampler's passthrough to `otel`, `otel`'s
+  # mirror back to the sampler - and spans would circulate and amplify until
+  # something fell over. Removing it here, before the workload moves below,
+  # means that loop can never be assembled.
+
 - name: Repoint the workload at the tail-sampling collector
   ansible.builtin.include_tasks: repoint.yml
   vars:
     _otlp_grpc_target: "{{ otel_tailsampling_collector_name }}-collector.{{ tracing_namespace }}.svc.cluster.local:4317"
     _otlp_http_target: "http://{{ otel_tailsampling_collector_name }}-collector.{{ tracing_namespace }}.svc.cluster.local:4318"
+  when: otel_tailsampling_feed == 'inline'

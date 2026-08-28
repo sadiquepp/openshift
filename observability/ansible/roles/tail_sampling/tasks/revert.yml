@@ -3,11 +3,23 @@
 # stop sending spans to the tail-sampling collector BEFORE deleting it, or the
 # workload spends the gap exporting into a Service with no endpoints.
 
+- name: Stop the {{ otel_collector_name }} collector mirroring spans
+  ansible.builtin.include_role:
+    name: distributed_tracing
+    tasks_from: collector.yml
+  when: otel_collector_live_mirror | default(false) | bool
+  # Re-rendered with otel_collector_mirror_enabled false, which drops the extra
+  # exporter and leaves the CR rendering byte-identical to what cluster.yml
+  # writes. Keyed off what is actually on the collector rather than off
+  # otel_tailsampling_feed, so reverting cleans up a mirror even when the feed
+  # variable no longer says there should be one.
+
 - name: Point the workload back at the {{ otel_collector_name }} collector
   ansible.builtin.include_tasks: repoint.yml
   vars:
     _otlp_grpc_target: "{{ otel_collector_name }}-collector.{{ tracing_namespace }}.svc.cluster.local:4317"
     _otlp_http_target: "http://{{ otel_collector_name }}-collector.{{ tracing_namespace }}.svc.cluster.local:4318"
+  when: otel_tailsampling_feed == 'inline'
 
 - name: Delete the tail-sampling OpenTelemetryCollector
   kubernetes.core.k8s:

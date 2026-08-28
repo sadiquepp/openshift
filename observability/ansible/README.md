@@ -368,6 +368,7 @@ ones worth knowing:
 | `adservice_autoinstrument` | `true` | The `Instrumentation` CR demo. Needed by the OTel log demo. |
 | `otel_tailsampling_percentage` | `5` | Share of *healthy* traces the tail-sampling demo keeps. Errors are kept regardless. |
 | `otel_tailsampling_latency_threshold_ms` | `0` | Also keep traces slower than this. `0` disables the policy. |
+| `otel_tailsampling_feed` | `mirror` | `mirror` tees off the existing collector; `inline` puts the sampler in front and leaves that CR untouched. |
 | `grant_users` | `[]` | OpenShift usernames to grant the reader roles to. Admins already pass. |
 | `loki_channel`, `cluster_logging_channel`, … | `stable-6.6`, `stable` | Operator channels. |
 | `logging_uiplugin_schema` | `viaq` | See [deviations](#where-this-deviates-from-the-runbook). |
@@ -425,23 +426,45 @@ ansible-playbook demo-tail-sampling.yml -e suffix=xipio -e break_service=payment
 ansible-playbook demo-tail-sampling.yml -e suffix=xipio -e demo_state=reverted
 ```
 
-Reverting deletes the second collector, points the workload back at `otel`, and
-scales up whatever it scaled to zero — it finds that by the annotation it
-stamped, so you do not have to name the service again.
+Reverting removes the mirror, deletes the second collector, and scales up
+whatever it scaled to zero — it finds that by the annotation it stamped, so you
+do not have to name the service again.
 
-**The existing `otel` collector CR is never read, patched or re-applied by any
-of this.** The new collector sits *in front* of it and forks the same spans two
-ways: `traces/passthrough` forwards all of them onward unsampled, so Tempo still
-stores 100% and spanmetrics is still computed on the full stream; `traces/sampled`
-runs them through `tail_sampling` and out to a `debug` exporter. Parts 3, 4 and 5
-of the demo behave exactly as they did before.
+Spans reach the sampler one of two ways, `-e otel_tailsampling_feed=`:
 
-What it does change is the workload's OTLP endpoints — the seven SDK-instrumented
-Deployments and, so the sampler sees whole traces, the `Instrumentation` CR that
-configures adservice's injected agent. That is the trade: leaving the existing
-collector untouched means something else has to move. The playbook applies the
-new collector and waits for it to be **Ready before** repointing anything, so a
-collector that fails to start leaves the existing pipeline completely alone.
+| | `mirror` (default) | `inline` |
+|---|---|---|
+| How | one extra exporter on the `otel` collector's traces pipeline copies every span across | the sampler goes in front; the workload's OTLP endpoints move onto it, and a passthrough pipeline forwards every span onward |
+| Touches the `otel` CR | yes — one exporter appended to the fanout | **no**, byte-for-byte unmodified |
+| Touches the workload | no | nine Deployments, including an adservice JVM restart each way |
+| Sampler in the critical path | no — it is a non-authoritative copy, `retry_on_failure` off so its spans are dropped rather than queued | yes |
+| Trace completeness | guaranteed — every span has already converged on one collector | needs adservice repointed too, or a trace whose only Error is there is judged healthy |
+| Toggle time | seconds | several minutes each way |
+
+**Under both, the `otel` collector's own behaviour is unchanged**: `otlp` to
+Tempo and `spanmetrics` stay exactly as they were, so Tempo still stores 100% and
+the RED metrics are still computed on the full stream. Parts 3, 4 and 5 of the
+demo behave as before. Reach for `inline` when you may not modify the shared
+collector at all; otherwise `mirror` is cheaper in every direction.
+
+With `mirror` off, the `otel` collector template renders **byte-identical** to
+what `cluster.yml` writes today.
+
+Either way the playbook creates the sampler and waits for it to be **Ready
+before** anything is pointed at it, and unwinds in the opposite order — so a
+collector that fails to start cannot take the existing pipeline down with it.
+Switching feed mid-flight is safe too: the mirror is reconciled from what is
+actually on the collector, not from the variable, because leaving a stale mirror
+in place while the inline feed is set up would build a span loop (workload →
+sampler → `otel` → mirror → sampler) that amplifies until something falls over.
+
+> **The two demos no longer undo each other.** Both are flags in the one `otel`
+> collector template, so whichever playbook re-applies it decides the state of
+> both. Each now reads the flag it does not own off the live collector first
+> (`roles/distributed_tracing/tasks/detect_demo_state.yml`), so you can run the
+> log-correlation demo and tail sampling at the same time. Re-running
+> `cluster.yml` still renders both from their defaults and returns the collector
+> to baseline, which is what a re-run of the installer should do.
 
 > Tail sampling is a **Technology Preview** component in the Red Hat build of
 > OpenTelemetry, and stateful by nature — hence `mode: statefulset` and exactly

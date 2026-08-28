@@ -173,6 +173,28 @@ otel_logs_demo_enabled: false
 otel_tailsampling_enabled: false
 otel_tailsampling_collector_name: otel-tailsampling
 
+# HOW SPANS REACH THE SAMPLER.
+#
+#   mirror -> The `otel` collector gains ONE extra exporter on its traces
+#             pipeline and copies every span across. Its `otlp` and
+#             `spanmetrics` exporters and all its processors are untouched, so
+#             Tempo and spanmetrics behave identically. Nothing else on the
+#             cluster moves: no Deployment rollouts, no adservice JVM restart,
+#             and because every span already converges on that one collector,
+#             the sampler is guaranteed to see whole traces.
+#   inline -> The sampler goes IN FRONT instead and the workload's OTLP
+#             endpoints move onto it, with a passthrough pipeline forwarding
+#             every span onward unsampled. Leaves the `otel` CR byte-for-byte
+#             unmodified - the option to reach for when you may not touch a
+#             shared collector - at the cost of putting the sampler in the
+#             critical path and rolling nine workloads in each direction.
+otel_tailsampling_feed: mirror
+
+# Renders the mirror exporter into the `otel` collector's template. Never set by
+# hand: demo-tail-sampling.yml drives it from demo_state, and demo-otel-logs.yml
+# reads it back off the live collector so the two demos do not undo each other.
+otel_collector_mirror_enabled: false
+
 # The floor of healthy traffic kept for baselining. Errors are kept regardless:
 # tail sampling policies are OR'd, so this percentage only ever decides the fate
 # of traces no other policy already claimed.
@@ -208,11 +230,12 @@ otel_tailsampling_latency_threshold_ms: 0
 # multi-line block and is far too loud for whole traces.
 otel_tailsampling_debug_verbosity: normal
 
-# Repoint adservice's injected Java agent too, by patching the Instrumentation
-# CR and restarting the pod. Costs a JVM restart in each direction. Leaving it
-# false puts a hole in the guarantee: adservice spans would reach the other
-# collector directly, so a trace whose only Error is in adservice would be
-# judged healthy and dropped.
+# INLINE FEED ONLY. Repoint adservice's injected Java agent too, by patching the
+# Instrumentation CR and restarting the pod. Costs a JVM restart in each
+# direction. Leaving it false puts a hole in the guarantee: adservice spans
+# would reach the other collector directly, so a trace whose only Error is in
+# adservice would be judged healthy and dropped. The mirror feed has no such
+# hole and ignores this.
 otel_tailsampling_include_adservice: true
 
 # ── Non-admin access ──────────────────────────────────────────────────────────

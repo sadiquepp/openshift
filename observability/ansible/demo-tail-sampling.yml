@@ -9,11 +9,17 @@
 #                                                      -e demo_state=reverted
 #
 # Stands up a SECOND OpenTelemetryCollector that keeps 100% of traces containing
-# an error or a recorded exception and only 5% of the healthy ones, and moves the
-# workload's OTLP endpoints to it. That collector forwards every span, unsampled,
-# to the existing `otel` collector - so Tempo still holds 100% of traces,
-# spanmetrics is still computed on the full stream, and the existing
-# OpenTelemetryCollector CR is not modified in any way.
+# an error or a recorded exception and only 5% of the healthy ones. Either way
+# the existing `otel` collector keeps receiving 100% of spans, keeps writing all
+# of them to Tempo, and keeps computing spanmetrics from the full stream.
+#
+# Two ways to get spans into it, `-e otel_tailsampling_feed=`:
+#
+#   mirror (default)  One extra exporter on the `otel` collector's traces
+#                     pipeline copies every span across. Nothing else moves.
+#   inline            The sampler goes in front and the workload's OTLP
+#                     endpoints move onto it. Leaves the `otel` CR untouched,
+#                     at the cost of rolling nine workloads in each direction.
 #
 # `break_service` scales one service to zero so the calls into it fail, which is
 # what gives the demo error traces to catch. It is off by default, because a
@@ -41,6 +47,15 @@
   vars:
     demo_state: enabled          # enabled | reverted
     otel_tailsampling_enabled: "{{ demo_state == 'enabled' }}"
+    otel_tailsampling_feed: mirror       # mirror | inline
+    # Drives the extra exporter in the `otel` collector's template. Only ever
+    # true in mirror mode; in inline mode that CR is not re-applied at all.
+    otel_collector_mirror_enabled: "{{ (demo_state == 'enabled') and (otel_tailsampling_feed == 'mirror') }}"
+    # NOT ours to decide. Re-applying the `otel` collector renders every demo
+    # flag in its template, so this one is taken from what is actually running -
+    # otherwise enabling tail sampling would silently switch the
+    # log-correlation demo back off. Set by detect_demo_state.yml below.
+    otel_logs_demo_enabled: "{{ otel_collector_live_logs_demo | default(false) }}"
     # Name of a Deployment in the app namespace to scale to zero, so its callers
     # produce error spans. "" means inject nothing.
     break_service: ""
@@ -50,8 +65,16 @@
       ansible.builtin.assert:
         that:
           - demo_state in ['enabled', 'reverted']
-        fail_msg: "demo_state must be `enabled` or `reverted`."
+          - otel_tailsampling_feed in ['mirror', 'inline']
+        fail_msg: >-
+          demo_state must be `enabled` or `reverted`, and
+          otel_tailsampling_feed must be `mirror` or `inline`.
         quiet: true
+
+    - name: Read which demos the live collector already has switched on
+      ansible.builtin.include_role:
+        name: distributed_tracing
+        tasks_from: detect_demo_state.yml
 
     - name: Apply or remove the tail-sampling collector
       ansible.builtin.include_role:

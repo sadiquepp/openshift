@@ -1,20 +1,26 @@
 # ── A SECOND, INDEPENDENT COLLECTOR ───────────────────────────────────────────
-# Nothing in here touches the `{{ otel_collector_name }}` OpenTelemetryCollector. That CR keeps
-# receiving 100% of spans, keeps writing all of them to Tempo, and keeps
-# producing spanmetrics from the full stream - which is what parts 3 and 4 of
-# the demo depend on.
+# Nothing here changes what the `{{ otel_collector_name }}` collector does. It keeps receiving 100%
+# of spans, keeps writing all of them to Tempo, and keeps producing spanmetrics
+# from the full stream - which is what parts 3 and 4 of the demo depend on.
 #
-# This collector sits IN FRONT of it and forks the same spans two ways:
+# How spans REACH this collector depends on otel_tailsampling_feed:
 #
-#   traces/passthrough  every span, unchanged, on to `{{ otel_collector_name }}`   <- the existing path
-#   traces/sampled      the same spans through tail_sampling      <- the new thing
+#   mirror (default)  The `{{ otel_collector_name }}` collector gains one extra exporter on its traces
+#                     pipeline and copies every span here. Nothing else moves: no
+#                     Deployment rollouts, no adservice JVM restart, and every
+#                     span has already converged on one collector, so this
+#                     sampler is guaranteed to see whole traces.
 #
-# Putting it in front rather than teeing off the back is the only arrangement
-# that leaves the existing CR byte-for-byte unmodified. The cost is that this
-# pod is briefly in the critical path: if it will not start, spans stop reaching
-# Tempo. The role applies it and waits for it to be Ready BEFORE repointing any
-# workload, so a collector that fails to come up never breaks the existing
-# pipeline - and `demo_state=reverted` puts the endpoints back in one command.
+#   inline            This collector sits IN FRONT instead, and the workload's
+#                     OTLP endpoints are moved onto it; a `traces/passthrough`
+#                     pipeline forwards every span onward, unsampled. Leaves the
+#                     `{{ otel_collector_name }}` CR byte-for-byte unmodified, at the cost of putting
+#                     this pod in the critical path and rolling nine workloads.
+#                     Use it when you may not touch the shared collector.
+#
+# Either way the role creates this collector and proves it Ready BEFORE anything
+# is pointed at it, so a collector that fails to start cannot take the existing
+# pipeline down with it.
 apiVersion: opentelemetry.io/v1beta1
 kind: OpenTelemetryCollector
 metadata:
@@ -120,12 +126,14 @@ spec:
               # {{ otel_tailsampling_percentage }}% of spans - every span of a kept trace is kept.
               sampling_percentage: {{ otel_tailsampling_percentage }}
     exporters:
+{% if otel_tailsampling_feed == 'inline' %}
       otlp/passthrough:
         # The existing collector's OTLP gRPC receiver. Plaintext, because that
         # receiver is configured with `grpc: {}` and terminates no TLS.
         endpoint: {{ otel_collector_name }}-collector.{{ tracing_namespace }}.svc.cluster.local:4317
         tls:
           insecure: true
+{% endif %}
       debug:
         # `normal` prints about one line per span - name, trace ID, span ID -
         # which is what makes the surviving traces readable without drowning the
@@ -135,12 +143,16 @@ spec:
         verbosity: {{ otel_tailsampling_debug_verbosity }}
     service:
       pipelines:
-        # One receiver, two pipelines. This is the fork: the same spans are
-        # consumed twice, and the two pipelines share nothing downstream.
+{% if otel_tailsampling_feed == 'inline' %}
+        # Inline feed only. The fork that keeps the existing pipeline whole: the
+        # same spans are consumed twice by one receiver, and the two pipelines
+        # share nothing downstream. In mirror mode the `{{ otel_collector_name }}` collector already
+        # has the full stream, so forwarding it back would double every span.
         traces/passthrough:
           receivers: [otlp]
           processors: [memory_limiter, batch]
           exporters: [otlp/passthrough]
+{% endif %}
         traces/sampled:
           receivers: [otlp]
           # memory_limiter FIRST and batch LAST, as always. tail_sampling goes

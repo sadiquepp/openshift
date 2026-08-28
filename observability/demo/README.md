@@ -625,32 +625,47 @@ you cannot take back.
 
 ### What was deployed
 
-A **second** `OpenTelemetryCollector`, in front of the existing one:
+A **second** `OpenTelemetryCollector`, fed a copy of every span the existing one
+receives:
 
 ```
-Online Boutique                 otel-tailsampling-collector            otel-collector
-  7 SDK services  ── OTLP ──▶  ┌────────────────────────────┐        ┌────────────────┐
-  + adservice's                │ traces/passthrough         │─ OTLP ▶│ 100% ──▶ Tempo │
-    injected agent             │   every span, unsampled    │        │ 100% ──▶ spanmetrics
-                               ├────────────────────────────┤        └────────────────┘
-                               │ traces/sampled             │            UNCHANGED
-                               │   tail_sampling ──▶ debug ──▶ collector stdout
-                               └────────────────────────────┘
+Online Boutique                otel-collector  (UNCHANGED)
+  7 SDK services  ── OTLP ──▶  ┌──────────────────────────────┐
+  + adservice's                │ otlp          ──▶ Tempo      │  100%, as before
+    injected agent             │ spanmetrics   ──▶ Prometheus │  full stream, as before
+                               │ otlp/tailsampling ──┐        │  ← the one line added
+                               └─────────────────────┼────────┘
+                                                     ▼
+                               otel-tailsampling-collector
+                                 tail_sampling ──▶ debug ──▶ collector stdout
+                                   all errors + all exceptions + 5%
 ```
 
-One receiver, two pipelines, forked. **The `otel` collector CR is not modified —
-at all.** It still receives 100% of spans, still writes all of them to Tempo,
-still computes spanmetrics from the full stream. Everything you showed in Parts
-3, 4 and 5 keeps working, and you can flip back and forth in front of people
-without breaking anything.
+One extra exporter is appended to the existing collector's traces fanout. Its
+`otlp` exporter to Tempo, its `spanmetrics` connector and every processor are
+untouched, so **Tempo still stores 100% of traces and the RED metrics are still
+computed on the full stream** — everything in Parts 3, 4 and 5 keeps working, and
+you can flip this on and off in front of people without breaking anything.
+
+The mirror is deliberately non-authoritative: `retry_on_failure` is off, so if
+the sampler is down its copies are dropped on the floor rather than queued. A
+broken demo cannot degrade the pipeline that matters.
+
+> **If you may not modify the shared collector at all**, run with
+> `-e otel_tailsampling_feed=inline`. The sampler then goes *in front*, the
+> workload's OTLP endpoints move onto it, and a passthrough pipeline forwards
+> every span onward unsampled — leaving that CR byte-for-byte unmodified, at the
+> cost of rolling nine workloads (including a slow adservice JVM restart) in each
+> direction. Everything else in this section reads the same.
 
 ```bash
 ansible-playbook demo-tail-sampling.yml -e suffix=xipio
 ```
 
-From [`../ansible`](../ansible). It creates the collector, waits for it to be
-Ready, and only *then* moves the workload's OTLP endpoints onto it — so a
-collector that fails to start cannot take the cluster's tracing down with it.
+From [`../ansible`](../ansible). It creates the sampler, waits for it to be
+Ready, and only *then* adds the mirror — so a collector that fails to start
+cannot take the cluster's tracing down with it. Reverting unwinds in the
+opposite order.
 
 ```bash
 oc get opentelemetrycollector -n $TRACING_NAMESPACE
@@ -765,12 +780,12 @@ sum(rate(otelcol_processor_tail_sampling_global_count_traces_sampled_total{sampl
   / sum(rate(otelcol_processor_tail_sampling_global_count_traces_sampled_total[5m]))
 ```
 
-And the number that pays for the exercise — spans out of the sampled pipeline
-versus spans out of the passthrough pipeline, on the same collector:
+And the number that pays for the exercise — spans that survived, over spans that
+arrived:
 
 ```promql
 sum(rate(otelcol_exporter_sent_spans_total{job="otel-tailsampling-collector-monitoring", exporter="debug"}[5m]))
-  / sum(rate(otelcol_exporter_sent_spans_total{job="otel-tailsampling-collector-monitoring", exporter="otlp/passthrough"}[5m]))
+  / sum(rate(otelcol_receiver_accepted_spans_total{job="otel-tailsampling-collector-monitoring"}[5m]))
 ```
 
 **With `paymentservice` broken this sits at roughly double the 5% floor.** The
@@ -847,10 +862,10 @@ Four, and they are the interesting part of the section.
 ansible-playbook demo-tail-sampling.yml -e suffix=xipio -e demo_state=reverted
 ```
 
-Deletes the second collector, points the workload back at `otel-collector`, and
-scales up whatever the demo scaled to zero — it finds that by the annotation it
-stamped, so you do not have to remember which service you broke. The `otel`
-collector was never modified, so there is nothing to put back.
+Removes the mirror exporter, deletes the second collector, and scales up
+whatever the demo scaled to zero — it finds that by the annotation it stamped, so
+you do not have to remember which service you broke. The `otel` collector then
+renders byte-identical to what `cluster.yml` writes, mirror line and all.
 
 ## Closing the loop
 

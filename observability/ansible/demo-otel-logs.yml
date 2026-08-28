@@ -38,6 +38,11 @@
   vars:
     demo_state: enabled          # enabled | reverted
     otel_logs_demo_enabled: "{{ demo_state == 'enabled' }}"
+    # NOT ours to decide. Re-applying the collector renders every demo flag in
+    # its template, so the tail-sampling mirror is taken from what is actually
+    # running - otherwise this playbook would silently switch that demo off.
+    # Set by detect_demo_state.yml below.
+    otel_collector_mirror_enabled: "{{ otel_collector_live_mirror | default(false) }}"
 
   tasks:
     - name: Validate the requested state
@@ -46,6 +51,11 @@
           - demo_state in ['enabled', 'reverted']
         fail_msg: "demo_state must be `enabled` or `reverted`."
         quiet: true
+
+    - name: Read which demos the live collector already has switched on
+      ansible.builtin.include_role:
+        name: distributed_tracing
+        tasks_from: detect_demo_state.yml
 
     # Order matters on the way in and on the way out. Enabling: give the
     # collector the pipeline BEFORE the agent starts exporting, or the first

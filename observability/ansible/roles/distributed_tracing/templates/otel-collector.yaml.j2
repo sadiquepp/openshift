@@ -71,6 +71,32 @@ spec:
           # spanmetrics series can carry pod/namespace identity and be joined to
           # the container_* series.
           enabled: true
+{% if otel_collector_mirror_enabled | bool %}
+      otlp/tailsampling:
+        # Demo only (demo-tail-sampling.yml). A MIRROR of the traces pipeline
+        # into the tail-sampling collector, added as a third exporter on the
+        # fanout below. Everything above is untouched: Tempo still receives 100%
+        # of spans and spanmetrics is still computed on the full stream.
+        #
+        # Mirroring here rather than chaining the sampler in front of this
+        # collector is what keeps the workload out of it - no Deployment
+        # rollouts, no adservice JVM restart, and every span already converges
+        # on this collector, so the sampler is guaranteed to see whole traces.
+        endpoint: {{ otel_tailsampling_collector_name }}-collector.{{ tracing_namespace }}.svc.cluster.local:4317
+        tls:
+          insecure: true
+        retry_on_failure:
+          # OFF, deliberately. This is the non-authoritative copy: if the
+          # sampler is down its spans should be dropped on the floor, not
+          # retried. Retrying keeps failed batches in the queue, the queue
+          # fills, and a full queue is the one condition that returns an error
+          # back through the fanout to the OTLP receiver - which would make a
+          # broken demo collector degrade the pipeline that actually matters.
+          enabled: false
+        sending_queue:
+          enabled: true
+          queue_size: 2000
+{% endif %}
 {% if otel_logs_demo_enabled | bool %}
       debug:
         # Terminal sink: renders each record to the collector's own stdout and
@@ -88,7 +114,7 @@ spec:
           processors: [memory_limiter, batch]
           # Forked: the same spans go to Tempo for storage AND into the
           # spanmetrics connector.
-          exporters: [otlp, spanmetrics]
+          exporters: [otlp, spanmetrics{% if otel_collector_mirror_enabled | bool %}, otlp/tailsampling{% endif %}]
         metrics:
           receivers: [spanmetrics]
           processors: [memory_limiter, batch]
