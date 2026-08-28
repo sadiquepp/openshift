@@ -5,12 +5,18 @@
 #   Cluster resources only:
 #     ansible-playbook cleanup.yml -e suffix=xipio -e cleanup_confirm=yes
 #
-#   Cluster resources AND the AWS buckets, IAM users and policies:
+#   Cluster resources AND the object storage behind them - on AWS the buckets,
+#   IAM users and policies; on MinIO the buckets, users and policies:
 #     ansible-playbook cleanup.yml -e suffix=xipio -e cleanup_confirm=yes \
-#                                  -e cleanup_aws=yes
+#                                  -e cleanup_storage=yes
 #
-# Cluster first, then AWS - deleting the buckets while the operators are still
-# writing to them leaves them stuck retrying against storage that is gone.
+#   MinIO also needs its root credentials, the same ones minio-prereqs.yml took:
+#     ansible-playbook cleanup.yml -e suffix=xipio -e cleanup_confirm=yes \
+#                                  -e cleanup_storage=yes -e s3_provider=minio \
+#                                  -e @minio-vault.yml --ask-vault-pass
+#
+# Cluster first, then storage - deleting the buckets while the operators are
+# still writing to them leaves them stuck retrying against storage that is gone.
 # Operators, Subscriptions and CSVs are left in place: removing them is rarely
 # what you want mid-iteration, and they cost nothing idle.
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -36,7 +42,13 @@
 
   vars:
     cleanup_confirm: "no"
+    cleanup_storage: "no"
+    # The old name, still honoured so an existing runbook or shell history keeps
+    # working. It now means "clean up whatever s3_provider points at".
     cleanup_aws: "no"
+    _cleanup_storage: >-
+      {{ (cleanup_storage | string | lower in ['yes', 'true'])
+         or (cleanup_aws | string | lower in ['yes', 'true']) }}
 
   tasks:
     - name: Require explicit confirmation
@@ -78,7 +90,9 @@
         label: "{{ item.kind }}/{{ item.name }}"
 
     - name: Delete the AWS resources
-      when: cleanup_aws | string | lower in ['yes', 'true']
+      when:
+        - _cleanup_storage | bool
+        - s3_provider == 'aws'
       block:
         - name: List the access keys for each IAM user
           amazon.aws.iam_access_key_info:
@@ -128,7 +142,20 @@
             label: "{{ item.bucket }}"
           when: item.enabled | bool
 
-        - name: Remove the stale credentials file
-          ansible.builtin.file:
-            path: "{{ s3_credentials_file }}"
-            state: absent
+    - name: Delete the MinIO resources
+      ansible.builtin.include_role:
+        name: minio_backends
+        tasks_from: cleanup.yml
+      when:
+        - _cleanup_storage | bool
+        - s3_provider == 'minio'
+
+    - name: Remove the stale credentials file
+      ansible.builtin.file:
+        path: "{{ s3_credentials_file }}"
+        state: absent
+      when: _cleanup_storage | bool
+      # Moved out of the provider blocks: the file describes storage that no
+      # longer exists whichever provider just had it deleted, and leaving it
+      # behind means the next cluster.yml run happily configures Loki against
+      # buckets that are gone.

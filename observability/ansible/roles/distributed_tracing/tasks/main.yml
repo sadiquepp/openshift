@@ -20,6 +20,23 @@
       metadata:
         name: "{{ tracing_namespace }}"
 
+- name: Publish the object storage CA bundle for Tempo
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: "{{ tempo_ca_configmap_name }}"
+        namespace: "{{ tracing_namespace }}"
+      data:
+        "{{ tempo_ca_configmap_key }}": "{{ lookup('ansible.builtin.file', observability_s3_ca_bundle_file) }}"
+  when: observability_s3_ca_bundle_file | length > 0
+  # Only for object storage behind a private CA - an HTTPS MinIO in the lab.
+  # Tempo verifies the endpoint certificate; without this the ingester fails
+  # every flush with "x509: certificate signed by unknown authority".
+
 - name: Create the S3 secret for Tempo
   kubernetes.core.k8s:
     state: present
@@ -90,6 +107,14 @@
           secret:
             name: "{{ tempo_bucket_name }}"
             type: s3
+          # Dropped entirely unless a CA bundle was given: `omit` removes the
+          # key rather than sending an empty caName. Not needed for a plain
+          # `http://` endpoint - the Tempo operator reads the scheme from the
+          # secret and talks to that one insecurely.
+          tls: "{{ {'enabled': true,
+                    'caName': tempo_ca_configmap_name,
+                    'caKey': tempo_ca_configmap_key}
+                   if (observability_s3_ca_bundle_file | length > 0) else omit }}"
         storageSize: "{{ tempo_storage_size }}"
         storageClassName: "{{ storage_class_name }}"
         resources:

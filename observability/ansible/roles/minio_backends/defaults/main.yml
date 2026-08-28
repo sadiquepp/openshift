@@ -1,0 +1,63 @@
+---
+# ── minio_backends ────────────────────────────────────────────────────────────
+# Overridden from group_vars/all.yml; repeated here so the role is usable alone.
+
+# Where MinIO answers the S3 API *for the cluster*. This exact string is what
+# ends up in the LokiStack and TempoStack storage secrets, so it has to be
+# resolvable and reachable from inside the cluster - not just from the box
+# running Ansible. A bare IP works; a hostname needs cluster DNS to resolve it.
+minio_scheme: http
+minio_host: ""                  # required
+minio_api_port: 9000
+minio_endpoint: "{{ minio_scheme }}://{{ minio_host }}:{{ minio_api_port }}"
+
+# MinIO has no real regions, but the LokiStack storage secret requires the key
+# and Loki sends it in the request signature, so it has to match what the
+# server expects. MinIO signs against `us-east-1` unless MINIO_REGION /
+# MINIO_SITE_REGION says otherwise.
+minio_region: us-east-1
+
+# Root credentials - the ones in MINIO_ROOT_USER / MINIO_ROOT_PASSWORD on the
+# MinIO server. Needed only by this phase, to mint the per-component users.
+# Keep them in a vault file rather than group_vars/all.yml:
+#   ansible-vault create minio-vault.yml
+#   ansible-playbook minio-prereqs.yml -e @minio-vault.yml --ask-vault-pass
+minio_root_user: ""             # required
+minio_root_password: ""         # required
+
+# ── The mc client ─────────────────────────────────────────────────────────────
+# Everything here is driven through `mc`, MinIO's admin client: bucket, policy
+# and user creation are MinIO admin-API calls that the AWS IAM modules cannot
+# make.
+#
+# `minio_mc_host` is the inventory host mc runs on. Leave it `localhost` to run
+# from the control node (needs mc installed and a route to the MinIO API). Point
+# it at the MinIO VM itself - the one hcp-backup-restore's `setup-minio` role
+# builds, which already has /usr/local/bin/mc - when the control node cannot
+# reach port {{ minio_api_port }} but you can SSH to the VM:
+#
+#   -e minio_mc_host=minio.hub.mylab.com -e minio_mc_endpoint=http://127.0.0.1:9000
+#
+# The credentials file is still written on the control node either way.
+minio_mc_host: localhost
+minio_mc_bin: mc
+minio_mc_endpoint: "{{ minio_endpoint }}"
+minio_mc_alias: observability
+
+# Where mc keeps its config. Empty means mc's default, ~/.mc/config.json on the
+# host mc runs on - and note that `mc alias set` PERSISTS the root credentials
+# there, mode 0600. That is mc's normal behaviour, not something this role adds,
+# but on a shared box point this somewhere you control (or drop the alias
+# afterwards with `mc alias remove {{ minio_mc_alias }}`).
+minio_mc_config_dir: ""
+
+# Pass --insecure to mc. Needed only for an HTTPS MinIO with a certificate the
+# box running mc does not trust. It affects mc alone: what the cluster trusts is
+# `observability_s3_ca_bundle_file` (see group_vars/all.yml).
+minio_mc_insecure: false
+
+# Length of the generated secret keys. MinIO requires at least 8.
+minio_secret_key_length: 40
+
+observability_backends: []
+s3_credentials_file: "{{ playbook_dir }}/s3-credentials.yml"

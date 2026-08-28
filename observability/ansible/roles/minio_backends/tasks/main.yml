@@ -1,0 +1,172 @@
+---
+# ── minio_backends ────────────────────────────────────────────────────────────
+# The disconnected stand-in for `aws_backends`: creates one bucket + one
+# least-privilege policy + one dedicated user + one access key per enabled
+# component on a MinIO server, then writes the SAME s3-credentials.yml that the
+# AWS phase writes.
+#
+# That file is the whole seam. `cluster.yml` reads it and neither knows nor
+# cares which of the two roles produced it - a LokiStack storage secret and a
+# TempoStack storage secret take `endpoint`, `access_key_id` and
+# `access_key_secret` either way. Swapping AWS S3 for MinIO is therefore one
+# variable (`s3_provider`) and a different phase-1 playbook; nothing cluster-side
+# changes shape.
+#
+# This role touches MinIO ONLY. It never contacts the cluster.
+
+- name: Require the MinIO connection settings
+  ansible.builtin.assert:
+    that:
+      - minio_host | default('') | length > 0
+      - minio_root_user | default('') | length > 0
+      - minio_root_password | default('') | length > 0
+    fail_msg: >-
+      Set minio_host, minio_root_user and minio_root_password. The root
+      credentials are the MINIO_ROOT_USER / MINIO_ROOT_PASSWORD the MinIO
+      server runs with; keep them in a vault file and pass it with
+      `-e @minio-vault.yml --ask-vault-pass`.
+    quiet: true
+
+- name: Require an S3-API endpoint the cluster can reach
+  ansible.builtin.assert:
+    that:
+      - minio_endpoint is match('^https?://')
+      - minio_host not in ['localhost', '127.0.0.1', '::1']
+    fail_msg: >-
+      minio_endpoint ({{ minio_endpoint }}) is written verbatim into the
+      LokiStack and TempoStack storage secrets, so it must be an address the
+      CLUSTER can resolve and reach - a loopback address is only ever right for
+      the MinIO host itself. If mc has to talk to MinIO over loopback, set
+      minio_mc_endpoint for that and leave minio_endpoint pointing at the
+      routable address.
+    quiet: true
+
+# ── mc ────────────────────────────────────────────────────────────────────────
+- name: Locate the mc binary
+  # `command -v` is a shell builtin, so this one genuinely needs a shell - the
+  # command module would look for a binary literally named `command`.
+  ansible.builtin.shell:
+    cmd: "command -v {{ minio_mc_bin | quote }}"
+  register: _mc_which
+  changed_when: false
+  failed_when: false
+  delegate_to: "{{ minio_mc_host }}"
+
+- name: Fail with something readable when mc is missing
+  ansible.builtin.assert:
+    that:
+      - _mc_which.rc == 0
+    fail_msg: >-
+      `{{ minio_mc_bin }}` not found on {{ minio_mc_host }}. Bucket, policy and
+      user creation are MinIO admin-API calls, which only mc can make. Install
+      it (https://dl.min.io/client/mc/release/linux-amd64/mc, chmod +x), or
+      point -e minio_mc_host at the MinIO VM itself - hcp-backup-restore's
+      `setup-minio` role already puts mc at /usr/local/bin/mc there.
+    quiet: true
+
+- name: Build the mc command prefix
+  ansible.builtin.set_fact:
+    _mc: "{{ [minio_mc_bin] + _config_dir_args + _insecure_args }}"
+  vars:
+    _config_dir_args: "{{ ['--config-dir', minio_mc_config_dir] if (minio_mc_config_dir | length > 0) else [] }}"
+    # --insecure has to come before the sub-command, so it lives in the prefix
+    # rather than being appended to individual calls.
+    _insecure_args: "{{ ['--insecure'] if (minio_mc_insecure | bool) else [] }}"
+
+- name: Report which MinIO is being used
+  ansible.builtin.debug:
+    msg:
+      - "MinIO endpoint (cluster) : {{ minio_endpoint }}"
+      - "MinIO endpoint (mc)      : {{ minio_mc_endpoint }}"
+      - "mc runs on               : {{ minio_mc_host }} ({{ _mc_which.stdout | trim }})"
+      - "Root user                : {{ minio_root_user }}"
+      - "Region                   : {{ minio_region }}"
+
+- name: Register the mc alias for this MinIO
+  ansible.builtin.command:
+    argv: "{{ _mc + ['alias', 'set', minio_mc_alias, minio_mc_endpoint, minio_root_user, minio_root_password] }}"
+  register: _mc_alias
+  changed_when: false
+  failed_when: _mc_alias.rc != 0
+  delegate_to: "{{ minio_mc_host }}"
+  no_log: true
+  # Fails here rather than deep inside the loop when MinIO is unreachable, the
+  # root credentials are wrong, or an HTTPS certificate is untrusted (that last
+  # one wants -e minio_mc_insecure=true).
+
+- name: Confirm the root credentials have admin rights
+  ansible.builtin.command:
+    argv: "{{ _mc + ['admin', 'info', minio_mc_alias] }}"
+  register: _mc_admin_info
+  changed_when: false
+  delegate_to: "{{ minio_mc_host }}"
+  # Creating users and policies goes through the admin API, not the S3 API. A
+  # credential that can read and write objects is not necessarily one that can
+  # do this, and the failure is much clearer here than mid-loop.
+
+# `mc admin policy` was reorganised in the 2023 releases: `add`/`set` became
+# `create`/`attach`. Both spellings exist in the wild - RHEL's older mc packages
+# and any mc pinned for an air-gapped mirror are usually the old one - so detect
+# once here rather than guessing per call.
+- name: Detect which mc admin policy syntax this client speaks
+  ansible.builtin.command:
+    argv: "{{ _mc + ['admin', 'policy', '--help'] }}"
+  register: _mc_policy_help
+  changed_when: false
+  failed_when: false
+  delegate_to: "{{ minio_mc_host }}"
+
+- name: Record the mc policy syntax
+  ansible.builtin.set_fact:
+    minio_mc_policy_modern: "{{ 'attach' in (_mc_policy_help.stdout | default('')) }}"
+
+- name: Report the mc policy syntax in use
+  ansible.builtin.debug:
+    msg: >-
+      mc admin policy syntax: {{ 'create/attach (mc >= 2023)'
+                                 if minio_mc_policy_modern | bool
+                                 else 'add/set (legacy mc)' }}
+
+# ── Credentials ───────────────────────────────────────────────────────────────
+# Same contract as aws_backends: re-running reuses the recorded secret keys
+# rather than rotating them, so a credentials file already handed to a cluster
+# admin stays valid. Unlike AWS - where a secret key is retrievable exactly once
+# and a lost one has to be replaced - MinIO lets us assert the secret we already
+# hold, so reuse is simply a matter of setting the same value again.
+- name: Read any credentials already minted by a previous run
+  ansible.builtin.include_vars:
+    file: "{{ s3_credentials_file }}"
+    name: _previous
+  when: s3_credentials_file is file
+  no_log: true
+
+- name: Start from what a previous run recorded
+  ansible.builtin.set_fact:
+    _minted: "{{ (_previous | default({})).observability_s3_backends | default({}) }}"
+  no_log: true
+
+- name: Provision each enabled backend
+  ansible.builtin.include_tasks: backend.yml
+  loop: "{{ observability_backends }}"
+  loop_control:
+    loop_var: backend
+    label: "{{ backend.key }}"
+  when: backend.enabled | bool
+
+- name: Write the credentials handoff file
+  ansible.builtin.template:
+    src: s3-credentials.yml.j2
+    dest: "{{ s3_credentials_file }}"
+    mode: "0600"
+  no_log: true
+  # Deliberately NOT delegated: mc may have run on the MinIO VM, but the
+  # credentials file belongs next to the playbook that reads it.
+
+- name: Summarise
+  ansible.builtin.debug:
+    msg: >-
+      Provisioned {{ _minted | length }} MinIO backend(s):
+      {{ _minted.keys() | list | join(', ') }} on {{ minio_endpoint }}.
+      Credentials written to {{ s3_credentials_file }} (mode 0600) - hand this
+      file to the cluster admin, then run cluster.yml with
+      -e s3_provider=minio.

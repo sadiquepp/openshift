@@ -1,0 +1,56 @@
+---
+# ── preflight: MinIO ──────────────────────────────────────────────────────────
+# Only for s3_provider: minio. Split out so main.yml stays readable and so this
+# can be exercised on its own.
+
+- name: Check the object storage CA bundle exists
+  ansible.builtin.assert:
+    that:
+      - observability_s3_ca_bundle_file is file
+    fail_msg: >-
+      observability_s3_ca_bundle_file is set to
+      {{ observability_s3_ca_bundle_file }}, which is not a file on this
+      host. It is read here and published as a ConfigMap for Loki and Tempo
+      to trust MinIO's certificate.
+    quiet: true
+  when: observability_s3_ca_bundle_file | length > 0
+
+- name: Warn when an HTTPS MinIO has no CA bundle
+  ansible.builtin.debug:
+    msg: >-
+      {{ minio_endpoint }} is HTTPS but observability_s3_ca_bundle_file is
+      empty. That is correct only if the certificate chains to a CA the
+      cluster already trusts. If it is self-signed or from a lab CA, Loki
+      and Tempo will fail every write with "x509: certificate signed by
+      unknown authority" - set observability_s3_ca_bundle_file to the CA PEM.
+  when:
+    - minio_endpoint is match('^https://')
+    - observability_s3_ca_bundle_file | length == 0
+
+- name: Reach the MinIO health endpoint
+  ansible.builtin.uri:
+    url: "{{ minio_endpoint }}/minio/health/live"
+    validate_certs: "{{ observability_s3_ca_bundle_file | length > 0 or minio_endpoint is match('^http://') }}"
+    ca_path: "{{ observability_s3_ca_bundle_file if (observability_s3_ca_bundle_file | length > 0) else omit }}"
+    status_code: 200
+    timeout: 10
+  register: _minio_health
+  failed_when: false
+  changed_when: false
+
+- name: Report that MinIO answered
+  ansible.builtin.debug:
+    msg: "MinIO is live at {{ minio_endpoint }}."
+  when: (_minio_health.status | default(0)) == 200
+
+- name: Warn when MinIO does not answer from this host
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: {{ minio_endpoint }} did not answer /minio/health/live from this
+      host ({{ _minio_health.msg | default('no response') }}). That is only
+      fatal if the CLUSTER cannot reach it either - the control node and the
+      cluster are not always on the same network - but it is the first thing to
+      check if the LokiStack or TempoStack never goes Ready.
+  when: (_minio_health.status | default(0)) != 200
+  # Deliberately not a failure: the endpoint has to be reachable from the
+  # cluster, and this host is not the cluster.

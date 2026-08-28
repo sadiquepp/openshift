@@ -1,0 +1,48 @@
+---
+# ═══════════════════════════════════════════════════════════════════════════════
+# STORAGE PHASE, MinIO flavour - the disconnected stand-in for aws-prereqs.yml.
+#
+#   ansible-playbook minio-prereqs.yml -e suffix=xipio \
+#                    -e @minio-vault.yml --ask-vault-pass
+#
+# Creates one bucket + least-privilege policy + dedicated user + secret key per
+# enabled component on an existing MinIO server, and writes them to
+# s3-credentials.yml (mode 0600) - the same file, in the same shape, that
+# aws-prereqs.yml writes. cluster.yml then runs unchanged.
+#
+# It does NOT install MinIO. Stand the server up first; hcp-backup-restore's
+# `setup-minio-vm` + `setup-minio` roles do exactly that on a libvirt VM:
+#   https://github.com/sadiquepp/hcp-backup-restore/blob/main/roles/setup-minio
+#
+# REQUIRED (put the two secrets in a vault file, not on the command line):
+#   minio_host            address of the MinIO server, as the CLUSTER resolves it
+#   minio_root_user       MINIO_ROOT_USER on that server
+#   minio_root_password   MINIO_ROOT_PASSWORD on that server
+#
+# Which backends get created follows the same toggles the cluster phase uses, so
+# pass the SAME values to both:
+#
+#   -e netobserv_use_loki=false     skips the netobserv bucket entirely
+#   -e tracing_enabled=false        skips the Tempo bucket
+#
+# Re-running is safe: the secret keys recorded in s3-credentials.yml are
+# re-asserted, not rotated.
+# ═══════════════════════════════════════════════════════════════════════════════
+- name: Provision the MinIO S3 backends for OpenShift observability
+  hosts: localhost
+  gather_facts: false
+
+  roles:
+    - role: minio_backends
+      when: s3_provider == 'minio'
+
+  post_tasks:
+    - name: Explain the skip
+      ansible.builtin.debug:
+        msg: >-
+          Nothing to do: s3_provider is '{{ s3_provider }}', so the AWS phase
+          owns the buckets. Run aws-prereqs.yml instead, or pass
+          -e s3_provider=minio.
+      when: s3_provider != 'minio'
+      # A skip rather than a failure, so site.yml can import both phases and let
+      # the variable pick one.

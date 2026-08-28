@@ -22,6 +22,13 @@ not give you.
   - [Phase 2 — cluster](#phase-2--cluster)
   - [Both at once](#both-at-once)
 - [Choosing Network Observability with or without Loki](#choosing-network-observability-with-or-without-loki)
+- [Disconnected: MinIO instead of AWS S3](#disconnected-minio-instead-of-aws-s3)
+  - [What changes, and what does not](#what-changes-and-what-does-not)
+  - [Stand up MinIO](#stand-up-minio)
+  - [Run the MinIO storage phase](#run-the-minio-storage-phase)
+  - [Reaching MinIO from the cluster](#reaching-minio-from-the-cluster)
+  - [HTTPS and a private CA](#https-and-a-private-ca)
+  - [Where mc runs](#where-mc-runs)
 - [Variables](#variables)
 - [Running part of the stack](#running-part-of-the-stack)
 - [The OpenTelemetry log-correlation demo](#the-opentelemetry-log-correlation-demo)
@@ -70,13 +77,19 @@ reason to deploy the intermediate one.
 
 ## Prerequisites
 
-- A fresh **connected** OpenShift cluster with a **default StorageClass** and
-  enough headroom (two LokiStacks at `1x.pico`, a TempoStack, a collector, the
-  eBPF agent on every node, and 12 application Deployments).
+- An OpenShift cluster with a **default StorageClass** and enough headroom (two
+  LokiStacks at `1x.pico`, a TempoStack, a collector, the eBPF agent on every
+  node, and 12 application Deployments). Connected is the default assumption;
+  for a disconnected one the operators have to come from a mirrored catalogue
+  and the object storage from
+  [MinIO](#disconnected-minio-instead-of-aws-s3) rather than AWS.
 - `cluster-admin` on it — preflight checks by attempting a `SelfSubjectAccessReview`
   for creating Subscriptions.
-- AWS credentials that can create S3 buckets, IAM policies, IAM users and access
-  keys — see [Which AWS credentials get used](#which-aws-credentials-get-used).
+- **Object storage**, one of:
+  - AWS credentials that can create S3 buckets, IAM policies, IAM users and
+    access keys — see [Which AWS credentials get used](#which-aws-credentials-get-used); or
+  - a **MinIO** server, its root credentials, and `mc` — see
+    [Disconnected: MinIO instead of AWS S3](#disconnected-minio-instead-of-aws-s3).
 - `oc` on `PATH`. It is used **only** to render the workload's kustomize overlay
   and to check its own version — it never contacts the cluster, so `oc login` is
   not a prerequisite.
@@ -174,6 +187,10 @@ interpreter it used (`... on <host>'s Python /usr/bin/python3`). Install there,
 or point Ansible elsewhere with `-e ansible_python_interpreter=…`.
 
 ### Which AWS credentials get used
+
+Nothing in this subsection applies to `s3_provider: minio` — that phase talks to
+MinIO's admin API through `mc` with the root credentials you pass it, and never
+touches botocore or `~/.aws/`.
 
 A virtualenv changes **nothing** here. It isolates Python packages, not
 environment variables, `$HOME`, or `~/.aws/` — so whatever works for the `aws`
@@ -308,6 +325,10 @@ ansible-playbook cluster.yml -e suffix=xipio -e confirm_pause_seconds=0
 ansible-playbook aws-prereqs.yml -e suffix=xipio -e aws_region=ap-south-1
 ```
 
+> On a disconnected cluster, swap this playbook for `minio-prereqs.yml` and
+> leave phase 2 alone — see
+> [Disconnected: MinIO instead of AWS S3](#disconnected-minio-instead-of-aws-s3).
+
 Creates, per enabled component, an S3 bucket (encrypted, public access blocked),
 a least-privilege IAM policy scoped to that one bucket, a dedicated IAM user,
 and an access key. Writes them to `s3-credentials.yml`, mode `0600`,
@@ -371,6 +392,182 @@ ansible-playbook site.yml -e suffix=xipio -e netobserv_use_loki=false
 `FlowCollector` is cluster-scoped and singular, so re-applying it rewrites the
 `loki` block in place, which is exactly the patch the runbook describes.
 
+## Disconnected: MinIO instead of AWS S3
+
+A disconnected cluster has no route to `s3.<region>.amazonaws.com`, but Loki and
+Tempo do not actually require *AWS* — they require *S3*. Point them at a MinIO
+server on the lab network and they behave the same.
+
+One variable picks the provider:
+
+```bash
+# The two storage phases are interchangeable. This one needs no AWS account.
+ansible-playbook minio-prereqs.yml -e suffix=xipio -e s3_provider=minio \
+                 -e @minio-vault.yml --ask-vault-pass
+
+ansible-playbook cluster.yml -e suffix=xipio -e s3_provider=minio
+```
+
+or both at once, since `site.yml` imports both storage phases and lets
+`s3_provider` decide which one skips:
+
+```bash
+ansible-playbook site.yml -e suffix=xipio -e s3_provider=minio \
+                 -e @minio-vault.yml --ask-vault-pass
+```
+
+### What changes, and what does not
+
+The seam between the two phases is a **file**, not a provider. Both
+`aws-prereqs.yml` and `minio-prereqs.yml` write the same `s3-credentials.yml`,
+in the same shape:
+
+```yaml
+observability_s3_backends:
+  logging:
+    bucket: logging-loki-s3-xipio
+    endpoint: http://minio.hub.mylab.com:9000     # the only interesting difference
+    region: us-east-1
+    access_key_id: logging-loki-s3-xipio
+    secret_access_key: …
+```
+
+So the cluster phase is untouched: the `LokiStack` and `TempoStack` manifests,
+the storage secrets, the operators, the FlowCollector and the console plugins
+are byte-for-byte what the AWS path produces. Nothing branches on
+`s3_provider` after phase 1.
+
+| | `s3_provider: aws` | `s3_provider: minio` |
+|---|---|---|
+| Phase 1 playbook | `aws-prereqs.yml` | `minio-prereqs.yml` |
+| Role | `aws_backends` (`amazon.aws` modules) | `minio_backends` (`mc`, MinIO's admin client) |
+| Per component | bucket + IAM policy + IAM user + access key | bucket + policy + user + secret key |
+| Access key id | minted by IAM, unrelated to the user name | **is** the user name — MinIO has no separate key id |
+| Credentials phase 2 reads | `s3-credentials.yml` | the same file |
+| Needs | AWS credentials, `boto3` | MinIO root credentials, `mc` |
+
+The least-privilege policy is identical too — MinIO implements AWS's policy
+language, so `arn:aws:s3:::<bucket>` is correct on both and is not a
+copy-paste slip.
+
+### Stand up MinIO
+
+This automation does **not** install MinIO; it expects a server already running.
+[`hcp-backup-restore`](https://github.com/sadiquepp/hcp-backup-restore) builds
+one on a libvirt VM for exactly this kind of disconnected lab —
+[`setup_minio.yaml`](https://github.com/sadiquepp/hcp-backup-restore/blob/main/setup_minio.yaml)
+creates the VM (`setup-minio-vm`), registers it, then installs the MinIO server
+and `mc` as a systemd service (`setup-minio`):
+
+```bash
+# in the hcp-backup-restore checkout
+ansible-playbook setup_minio.yaml --ask-vault-pass
+```
+
+That leaves MinIO on `http://minio.<hub_domain>:9000` with the root credentials
+from its `vault.yaml`, and `mc` at `/usr/local/bin/mc` on the VM. Any other
+MinIO works just as well — all this role needs is an endpoint and the root
+credentials.
+
+### Run the MinIO storage phase
+
+Put the two secrets in a vault file rather than on the command line:
+
+```bash
+ansible-vault create minio-vault.yml
+```
+
+```yaml
+minio_root_user: minioadmin
+minio_root_password: <MINIO_ROOT_PASSWORD from the MinIO server>
+```
+
+```bash
+ansible-playbook minio-prereqs.yml -e suffix=xipio -e s3_provider=minio \
+                 -e minio_host=minio.hub.mylab.com \
+                 -e @minio-vault.yml --ask-vault-pass
+```
+
+Per enabled component it creates the bucket, a policy scoped to that one bucket,
+a user named after it, and a secret key — then **logs in as that new user and
+lists the bucket** before recording anything. A credential that cannot reach its
+own bucket fails here, in seconds, instead of fifteen minutes later as a Loki
+ingester in `CrashLoopBackOff`.
+
+Re-running does not rotate keys: MinIO takes the secret as an argument, so a
+secret already in `s3-credentials.yml` is simply asserted again. Lose that file
+and the next run mints a fresh secret and overwrites the user with it — the same
+outcome the AWS path gives.
+
+### Reaching MinIO from the cluster
+
+`minio_host` is the address **the cluster** resolves, because it is written
+verbatim into the storage secrets that Loki and Tempo read. The box running
+Ansible is not the cluster, and this is the single most common way to get a
+`LokiStack` that never goes Ready:
+
+- An IP address always works: `-e minio_host=192.168.122.23`.
+- A hostname needs the cluster's upstream resolver to know it. On a lab cluster
+  that usually means the same DNS that serves `*.apps.<cluster>`; otherwise use
+  the IP.
+- Loopback is rejected outright — `127.0.0.1` means the MinIO host itself and
+  can only ever be right for `mc`, never for the cluster.
+
+Preflight prints `Storage: MinIO at …` next to the target cluster, tries
+`/minio/health/live` itself, and warns (does not fail) when it cannot reach it —
+the control node and the cluster are not always on the same network.
+
+### HTTPS and a private CA
+
+A plain-HTTP MinIO, which is what the lab role above installs, needs nothing
+extra: `http://` in the endpoint is how both operators are told to talk to it
+without TLS.
+
+For an HTTPS MinIO whose certificate comes from a lab CA, hand the automation
+the CA bundle:
+
+```bash
+ansible-playbook site.yml -e suffix=xipio -e s3_provider=minio \
+                 -e minio_scheme=https \
+                 -e observability_s3_ca_bundle_file=$HOME/lab-ca.pem \
+                 -e @minio-vault.yml --ask-vault-pass
+```
+
+That publishes the bundle as a ConfigMap beside each `LokiStack` and the
+`TempoStack` and points `spec.storage.tls.caName` at it. Neither Loki nor Tempo
+has a "skip verification" switch, so without it every write fails with `x509:
+certificate signed by unknown authority`. `-e minio_mc_insecure=true` is a
+separate, `mc`-only escape hatch for phase 1 and does nothing for the cluster.
+
+### Where mc runs
+
+Bucket, policy and user creation are MinIO **admin**-API calls, which only `mc`
+can make — the `amazon.aws` modules cannot. By default `mc` runs on the control
+node, which therefore needs the binary and a route to port 9000. When only SSH
+gets you to MinIO, run `mc` on the MinIO VM instead, where the `setup-minio`
+role already put it:
+
+```bash
+ansible-playbook minio-prereqs.yml -e suffix=xipio -e s3_provider=minio \
+                 -e minio_host=minio.hub.mylab.com \
+                 -e minio_mc_host=minio.hub.mylab.com \
+                 -e minio_mc_endpoint=http://127.0.0.1:9000 \
+                 -e minio_mc_bin=/usr/local/bin/mc \
+                 -e @minio-vault.yml --ask-vault-pass
+```
+
+`minio_mc_host` must be an inventory host or a resolvable address Ansible can
+SSH to; `s3-credentials.yml` is still written next to the playbook. Both `mc`
+command generations are handled — the role detects whether this client speaks
+`admin policy create/attach` (2023 and later) or `admin policy add/set`.
+
+One thing to know about `mc`: `mc alias set` persists the credentials it is
+given in `~/.mc/config.json` on the host it runs on (mode `0600`). That is `mc`'s
+own behaviour, not something this role adds — the per-component aliases it uses
+to verify a new credential are removed again, but the root alias is left in
+place. On a shared box either point `minio_mc_config_dir` somewhere you control,
+or drop it afterwards with `mc alias remove observability`.
+
 ## Variables
 
 Everything lives in [`group_vars/all.yml`](group_vars/all.yml), commented. The
@@ -383,7 +580,13 @@ ones worth knowing:
 | `aws_profile` | `""` | Empty uses botocore's normal chain. Set it when several credential sources exist. |
 | `kubeconfig` | `""` | Empty falls back to `KUBECONFIG`, then `~/.kube/config`. Ignored by the AWS phase. |
 | `kube_context` | `""` | Empty uses the kubeconfig's current-context. |
-| `aws_region` | `ap-south-1` | |
+| `aws_region` | `ap-south-1` | Ignored when `s3_provider` is `minio`. |
+| `s3_provider` | `aws` | `aws` (phase 1 is `aws-prereqs.yml`) or `minio` (phase 1 is `minio-prereqs.yml`). See [Disconnected: MinIO instead of AWS S3](#disconnected-minio-instead-of-aws-s3). |
+| `minio_host` | `""` | **Required for `minio`.** The address *the cluster* resolves — it goes verbatim into the storage secrets. |
+| `minio_root_user` / `minio_root_password` | `""` | **Required for `minio`.** `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` on the server. Put them in a vault file. |
+| `minio_scheme` / `minio_api_port` / `minio_region` | `http` / `9000` / `us-east-1` | `minio_region` has to match what the server signs with, or every request fails `SignatureDoesNotMatch`. |
+| `minio_mc_host` / `minio_mc_endpoint` / `minio_mc_bin` | `localhost` / `minio_endpoint` / `mc` | Where and how `mc` runs. |
+| `observability_s3_ca_bundle_file` | `""` | CA PEM for an HTTPS MinIO behind a private CA. Published as a ConfigMap and referenced by `spec.storage.tls`. |
 | `netobserv_use_loki` | `true` | Path B / Path A. |
 | `storage_class_name` | `""` | Empty means "discover the cluster default". |
 | `logging_enabled` / `netobserv_enabled` / `tracing_enabled` / `workload_enabled` | `true` | Layer toggles. |
@@ -430,6 +633,7 @@ requirements.yml         Collections, for ansible-core 2.17 in a venv - the supp
 requirements-legacy.yml  Collections, fallback for system ansible-core 2.13-2.16
 
 aws-prereqs.yml       AWS only - buckets, IAM, access keys, credentials file
+minio-prereqs.yml     MinIO only - the same, on an S3-compatible server, for disconnected
 cluster.yml           Everything cluster-side
 site.yml              Both, in order
 demo-otel-logs.yml    Enable/revert the OTel log-correlation demo
@@ -439,7 +643,8 @@ group_vars/all.yml    Every tunable, commented
 
 roles/
   preflight           Fail early: suffix, cluster reachable, admin, StorageClass, credentials
-  aws_backends        One bucket + policy + user + key per component
+  aws_backends        One bucket + policy + user + key per component, on AWS
+  minio_backends      The same, on MinIO - the disconnected stand-in for aws_backends
   olm_operator        Reusable: Namespace + OperatorGroup + Subscription + waits
   lokistack           Reusable: S3 secret + LokiStack + wait (used for logs and for flows)
   cluster_observability   The Cluster Observability Operator
@@ -448,6 +653,11 @@ roles/
   distributed_tracing TempoStack, OTel collector + spanmetrics, UWM, ServiceMonitors
   test_workload       Online Boutique + adservice auto-instrumentation
 ```
+
+`aws_backends` and `minio_backends` are interchangeable: they create the same
+things under different APIs and write the same `s3-credentials.yml`, which is
+the only thing the cluster phase reads. That file is why swapping AWS S3 for
+MinIO costs one variable and changes no manifest.
 
 Two roles are deliberately generic. `olm_operator` installs all six operators,
 so the "wait until it is actually usable" logic — resolve the Subscription, read
@@ -482,6 +692,10 @@ Safe to re-run. Specifics worth knowing:
 - **Access keys are not rotated.** If `s3-credentials.yml` holds a key that still
   exists in IAM, it is reused. Otherwise, keys the file has no secret for are
   deleted first (IAM allows two per user) and a fresh one is minted.
+- **On MinIO the same rule applies more simply.** A recorded secret is asserted
+  again (MinIO takes the secret as an argument, so nothing is lost), and only a
+  missing one is generated. Buckets, policies and policy attachments are all
+  compared before being written, so a second run reports no changes at all.
 - **`cluster-monitoring-config` is read-modify-written**, so an existing
   Alertmanager or retention configuration survives having `enableUserWorkload`
   added.
@@ -504,6 +718,12 @@ Safe to re-run. Specifics worth knowing:
 | Preflight ran against the wrong cluster | Check the `Target:` line it prints. Pin it with `-e kube_context=…` rather than relying on current-context. |
 | Preflight: "must be set to a short lowercase string" | Pass `-e suffix=…`. |
 | Preflight: "No S3 credentials for the `x` backend" | Phase 1 was not run, was run with different toggles, or the file is vault-encrypted — add `--ask-vault-pass`. |
+| Preflight: "must be an address the CLUSTER can resolve" | `minio_host` is a loopback address. That is only ever right for `mc` — set `minio_mc_endpoint` for that and leave `minio_host` routable. |
+| Preflight: "points the `x` backend at … which is not where s3_provider expects it" | A leftover `s3-credentials.yml` from the *other* storage phase. Delete it and re-run phase 1. |
+| `mc` not found on … | Phase 1 needs MinIO's admin client. Install it, or run it on the MinIO VM with `-e minio_mc_host=… -e minio_mc_bin=/usr/local/bin/mc`. |
+| Loki/Tempo pods log `x509: certificate signed by unknown authority` | HTTPS MinIO with a private CA. Set `-e observability_s3_ca_bundle_file=…` and re-run the cluster phase. |
+| Loki/Tempo pods log `SignatureDoesNotMatch` against MinIO | `minio_region` disagrees with the server. Match `MINIO_REGION` / `MINIO_SITE_REGION`, or leave both unset for `us-east-1`. |
+| Loki/Tempo pods log a connection timeout to MinIO | The endpoint resolves from the control node but not from the cluster. `oc debug node/… -- curl -sv <endpoint>/minio/health/live`, then use an IP for `minio_host`. |
 | Preflight: "No StorageClass is marked default" | Mark one, or pass `-e storage_class_name=…`. |
 | "wait for the Subscription to resolve" times out | Almost always a wrong channel. `oc describe subscription <name> -n <ns>` and look for `ResolutionFailed`. |
 | A LokiStack never reaches Ready | Storage or credentials. `oc get pods -n <ns> -l app.kubernetes.io/instance=<stack>` — Pending means the StorageClass cannot bind, CrashLoop means the S3 credentials are wrong. |
@@ -518,13 +738,27 @@ Cluster resources only:
 ansible-playbook cleanup.yml -e suffix=xipio -e cleanup_confirm=yes
 ```
 
-Cluster resources **and** the AWS buckets, users and policies:
+Cluster resources **and** the object storage behind them — on AWS the buckets,
+IAM users and policies; on MinIO the buckets, users and policies:
 
 ```bash
-ansible-playbook cleanup.yml -e suffix=xipio -e cleanup_confirm=yes -e cleanup_aws=yes
+ansible-playbook cleanup.yml -e suffix=xipio -e cleanup_confirm=yes -e cleanup_storage=yes
 ```
 
-Cluster first, then AWS — deleting the buckets while the operators are still
+MinIO also needs its root credentials, the same ones phase 1 took:
+
+```bash
+ansible-playbook cleanup.yml -e suffix=xipio -e cleanup_confirm=yes \
+                 -e cleanup_storage=yes -e s3_provider=minio \
+                 -e @minio-vault.yml --ask-vault-pass
+```
+
+`-e cleanup_aws=yes` still works and now means the same thing: clean up whatever
+`s3_provider` points at. Either way `s3-credentials.yml` is removed with the
+storage it describes, so the next run cannot configure Loki against buckets that
+are gone.
+
+Cluster first, then storage — deleting the buckets while the operators are still
 writing leaves them retrying against storage that is gone. Operators,
 Subscriptions and CSVs are left in place; removing them is rarely what you want
 mid-iteration and they cost nothing idle.
