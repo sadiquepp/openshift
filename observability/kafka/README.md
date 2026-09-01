@@ -36,6 +36,12 @@ follow start to finish without it.
   - [Create the OpenTelemetryCollector](#create-the-opentelemetrycollector)
 - [Test workload](#test-workload)
 - [Verify](#verify)
+  - [Is it still flowing?](#is-it-still-flowing)
+  - [What the numbers mean](#what-the-numbers-mean)
+- [Reading a record](#reading-a-record)
+  - [A network flow](#a-network-flow)
+  - [A trace](#a-trace)
+- [What verification does and does not establish](#what-verification-does-and-does-not-establish)
 - [What is on each topic](#what-is-on-each-topic)
 - [Troubleshooting](#troubleshooting)
 - [Clean up](#clean-up)
@@ -1800,7 +1806,7 @@ oc wait --for=condition=complete job/kafka-verify-topics -n $KAFKA_NAMESPACE --t
 oc logs -n $KAFKA_NAMESPACE job/kafka-verify-topics
 ```
 
-Output is `<topic>:<partition>:<end offset>`. Expect:
+Output is `<topic>:<partition>:<end offset>` — the offset the *next* record will get. Expect:
 
 | Topic | First records after |
 |---|---|
@@ -1809,9 +1815,273 @@ Output is `<topic>:<partition>:<end offset>`. Expect:
 | `network-flows` | as soon as the eBPF agents are running and there is traffic |
 | `otlp-traces`, `otlp-spanmetrics` | traffic through an instrumented workload — a few minutes after the load generator starts |
 
-Offsets rather than a console consumer on purpose: the payloads are protobuf, so consuming them
-prints a screen of binary and proves the same one thing. If you do want to look at a record, the
-readable option is to flip the collector to `encoding: otlp_json` temporarily.
+A healthy first run looks like this. The counts are wildly different and that is expected — see
+[what the numbers mean](#what-the-numbers-mean) below:
+
+```
+==> otlp-traces
+    otlp-traces:0:47
+    otlp-traces:1:46
+    otlp-traces:2:48
+==> otlp-spanmetrics
+    otlp-spanmetrics:0:21
+    otlp-spanmetrics:1:20
+    otlp-spanmetrics:2:20
+==> federated-metrics
+    federated-metrics:0:13
+    federated-metrics:1:19
+    federated-metrics:2:18
+==> cluster-logs
+    cluster-logs:0:333721
+    cluster-logs:1:338239
+    cluster-logs:2:346566
+    cluster-logs:3:348731
+    cluster-logs:4:323250
+    cluster-logs:5:313230
+==> network-flows
+    network-flows:0:22300
+    network-flows:1:22298
+    network-flows:2:22297
+    network-flows:3:22293
+    network-flows:4:22291
+    network-flows:5:22289
+```
+
+### Is it still flowing?
+
+An end offset is a **cumulative counter, not a rate**. A single snapshot cannot tell "producing
+steadily" apart from "wrote 141 records and died an hour ago". Sample twice and subtract:
+
+```bash
+for i in 1 2; do
+  oc delete job kafka-verify-topics -n $KAFKA_NAMESPACE --ignore-not-found --wait=true
+  oc apply -f kafka-verify-topics.yaml
+  oc wait --for=condition=complete job/kafka-verify-topics -n $KAFKA_NAMESPACE --timeout=180s
+  oc logs -n $KAFKA_NAMESPACE job/kafka-verify-topics | grep -oE '\S+:[0-9]+:[0-9]+' > /tmp/off-$i
+  [ $i = 1 ] && sleep 60
+done
+paste /tmp/off-1 /tmp/off-2 | awk -F'[:\t]' '{printf "%-20s p%s  +%d/min\n",$1,$2,$6-$3}'
+```
+
+```
+otlp-traces          p0  +8/min          cluster-logs         p0  +2609/min
+otlp-traces          p1  +9/min          cluster-logs         p1  +1992/min
+otlp-traces          p2  +6/min          cluster-logs         p2  +2336/min
+otlp-spanmetrics     p0  +3/min          cluster-logs         p3  +2416/min
+otlp-spanmetrics     p1  +4/min          cluster-logs         p4  +1991/min
+otlp-spanmetrics     p2  +3/min          cluster-logs         p5  +1640/min
+federated-metrics    p0  +1/min          network-flows        p0  +2047/min
+federated-metrics    p1  +2/min          network-flows        p1  +2047/min
+federated-metrics    p2  +1/min          network-flows        p2  +2048/min
+                                         network-flows        p3  +2048/min
+                                         network-flows        p4  +2049/min
+                                         network-flows        p5  +2046/min
+```
+
+Every partition advancing is the real pass condition. Two things in that output are worth reading:
+
+- **`federated-metrics` at 4/min total** matches two scrape jobs at a 30s interval exactly. When a
+  number can be predicted from configuration and then matches, it is a much stronger signal than a
+  number that is merely non-zero.
+- **`network-flows` is flat to within 3 across six partitions.** That is round-robin partitioning
+  with no message key — every partition is live and no broker is being favoured. `cluster-logs`
+  varies more (1640–2609) because Vector's batching lands unevenly, which is normal.
+
+### What the numbers mean
+
+**The five topics do not count the same thing**, so comparing 141 traces to two million logs is
+meaningless:
+
+| Topic | One Kafka record is | So the offset counts |
+|---|---|---|
+| `otlp-traces`, `otlp-spanmetrics`, `federated-metrics` | one OTLP **export batch** | batches, each holding many spans or data points |
+| `cluster-logs` | one log **event** | log lines |
+| `network-flows` | one **flow** record | flows, already sampled |
+
+141 records on `otlp-traces` is thousands of spans. And every flow record carries
+`"Sampling": 50`, so the traffic it represents is roughly fifty times what the record itself says.
+
+## Reading a record
+
+Offsets prove bytes landed. They do not prove the bytes are *usable* — right encoding, right
+enrichment, the attributes a consumer needs. For that you have to decode one.
+
+`cluster-logs` and `network-flows` are JSON and can be read directly. Use a Job rather than
+`oc run`, which trips the `restricted` Pod Security warning:
+
+```bash
+cat <<EOF | oc apply -f -
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kafka-peek
+  namespace: $KAFKA_NAMESPACE
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: kafka-peek
+        image: $KAFKA_IMAGE
+        command:
+        - /bin/bash
+        - -c
+        - |
+          bin/kafka-console-consumer.sh --bootstrap-server $KAFKA_BOOTSTRAP \
+            --consumer.config /etc/kafka-admin/client.properties \
+            --topic $TOPIC_FLOWS --max-messages 1 --from-beginning --timeout-ms 20000
+        volumeMounts:
+        - { name: admin-config, mountPath: /etc/kafka-admin, readOnly: true }
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          capabilities: { drop: ["ALL"] }
+          seccompProfile: { type: RuntimeDefault }
+      volumes:
+      - { name: admin-config, secret: { secretName: kafka-admin-config } }
+EOF
+```
+
+```bash
+oc wait --for=condition=complete job/kafka-peek -n $KAFKA_NAMESPACE --timeout=120s
+oc logs -n $KAFKA_NAMESPACE job/kafka-peek | python3 -m json.tool
+```
+
+Swap `--topic` for `$TOPIC_LOGS` to read a log record instead. Delete the Job before re-running it —
+the pod template is immutable.
+
+### A network flow
+
+One record, reformatted for reading. Node addresses are replaced with the documentation range
+([RFC 5737](https://datatracker.ietf.org/doc/html/rfc5737)); the pod addresses are OpenShift's
+default `10.128.0.0/14` and are left alone. Everything else is verbatim:
+
+```json
+{
+  "SrcAddr": "10.129.2.19",         "DstAddr": "10.128.0.74",
+  "SrcPort": 9092,                  "DstPort": 37506,
+  "SrcK8S_Name": "observability-dual-role-1",
+  "SrcK8S_Namespace": "kafka",
+  "SrcK8S_OwnerName": "observability-dual-role",
+  "SrcK8S_OwnerType": "StrimziPodSet",
+  "SrcK8S_HostName": "worker2",     "SrcK8S_HostIP": "192.0.2.35",
+  "DstK8S_Name": "instance-g89dt",
+  "DstK8S_Namespace": "openshift-logging",
+  "DstK8S_OwnerName": "instance",
+  "DstK8S_OwnerType": "DaemonSet",
+  "DstK8S_HostName": "master1",     "DstK8S_HostIP": "192.0.2.31",
+  "Proto": 6, "Etype": 2048, "Flags": ["ACK"],
+  "Bytes": 195, "Packets": 2, "Sampling": 50,
+  "K8S_FlowLayer": "app",
+  "Interfaces": ["dc015203f7a7950", "genev_sys_6081"],
+  "IfDirections": [0, 1], "FlowDirection": 1,
+  "AgentIP": "192.0.2.35",
+  "TimeFlowStartMs": 1788255733306,
+  "TimeFlowEndMs": 1788255741164,
+  "TimeReceived": 1788255748
+}
+```
+
+**What this particular record is.** Source port 9092 in namespace `kafka` is the broker. The
+destination is a DaemonSet pod named `instance-…` in `openshift-logging` — that is Vector, the
+collector the `ClusterLogForwarder` named `instance` creates. So this is the broker ACKing Vector's
+own produce requests: **the flow pipeline captured the log pipeline shipping to the same broker.**
+Two of the five signals confirming each other in a single record is a better end-to-end proof than
+any offset count.
+
+Reading the rest:
+
+| Field | Meaning |
+|---|---|
+| `Proto: 6`, `Etype: 2048` | TCP over IPv4 (`0x0800`). Numeric, not symbolic — a consumer maps them. |
+| `Flags: ["ACK"]`, `Bytes: 195`, `Packets: 2` | A pure acknowledgement, which is why it is tiny. |
+| `Sampling: 50` | **This record stands for ~50 flows.** Multiply `Bytes` and `Packets` by it for a traffic estimate. Set `sampling: 1` on the `FlowCollector` to export every flow. |
+| `Src/DstK8S_*` | The enrichment, and the whole point. FLP turned two pod IPs into names, namespaces, owners and nodes *before* the record left the cluster — so a consumer never needs to query this cluster's API to interpret it. |
+| `SrcK8S_OwnerType: StrimziPodSet` | Owner resolution follows custom controllers, not just Deployments and DaemonSets. |
+| `Interfaces`, `IfDirections` | `dc015203f7a7950` is the pod's veth; `genev_sys_6081` is the Geneve tunnel — this crossed nodes on the OVN-Kubernetes overlay. `0` = ingress, `1` = egress on the matching interface. |
+| `FlowDirection: 1` | Egress as reported by `AgentIP`, the agent on the source node. |
+| `TimeFlow*Ms` | Epoch milliseconds. Here `EndMs - StartMs` = 7858ms, a connection held open across the sampling window rather than a one-shot request. |
+| `K8S_FlowLayer: app` | Application traffic, as opposed to `infra`. |
+
+### A trace
+
+`otlp-traces` is protobuf, so a console consumer prints binary. Two ways to make one readable:
+
+- **Lab:** flip `encoding: otlp_json` on the `kafka/traces` exporter, re-apply, consume, flip back.
+  Note the topic then holds two encodings across that window, which a consumer mid-stream will not
+  enjoy.
+- **Production:** add a second exporter with `encoding: otlp_json` writing to a throwaway topic and
+  add it to the `traces` pipeline's `exporters` list. Nothing already on the topic changes.
+
+OTLP is nested three levels deep, and knowing the shape is most of reading it:
+
+```
+resourceSpans[]           ← one per producing service; carries `resource.attributes`
+  └── scopeSpans[]        ← one per instrumentation library
+        └── spans[]       ← the actual spans
+```
+
+Trimmed to the fields that matter (illustrative — the trace and span IDs are made up):
+
+```json
+{"resourceSpans": [{
+  "resource": {"attributes": [
+    {"key": "service.name",       "value": {"stringValue": "frontend"}},
+    {"key": "k8s.namespace.name", "value": {"stringValue": "online-boutique"}},
+    {"key": "k8s.pod.name",       "value": {"stringValue": "frontend-7d9c8b6f5d-x2klm"}},
+    {"key": "k8s.node.name",      "value": {"stringValue": "worker2"}}
+  ]},
+  "scopeSpans": [{
+    "scope": {"name": "go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"},
+    "spans": [{
+      "traceId":           "5b8efff798038103d269b633813fc60c",
+      "spanId":            "eee19b7ec3c1b174",
+      "parentSpanId":      "",
+      "name":              "GET /product/{id}",
+      "kind":              2,
+      "startTimeUnixNano": "1788255733306000000",
+      "endTimeUnixNano":   "1788255733412000000",
+      "attributes": [
+        {"key": "http.method",      "value": {"stringValue": "GET"}},
+        {"key": "http.status_code", "value": {"intValue": "200"}}
+      ],
+      "status": {}
+    }]
+  }]
+}]}
+```
+
+What to look at, in order:
+
+| Field | Meaning |
+|---|---|
+| `traceId` | The join key. Every service touched by one user request emits spans carrying the **same** `traceId` — that is what lets a backend reassemble a distributed call from records that arrived independently. |
+| `spanId` / `parentSpanId` | The tree. An empty `parentSpanId` is the **root span**, where the request entered the system. |
+| `kind` | `2` = SERVER (received a request), `3` = CLIENT (made one). A client span in one service and a server span in the next, sharing a `traceId`, is one hop. |
+| `startTimeUnixNano` / `endTimeUnixNano` | Duration is the difference, in nanoseconds — 106ms here. There is no duration field; it is always computed. |
+| `resource.attributes` → `service.name` | Which service emitted it. Set by `OTEL_SERVICE_NAME` on the workload; without it the Go services all report `unknown_service:server` and collapse into one. |
+| `resource.attributes` → `k8s.*` | **Added by the `k8sattributes` processor, not the application.** Their presence is proof that processor and its ClusterRole are working. Absent, the topic still gets valid traces with no idea which pod produced them. |
+| one record | One *batch*: many `resourceSpans`, from several services, covering many traces. |
+
+Cross-check against `otlp-spanmetrics`: the RED metrics on that topic are derived from exactly these
+spans by the `spanmetrics` connector, so a service appearing in traces should appear there too.
+
+## What verification does and does not establish
+
+Worth being precise, because the checks above are easy to over-read:
+
+| Established | Not established |
+|---|---|
+| All five topics exist and every partition is live | That **all** of a signal arrives — offsets cannot show you what was dropped or never collected |
+| Every producer connects, authenticates and writes | That records are complete — a log record per line does not mean every namespace is represented |
+| Data is still arriving now, at a measurable rate | That a consumer can do anything useful with them; only decoding shows that |
+| Records carry their k8s enrichment | That ordering or exactly-once delivery holds — Kafka gives per-partition ordering only |
+
+For completeness, check the dimension you actually care about. `log_type` on `cluster-logs` records
+should show `application`, `infrastructure` **and** `audit` — if `audit` never appears, the
+`collect-audit-logs` binding is missing and offsets would never have told you.
 
 ## What is on each topic
 
