@@ -1946,8 +1946,21 @@ EOF
 
 ```bash
 oc wait --for=condition=complete job/kafka-peek -n $KAFKA_NAMESPACE --timeout=120s
-oc logs -n $KAFKA_NAMESPACE job/kafka-peek | python3 -m json.tool
+oc logs -n $KAFKA_NAMESPACE job/kafka-peek | grep -m1 '^{' | python3 -m json.tool
 ```
+
+> **The `grep` is load-bearing.** `kafka-console-consumer.sh` writes the record to stdout but
+> `Processed a total of 1 messages` to stderr, and `oc logs` merges the two. In a Job there is no
+> TTY, so stdout is block-buffered while stderr is not — the summary line usually lands *first*.
+> Piping the whole log straight into a JSON parser therefore fails on a record that arrived
+> perfectly:
+>
+> ```
+> Expecting value: line 1 column 1 (char 0)     # summary line first, or the log is empty
+> Extra data: line 2 column 1 (char 37)         # record first, summary after
+> ```
+>
+> Neither says anything about the record. Run `oc logs` on its own to see what is really there.
 
 Swap `--topic` for `$TOPIC_LOGS` to read a log record instead. Delete the Job before re-running it —
 the pod template is immutable.
@@ -2114,6 +2127,7 @@ directly. The two JSON topics are the ones a SIEM or an archival pipeline consum
 | ...but a probe pod in the same namespace connects fine | Expected, and it confirms the policy: the probe does not carry the `part-of=netobserv-operator` label the policy selects on, so it is not subject to it. |
 | Flows missing but the agent is running | The `FlowCollector` has no `exporters` entry, or `deploymentModel: Kafka` was set instead — that is internal transport, not export. |
 | `'kafkaexporter.Config' has invalid keys: encoding, topic` | The build wants `topic` and `encoding` nested under `traces:` / `metrics:`. `invalid keys: traces, metrics` means the opposite. |
+| `kafka-peek`: `Expecting value: line 1 column 1` or `Extra data: line 2 column 1` | Not a data problem. The consumer's `Processed a total of N messages` summary is on stderr and `oc logs` merges it with the record. Filter first: `oc logs … \| grep -m1 '^{' \| python3 -m json.tool`. |
 | Vector: `too old resource version ... reason: Expired, code: 410` | **Benign.** A Kubernetes watch fell behind and the reflector is re-listing; it retries and recovers on its own. It says nothing about whether logs are reaching the topic — check the `cluster-logs` offsets for that. |
 | `Observe → Network Traffic` shows no "Traffic flows" table | Expected. That table reads from Loki, and there is none. Overview and Topology still work. |
 
