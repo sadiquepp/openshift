@@ -2296,13 +2296,22 @@ spec:
       containers:
       - name: peek
         image: registry.access.redhat.com/ubi9/python-311
+        env:
+        - { name: PIP_DISABLE_PIP_VERSION_CHECK, value: "1" }
         command:
         - /bin/bash
         - -c
         - |
-          pip install --quiet --user opentelemetry-proto kafka-python
-          python3 /opt/peek/otlp-peek.py --bootstrap $KAFKA_BOOTSTRAP \
-            --topic $TOPIC_TRACES --max 1
+          set -e
+          # --target, NOT --user. This image runs your code inside a
+          # virtualenv at /opt/app-root, and pip refuses a --user install
+          # there: "Can not perform a '--user' install. User site-packages
+          # are not visible in this virtualenv." --target sidesteps the
+          # question entirely and works whatever the image's layout.
+          pip install --quiet --no-cache-dir --target /tmp/lib \
+            opentelemetry-proto kafka-python
+          PYTHONPATH=/tmp/lib python3 /opt/peek/otlp-peek.py \
+            --bootstrap $KAFKA_BOOTSTRAP --topic $TOPIC_TRACES --max 1
         volumeMounts:
         - { name: script, mountPath: /opt/peek, readOnly: true }
         securityContext:
@@ -2319,6 +2328,13 @@ EOF
 ```bash
 oc wait --for=condition=complete job/otlp-peek -n $KAFKA_NAMESPACE --timeout=180s
 oc logs -n $KAFKA_NAMESPACE job/otlp-peek
+```
+
+Delete the Job before re-applying — the pod template is immutable, and `backoffLimit` means a failed
+run leaves two `Error` pods behind:
+
+```bash
+oc delete job otlp-peek -n $KAFKA_NAMESPACE --ignore-not-found
 ```
 
 The `pip install` needs egress to PyPI. On a disconnected cluster point it at your internal index,
@@ -2398,6 +2414,7 @@ directly. The two JSON topics are the ones a SIEM or an archival pipeline consum
 | ...but a probe pod in the same namespace connects fine | Expected, and it confirms the policy: the probe does not carry the `part-of=netobserv-operator` label the policy selects on, so it is not subject to it. |
 | Flows missing but the agent is running | The `FlowCollector` has no `exporters` entry, or `deploymentModel: Kafka` was set instead — that is internal transport, not export. |
 | `'kafkaexporter.Config' has invalid keys: encoding, topic` | The build wants `topic` and `encoding` nested under `traces:` / `metrics:`. `invalid keys: traces, metrics` means the opposite. |
+| `Can not perform a '--user' install. User site-packages are not visible in this virtualenv` | The UBI Python images run your code inside a virtualenv at `/opt/app-root`. Install with `--target /tmp/lib` and set `PYTHONPATH`, not `--user`. |
 | `KafkaTimeoutError: Unable to bootstrap from ['…svc:9092']` | A cluster-internal address used from off-cluster. `oc port-forward` does not fix it — see [Decoding the protobuf topics](#decoding-the-protobuf-topics) for the three options. |
 | `kafka-peek`: `Expecting value: line 1 column 1` or `Extra data: line 2 column 1` | Not a data problem. The consumer's `Processed a total of N messages` summary is on stderr and `oc logs` merges it with the record. Filter first: `oc logs … \| grep -m1 '^{' \| python3 -m json.tool`. |
 | Vector: `too old resource version ... reason: Expired, code: 410` | **Benign.** A Kubernetes watch fell behind and the reflector is re-listing; it retries and recovers on its own. It says nothing about whether logs are reaching the topic — check the `cluster-logs` offsets for that. |
