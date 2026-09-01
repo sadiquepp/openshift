@@ -191,16 +191,41 @@ oc get csv -n openshift-operators | grep amqstreams
 oc create namespace $KAFKA_NAMESPACE --dry-run=client -o yaml | oc apply -f -
 ```
 
-- Read the Kafka image the operator is willing to run. It ships a `<kafka version>=<image>` map in
+- Read the Kafka image the operator is willing to run. It carries a `<kafka version>=<image>` map in
   `STRIMZI_KAFKA_IMAGES`; the last entry is the newest.
 
 ```bash
-KAFKA_IMAGE=$(oc get deploy -n openshift-operators -o json \
-  | jq -r '.items[].spec.template.spec.containers[].env[]?
-           | select(.name=="STRIMZI_KAFKA_IMAGES") | .value' \
-  | grep -v '^$' | tail -1 | cut -d= -f2-)
+KAFKA_IMAGE=$(oc get deploy -n openshift-operators -o json | jq -r '
+  .items[] | .spec.template as $t
+  | $t.spec.containers[].env[]?
+  | select(.name == "STRIMZI_KAFKA_IMAGES")
+  | if .value then .value
+    else $t.metadata.annotations[
+           (.valueFrom.fieldRef.fieldPath | sub("^[^\\[]*\\[."; "") | sub(".\\]$"; ""))] // empty
+    end' | grep -v '^$' | tail -1 | cut -d= -f2-)
 export KAFKA_IMAGE
 echo "$KAFKA_IMAGE"
+```
+
+> **Why that is not just `.value`.** Recent builds do not put the map in the environment variable at
+> all. They set it through the downward API, pointing at an annotation on the operator's own pod:
+>
+> ```json
+> { "name": "STRIMZI_KAFKA_IMAGES",
+>   "valueFrom": { "fieldRef": { "fieldPath": "metadata.annotations['kafka-images']" } } }
+> ```
+>
+> So `.value` is `null` and the map lives in `.spec.template.metadata.annotations["kafka-images"]`
+> instead. The `if .value then … else …` above reads the annotation **named by the `fieldPath`**
+> rather than assuming `kafka-images`, so it keeps working on older builds that still set `.value`
+> inline, and on a future build that renames the annotation.
+
+- Check you got something. An empty result means the operator is not running yet, or it has moved
+  the map somewhere new again — set `KAFKA_IMAGE` by hand from
+  `oc get deploy -n openshift-operators -o yaml` and carry on.
+
+```bash
+test -n "$KAFKA_IMAGE" && echo OK || echo "KAFKA_IMAGE is empty - set it manually"
 ```
 
   The values are usually digest-pinned, which is exactly what you want in a Job. On a disconnected

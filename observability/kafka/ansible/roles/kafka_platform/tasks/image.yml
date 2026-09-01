@@ -1,5 +1,5 @@
 ---
-# The Kafka image the admin Job runs bin/kafka-topics.sh from.
+# The Kafka image the admin Jobs run bin/kafka-topics.sh and bin/kafka-get-offsets.sh from.
 #
 # Hardcoding a tag here would rot: the image has to match the operator, and on
 # a disconnected cluster it has to be a reference into the mirror registry. The
@@ -7,8 +7,20 @@
 # newline-separated `<kafka version>=<image>` map of exactly the images it is
 # willing to run - so read it from there.
 #
-# Found by looking for that environment variable rather than by Deployment name,
-# because the name carries the operator version (amq-streams-cluster-operator-v...).
+# TWO SHAPES, and both are in the field:
+#
+#   value:     "3.9.0=registry.../kafka-39-rhel9@sha256:..."
+#   valueFrom: {fieldRef: {fieldPath: "metadata.annotations['kafka-images']"}}
+#
+# The second is the downward API: the map is not in the environment variable at
+# all, it is an annotation on the operator's own pod and the variable only
+# points at it. Recent builds ship that shape, older ones the inline value.
+# Both are handled below, and the annotation NAME is taken from the fieldPath
+# rather than assumed, so a future rename does not break this either.
+#
+# The Deployment is found by looking for that environment variable rather than
+# by name, because the name carries the operator version
+# (amq-streams-cluster-operator-v2.9.0-1).
 
 - name: List the Deployments in {{ kafka_operator_namespace }}
   kubernetes.core.k8s_info:
@@ -27,14 +39,54 @@
     | selectattr('name', 'equalto', 'STRIMZI_KAFKA_IMAGES')
     | list | length > 0
 
-- name: Read STRIMZI_KAFKA_IMAGES
+- name: Select the cluster operator Deployment
+  ansible.builtin.set_fact:
+    _kafka_operator_deploy: "{{ item }}"
+  loop: "{{ _kafka_operator_deploys.resources | default([]) }}"
+  loop_control:
+    label: "{{ item.metadata.name }}"
+  when: >-
+    item.spec.template.spec.containers
+    | map(attribute='env', default=[]) | flatten
+    | selectattr('name', 'equalto', 'STRIMZI_KAFKA_IMAGES')
+    | list | length > 0
+
+- name: Read the STRIMZI_KAFKA_IMAGES environment variable
+  ansible.builtin.set_fact:
+    _kafka_images_env: >-
+      {{ _kafka_operator_deploy.spec.template.spec.containers
+         | map(attribute='env', default=[]) | flatten
+         | selectattr('name', 'equalto', 'STRIMZI_KAFKA_IMAGES')
+         | first }}
+
+- name: Resolve the image map, inline or through the downward API
   ansible.builtin.set_fact:
     _kafka_images_raw: >-
-      {{ (_kafka_operator_deploys.resources
-          | map(attribute='spec.template.spec.containers') | flatten
-          | map(attribute='env', default=[]) | flatten
-          | selectattr('name', 'equalto', 'STRIMZI_KAFKA_IMAGES')
-          | map(attribute='value') | first) }}
+      {{ _kafka_images_env.value
+         if (_kafka_images_env.value | default('') | length > 0)
+         else (_kafka_operator_deploy.spec.template.metadata.annotations
+               | default({})).get(_kafka_images_annotation, '') }}
+  vars:
+    # "metadata.annotations['kafka-images']" -> "kafka-images"
+    _kafka_images_annotation: >-
+      {{ (_kafka_images_env.valueFrom.fieldRef.fieldPath | default(''))
+         | regex_replace('^[^\[]*\[', '')
+         | regex_replace('\]$', '')
+         | regex_replace('^["' ~ "'" ~ ']', '')
+         | regex_replace('["' ~ "'" ~ ']$', '') }}
+
+- name: Fail with something actionable if the map is empty
+  ansible.builtin.assert:
+    that:
+      - _kafka_images_raw | default('') | length > 0
+    fail_msg: >-
+      Found the STRIMZI_KAFKA_IMAGES variable on
+      {{ _kafka_operator_deploy.metadata.name }} but could not resolve its
+      value - it is neither an inline `value` nor an annotation this can read.
+      The operator has probably moved it again. Read it yourself with
+      `oc get deploy -n {{ kafka_operator_namespace }} {{ _kafka_operator_deploy.metadata.name }} -o yaml`
+      and pass the image directly: -e kafka_admin_image=<registry>/<image>@sha256:<digest>
+    quiet: true
 
 - name: Pick the newest Kafka version the operator supports
   ansible.builtin.set_fact:

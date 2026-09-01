@@ -319,6 +319,13 @@ both broker modes behind one interface.
    the operator version). The result is a digest-pinned image that always matches the operator you
    just installed. Override with `-e kafka_admin_image=...` on a disconnected cluster.
 
+   That variable comes in **two shapes** and both are handled. Older builds set it inline as
+   `value:`. Recent ones set it through the downward API — `valueFrom.fieldRef.fieldPath:
+   "metadata.annotations['kafka-images']"` — so `value` is null and the map is an annotation on the
+   operator's own pod. The annotation *name* is taken from the `fieldPath` rather than assumed, so a
+   rename does not break it either; if the map cannot be resolved at all, the failure names the
+   Deployment and tells you to pass `kafka_admin_image` yourself.
+
 2. **`otel_kafka_auth_style` is a variable, and the runbook only shows one of the two layouts.**
    The Kafka exporter's TLS and SASL settings live under `auth:` in the build the Red Hat OpenTelemetry
    operator currently ships; upstream moved them to top-level `tls:` / `sasl:` keys, and newer builds
@@ -363,6 +370,7 @@ Safe to re-run. Specifics worth knowing:
 | "Failed to import the required Python library (kubernetes)" | Not installed next to Ansible. The message names the exact interpreter used. |
 | "Collection kubernetes.core does not support Ansible version 2.14.x" | You are on the system ansible-core, not the 2.17 venv. Activate it, or install `requirements-legacy.yml --force`. |
 | "Failed to get client due to Invalid kube-config file" | No usable kubeconfig. Nothing has been created at that point. |
+| "could not resolve its value - it is neither an inline `value` nor an annotation this can read" | The operator moved `STRIMZI_KAFKA_IMAGES` again. Read it off the Deployment yourself and pass `-e kafka_admin_image=...`. |
 | "wait for the Subscription to resolve" times out | Almost always a wrong channel. `oc describe subscription <name> -n <ns>` and look for `ResolutionFailed`. |
 | The topic-admin Job fails | The playbook prints the Job's own output, which is the Java client's error — `TimeoutException` (address/firewall), `SSL handshake failed` (CA), `Authentication failed` (SASL), `INVALID_REPLICATION_FACTOR` (fewer brokers than replicas). This is the first task that talks to the broker, so it is where all of those surface. |
 | Collector rollout fails, `error decoding 'exporters'` | Flip `-e otel_kafka_auth_style=flat`. The role prints the collector's log on failure and says so. |
