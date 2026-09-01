@@ -42,6 +42,7 @@ follow start to finish without it.
   - [A network flow](#a-network-flow)
   - [A trace](#a-trace)
   - [A federated metrics batch](#a-federated-metrics-batch)
+  - [Decoding the protobuf topics](#decoding-the-protobuf-topics)
 - [What verification does and does not establish](#what-verification-does-and-does-not-establish)
 - [What is on each topic](#what-is-on-each-topic)
 - [Troubleshooting](#troubleshooting)
@@ -2163,6 +2164,100 @@ and the receiver maps `job` onto `service.name`. Seeing the real job names is di
 labels survived the hop. If instead every series came back as `service.name: openshift-platform`,
 `honor_labels` is off and every metric on the topic is misattributed to the scrape rather than its
 source.
+
+### Decoding the protobuf topics
+
+`otlp-traces`, `otlp-spanmetrics` and `federated-metrics` are all `otlp_proto`. Rather than flipping
+the encoding, two options read them as they are — and both are better tests, because they prove a
+*consumer* can read what the exporter wrote.
+
+**A second collector, as a consumer.** No code, and it uses an image already on the cluster. The
+Kafka **receiver** is the exporter in reverse:
+
+```yaml
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: otel-peek
+  namespace: $OTEL_NAMESPACE
+spec:
+  mode: deployment
+  replicas: 1
+  config:
+    receivers:
+      kafka:
+        brokers: ["$KAFKA_BOOTSTRAP"]
+        group_id: otel-peek
+        initial_offset: earliest
+        traces:
+          topics: [$TOPIC_TRACES]
+          encoding: otlp_proto
+    exporters:
+      debug:
+        verbosity: detailed
+    service:
+      pipelines:
+        traces:
+          receivers: [kafka]
+          exporters: [debug]
+```
+
+```bash
+oc logs -n $OTEL_NAMESPACE deploy/otel-peek-collector -f
+```
+
+Note `topics:` — **plural, and a list**, unlike the exporter's singular `topic:`. Per-signal nesting
+applies here too, so the same `invalid keys` error tells you if your build wants the flat form. Its
+own `group_id` means it commits offsets separately and cannot disturb a real consumer. Delete it
+when you are done.
+
+**Python, for programmatic access.** [`tools/otlp-peek.py`](tools/otlp-peek.py) decodes traces and
+metrics with the OTLP protobuf definitions:
+
+```bash
+pip install opentelemetry-proto kafka-python
+```
+
+```bash
+python3 tools/otlp-peek.py --bootstrap $KAFKA_BOOTSTRAP --topic $TOPIC_TRACES --max 1
+```
+
+```
+record 1: partition 0 offset 0 278 bytes
+  resource: service.name=frontend  k8s=online-boutique/frontend-7d9c8b6f5d-x2klm
+    GET /product/{id}    trace=5b8efff798038103d269b633813fc60c span=eee19b7ec3c1b174 parent=-  kind=2 106.0ms
+```
+
+For an authenticated broker:
+
+```bash
+KAFKA_PASSWORD='<the SASL password>' python3 tools/otlp-peek.py \
+  --bootstrap $KAFKA_BOOTSTRAP --topic $TOPIC_TRACES \
+  --tls --ca ./kafka-ca.crt --sasl-user $KAFKA_USER
+```
+
+Four things a first attempt at this usually gets wrong:
+
+| | |
+|---|---|
+| **The topic name** | `otlp_spans` is the *collector's default*, not what is on your broker. This deployment sets the topics explicitly — `otlp-traces` and the rest. |
+| **`consumer_timeout_ms`** | `kafka-python` defaults it to **infinity**, so `for msg in consumer:` blocks forever once the topic is drained instead of returning. Always set it. |
+| **Reaching the broker** | See below. This is the one that wastes an afternoon. |
+| **`group_id`** | Left unset the script joins no consumer group, so it commits nothing and cannot move a real consumer's offsets. Set one only if you want to resume where you left off. |
+
+> **`oc port-forward` does not work for Kafka.** The client connects to the bootstrap address,
+> receives a metadata response listing the brokers by their **advertised** addresses, and then
+> connects to *those*. Strimzi's internal listener advertises
+> `<pod>.observability-kafka-brokers.$KAFKA_NAMESPACE.svc`, which does not resolve on your
+> laptop — so the bootstrap connection succeeds and every subsequent one fails, which looks like a
+> hang rather than a DNS error.
+>
+> On **Path A** the broker is already reachable, so run the script anywhere. On **Path B** either
+> run it from a pod on the cluster, or add an external listener (`type: route` or `nodeport`) to the
+> `Kafka` resource so the advertised addresses resolve from outside.
+
+If the decoder raises `DecodeError`, the record is not `otlp_proto` — most likely the topic is
+carrying `otlp_json` from a debugging change that was never reverted.
 
 ## What verification does and does not establish
 
