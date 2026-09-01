@@ -49,23 +49,30 @@ def ms(span):
     return (span.end_time_unix_nano - span.start_time_unix_nano) / 1e6
 
 
-def print_span_full(span, indent="    "):
-    """Every field on a span, not just the summary line."""
-    print(f"{indent}{span.name}")
-    print(f"{indent}  span={span.span_id.hex()} parent={span.parent_span_id.hex() or '-'}")
-    print(f"{indent}  kind={SPAN_KIND.get(span.kind, span.kind)}  {ms(span):.3f}ms")
+def detail_lines(span, indent):
+    """The fields NOT already on a summary or tree line."""
+    out = [f"{indent}span={span.span_id.hex()} parent={span.parent_span_id.hex() or '-'}"]
     if span.status.code or span.status.message:
-        print(f"{indent}  status={STATUS.get(span.status.code, span.status.code)}"
-              f"{'  ' + span.status.message if span.status.message else ''}")
+        out.append(f"{indent}status={STATUS.get(span.status.code, span.status.code)}"
+                   f"{'  ' + span.status.message if span.status.message else ''}")
     for k, v in all_attrs(span.attributes).items():
-        print(f"{indent}  attr {k} = {v}")
+        out.append(f"{indent}attr {k} = {v}")
     for ev in span.events:
-        print(f"{indent}  event {ev.name} {all_attrs(ev.attributes) or ''}")
+        out.append(f"{indent}event {ev.name} {all_attrs(ev.attributes) or ''}".rstrip())
     for ln in span.links:
-        print(f"{indent}  link trace={ln.trace_id.hex()} span={ln.span_id.hex()}")
+        out.append(f"{indent}link trace={ln.trace_id.hex()} span={ln.span_id.hex()}")
+    return out
 
 
-def collect(payload, store, exclude=()):
+def print_span_full(span, indent="    "):
+    """Every field on a span, for the per-record view."""
+    print(f"{indent}{span.name}")
+    print(f"{indent}  kind={SPAN_KIND.get(span.kind, span.kind)}  {ms(span):.3f}ms")
+    for line in detail_lines(span, indent + "  "):
+        print(line)
+
+
+def collect(payload, store, exclude=(), only_trace=None):
     """Parse one record and accumulate its spans into `store`, keyed by trace."""
     req = ExportTraceServiceRequest()
     req.ParseFromString(payload)
@@ -76,6 +83,8 @@ def collect(payload, store, exclude=()):
         for ss in rs.scope_spans:
             for sp in ss.spans:
                 if any(x in sp.name for x in exclude):
+                    continue
+                if only_trace and sp.trace_id.hex() != only_trace:
                     continue
                 n += 1
                 store.setdefault(sp.trace_id.hex(), []).append((svc, ra, ss.scope.name, sp))
@@ -128,44 +137,53 @@ def show_tree(store, min_spans=1, full=False):
         if len(entries) < min_spans:
             continue
         shown += 1
-        by_id = {sp.span_id.hex(): (svc, sp) for svc, _ra, _sc, sp in entries}
-        services = sorted({svc for svc, _ra, _sc, _sp in entries})
-        span_ms = max(ms(sp) for _s, _r, _c, sp in entries)
-        print(f"\ntrace {tid}  ({len(entries)} spans, {len(services)} services, "
-              f"{span_ms:.1f}ms)  {', '.join(services)}")
-        children = {}
-        roots = []
-        for svc, _ra, _sc, sp in entries:
+        spans = [(svc, sp) for svc, _ra, _sc, sp in entries]
+        by_id = {sp.span_id.hex(): (svc, sp) for svc, sp in spans}
+        services = sorted({svc for svc, _sp in spans})
+        # Wall clock across the whole trace, not the longest single span.
+        first = min(sp.start_time_unix_nano for _s, sp in spans)
+        last = max(sp.end_time_unix_nano for _s, sp in spans)
+        print(f"\ntrace {tid}  ({len(spans)} spans, {len(services)} service"
+              f"{'s' if len(services) != 1 else ''}, {(last - first) / 1e6:.1f}ms)"
+              f"  {', '.join(services)}")
+
+        children, roots = {}, []
+        for svc, sp in spans:
             parent = sp.parent_span_id.hex()
-            (children.setdefault(parent, []) if parent in by_id else roots).append((svc, sp))
+            if parent and parent in by_id:
+                children.setdefault(parent, []).append((svc, sp))
+            else:
+                roots.append((svc, sp, bool(parent)))
+        for lst in children.values():
+            lst.sort(key=lambda x: x[1].start_time_unix_nano)
+        roots.sort(key=lambda x: x[1].start_time_unix_nano)
+
+        # A healthy trace has exactly one root. More than one means either the
+        # parents were not among the records read, or the callers never
+        # propagated context - and those two are told apart by whether the
+        # orphans carry a parent_span_id at all.
+        if len(roots) > 1:
+            dangling = sum(1 for _s, _sp, had_parent in roots if had_parent)
+            if dangling:
+                print(f"  [!] {len(roots)} root spans, {dangling} of them naming a parent "
+                      f"not in the records read - raise --max")
+            else:
+                print(f"  [!] {len(roots)} root spans, none with a parent: these share a "
+                      f"trace_id but are not one call tree. Context propagation is "
+                      f"incomplete upstream of {services[0] if len(services) == 1 else 'these services'}.")
 
         def walk(svc, sp, depth):
-            print(f"  {'  ' * depth}{svc:<24} {sp.name:<38} "
+            print(f"  {'  ' * depth}{svc:<24} {sp.name:<52} "
                   f"{ms(sp):8.2f}ms  {SPAN_KIND.get(sp.kind, sp.kind)}")
             if full:
-                print_span_full(sp, indent="  " + "  " * depth + "    ")
+                for line in detail_lines(sp, "  " + "  " * depth + "    "):
+                    print(line)
             for csvc, csp in children.get(sp.span_id.hex(), []):
                 walk(csvc, csp, depth + 1)
 
-        for svc, sp in roots:
+        for svc, sp, _had in roots:
             walk(svc, sp, 0)
     return shown
-
-
-def show_metrics(payload):
-    req = ExportMetricsServiceRequest()
-    req.ParseFromString(payload)
-    n = 0
-    for rm in req.resource_metrics:
-        svc = attr(rm.resource.attributes, "service.name") or "<no service.name>"
-        names = [m.name for sm in rm.scope_metrics for m in sm.metrics]
-        n += len(names)
-        print(f"  resource: service.name={svc}  ({len(names)} metrics)")
-        for name in sorted(set(names))[:10]:
-            print(f"    {name}")
-        if len(set(names)) > 10:
-            print(f"    ... and {len(set(names)) - 10} more")
-    return n
 
 
 def main():
@@ -179,6 +197,11 @@ def main():
                    help="reassemble whole traces across records, largest first")
     p.add_argument("--min-spans", type=int, default=1,
                    help="with --group, hide traces smaller than this")
+    p.add_argument("--trace",
+                   help="with --group, keep only this trace id. Use it to hunt "
+                        "for the missing parents of a trace that came back as "
+                        "several roots: raise --max and see whether the caller's "
+                        "spans turn up in later records.")
     p.add_argument("--exclude", default="grpc.health.v1.Health/Check",
                    help="skip spans whose name contains any of these "
                         "(comma separated). Health probes are the default "
@@ -230,7 +253,7 @@ def main():
                       f"{len(msg.value)} bytes")
                 items += show_metrics(msg.value)
             elif args.group:
-                items += collect(msg.value, store, exclude)
+                items += collect(msg.value, store, exclude, args.trace)
             else:
                 print(f"record {seen}: partition {msg.partition} offset {msg.offset} "
                       f"{len(msg.value)} bytes")

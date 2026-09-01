@@ -2263,23 +2263,91 @@ That is the reassembly a real backend performs, done from the topic alone — an
 evidence the export is intact, because it only works if every service's spans arrived **and** kept
 their `trace_id` and `parent_span_id` relationships.
 
-**`--full` prints every field** rather than the summary line — resource attributes, scope, span
-attributes, events, links, and status:
+Add `--full` and every span in the tree is expanded in place. This is a real trace off a lab
+cluster's `otlp-traces` topic — span IDs, parents, durations and attributes verbatim, trimmed only
+for length:
 
 ```bash
-python3 tools/otlp-peek.py --bootstrap $KAFKA_BOOTSTRAP --topic $TOPIC_TRACES --max 20 --full
+python3 tools/otlp-peek.py --bootstrap $KAFKA_BOOTSTRAP --topic $TOPIC_TRACES \
+  --max 200 --group --min-spans 3 --full
 ```
+
+```
+trace 3e83fe854d416def59fbccb8c9f9cb61  (8 spans, 2 services, 1.8ms)  productcatalogservice, recommendationservice
+  [!] 6 root spans, 6 of them naming a parent not in the records read - raise --max
+  recommendationservice    /hipstershop.RecommendationService/ListRecommendations     1.80ms  SERVER
+      span=b5c08adf7f79b64e parent=b79baf3f0e275fc9
+      attr rpc.system = grpc
+      attr rpc.grpc.status_code = 0
+      attr rpc.method = ListRecommendations
+      attr rpc.service = hipstershop.RecommendationService
+      attr rpc.user_agent = grpc-go/1.82.0
+      attr net.peer.ip = 10.131.0.30
+      attr net.peer.port = 58902
+    recommendationservice    /hipstershop.ProductCatalogService/ListProducts          1.46ms  CLIENT
+        span=a79081633dc9cf14 parent=b5c08adf7f79b64e
+        attr rpc.system = grpc
+        attr rpc.grpc.status_code = 0
+        attr rpc.method = ListProducts
+        attr rpc.service = hipstershop.ProductCatalogService
+      productcatalogservice    hipstershop.ProductCatalogService/ListProducts           0.07ms  SERVER
+          span=de90bc43a6eaa2fc parent=a79081633dc9cf14
+          attr rpc.method = hipstershop.ProductCatalogService/ListProducts
+          attr rpc.system.name = grpc
+          attr server.address = 10.128.2.28
+          attr server.port = 3550
+          attr rpc.response.status_code = OK
+  productcatalogservice    hipstershop.ProductCatalogService/GetProduct             0.04ms  SERVER
+      span=7cc5312ffabc310f parent=3deb6b3e9fd64aab
+      attr rpc.method = hipstershop.ProductCatalogService/GetProduct
+      attr rpc.system.name = grpc
+      attr server.address = 10.128.2.28
+      attr server.port = 3550
+      attr rpc.response.status_code = OK
+  … four more GetProduct spans, each naming a different absent parent
+```
+
+**The three-level subtree is the whole point.** `recommendationservice` emits a `SERVER` span for the
+call it received, then a `CLIENT` span for the call it made, and `productcatalogservice` emits the
+matching `SERVER` span — a hop across two services, two pods and two Kafka records, reassembled from
+the topic alone. Note the two services are instrumented by different libraries and disagree on
+attribute names (`rpc.system` against `rpc.system.name`, `rpc.grpc.status_code` against
+`rpc.response.status_code`); the export carries whatever each emitted, unaltered.
+
+**Read the warning line too.** A healthy trace has exactly **one** root. More than one has two very
+different causes, and the tool tells them apart:
+
+| Warning | Meaning |
+|---|---|
+| *"N root spans, M of them naming a parent not in the records read"* | As above. The spans are fine — their parents are in records you have not read, so the tree is a fragment. Raise `--max`. |
+| *"N root spans, none with a parent"* | The spans genuinely carry no `parent_span_id`. Something upstream is not propagating context — an instrumentation problem in the workload, not in this export. |
+
+To chase the missing parents, follow that one trace across far more of the topic:
+
+```bash
+python3 tools/otlp-peek.py --bootstrap $KAFKA_BOOTSTRAP --topic $TOPIC_TRACES \
+  --max 5000 --group --trace 3e83fe854d416def59fbccb8c9f9cb61 --full
+```
+
+If `frontend`'s spans turn up under that trace, the export is complete and the tree just needed more
+records. If the callee is the only service that ever appears, the caller is not sending
+`traceparent`. Either way the topic holds exactly what the collector was handed, which is what this
+document is responsible for.
+
+`--full` works without `--group` too, giving the same detail per record rather than per trace. It
+also renders anything the trace above happens not to contain — a non-OK status and its events:
 
 ```
     hipstershop.PaymentService/Charge
-      span=dddddddddddddddd parent=bbbbbbbbbbbbbbbb
       kind=SERVER  31.200ms
+      span=dddddddddddddddd parent=bbbbbbbbbbbbbbbb
       status=ERROR  card declined
       attr rpc.system = grpc
       event exception
 ```
 
-Combine them: `--group --full` renders the tree with every span expanded.
+A failing span is the one worth grepping the topic for, and `status` is how a consumer finds it —
+the duration and attributes alone will not tell you the call failed.
 
 For an authenticated broker:
 
