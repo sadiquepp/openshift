@@ -41,6 +41,7 @@ follow start to finish without it.
 - [Reading a record](#reading-a-record)
   - [A network flow](#a-network-flow)
   - [A trace](#a-trace)
+  - [A federated metrics batch](#a-federated-metrics-batch)
 - [What verification does and does not establish](#what-verification-does-and-does-not-establish)
 - [What is on each topic](#what-is-on-each-topic)
 - [Troubleshooting](#troubleshooting)
@@ -2080,6 +2081,88 @@ What to look at, in order:
 
 Cross-check against `otlp-spanmetrics`: the RED metrics on that topic are derived from exactly these
 spans by the `spanmetrics` connector, so a service appearing in traces should appear there too.
+
+### A federated metrics batch
+
+`federated-metrics` is `otlp_proto` too, so it reads as binary for the same reason. But before
+decoding anything, there is a check that needs **no changes at all** — the collector counts what it
+accepted and what it sent, per component:
+
+```bash
+oc port-forward -n $OTEL_NAMESPACE deploy/otel-collector 8888:8888 &
+```
+
+```bash
+curl -s localhost:8888/metrics | grep -E \
+  'otelcol_receiver_accepted_metric_points|otelcol_exporter_sent_metric_points|otelcol_exporter_send_failed_metric_points'
+```
+
+```bash
+kill %1
+```
+
+`accepted` climbing on `receiver=prometheus/federate` and `sent` climbing on
+`exporter=kafka/metrics`, with `send_failed` flat at zero, is the whole path in two numbers — the
+scrape is landing and the exporter is producing. It also localises a failure: accepted rising while
+sent stays flat is a broker problem, and accepted stuck at zero is a `/federate` problem (usually the
+`403` in [Troubleshooting](#troubleshooting)).
+
+To read the records themselves, add a **second exporter** writing JSON to a throwaway topic. This
+leaves `$TOPIC_METRICS` untouched, so nothing consuming it sees a change of encoding mid-stream:
+
+```yaml
+    exporters:
+      kafka/metrics-json:
+        brokers: ["$KAFKA_BOOTSTRAP"]
+        metrics:
+          topic: federated-metrics-json
+          encoding: otlp_json
+    service:
+      pipelines:
+        metrics/federated:
+          exporters: [kafka/metrics, kafka/metrics-json]
+```
+
+Create the topic first the same way as the others, re-apply the collector, then peek at it with the
+Job above. Remove both when you are done.
+
+OTLP metrics nest like traces, one level shallower:
+
+```
+resourceMetrics[]          ← one per source; `resource.attributes` says which
+  └── scopeMetrics[]
+        └── metrics[]      ← name + one of gauge / sum / histogram
+```
+
+A whole batch is far too big to read, so pull out the two things that answer the real question —
+**did my `match[]` selectors return what I meant?**
+
+```bash
+oc logs -n $KAFKA_NAMESPACE job/kafka-peek | grep -m1 '^{' \
+  | jq -r '.resourceMetrics[].scopeMetrics[].metrics[].name' | sort -u
+```
+
+```bash
+oc logs -n $KAFKA_NAMESPACE job/kafka-peek | grep -m1 '^{' \
+  | jq -r '.resourceMetrics[].resource.attributes[]
+           | select(.key == "service.name") | .value.stringValue' | sort -u
+```
+
+The first lists every metric name in the batch; compare it against `platform_federate_match`. The
+second is the more interesting one:
+
+```
+etcd
+kube-state-metrics
+node-exporter
+```
+
+**Those are the original `job` labels from the federated cluster, not `openshift-platform`.** That is
+`honor_labels: true` doing its job — federated samples arrive already carrying `job` and `instance`,
+and the receiver maps `job` onto `service.name`. Seeing the real job names is direct evidence the
+labels survived the hop. If instead every series came back as `service.name: openshift-platform`,
+`honor_labels` is off and every metric on the topic is misattributed to the scrape rather than its
+source.
 
 ## What verification does and does not establish
 
