@@ -1,0 +1,25 @@
+# Kafka admin client configuration, rendered from group_vars/all.yml.
+bootstrap.servers={{ kafka_bootstrap_effective | join(',') }}
+security.protocol={{ kafka_security_protocol }}
+{% if kafka_tls_effective | bool %}
+{% if kafka_tls_insecure_skip_verify | bool %}
+# Verification off: an empty endpoint identification algorithm is how the Java
+# client is told to skip hostname checking. Lab only.
+ssl.endpoint.identification.algorithm=
+{% else %}
+# PEM truststores land in Kafka 2.7 and up, which is every version this
+# operator ships - so the CA can be mounted as the PEM file it already is,
+# with no keytool step and no PKCS#12 to keep in sync.
+ssl.truststore.type=PEM
+ssl.truststore.location=/etc/kafka-ca/{{ kafka_ca_secret_key }}
+{% endif %}
+{% endif %}
+{% if kafka_sasl_effective | bool %}
+sasl.mechanism={{ kafka_sasl_mechanism }}
+{% if kafka_sasl_mechanism == 'PLAIN' %}
+sasl.jaas.config=org.apache.kafka.common.security.plain.PlainLoginModule required username="{{ kafka_sasl_username }}" password="{{ kafka_sasl_password }}";
+{% else %}
+sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required username="{{ kafka_sasl_username }}" password="{{ kafka_sasl_password }}";
+{% endif %}
+{% endif %}
+request.timeout.ms=30000

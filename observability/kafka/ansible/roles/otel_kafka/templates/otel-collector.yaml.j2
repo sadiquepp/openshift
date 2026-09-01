@@ -1,0 +1,251 @@
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: {{ otel_collector_name }}
+  namespace: {{ otel_namespace }}
+spec:
+  mode: deployment
+  replicas: {{ otel_collector_replicas }}
+  serviceAccount: otel-collector
+{% if kafka_sasl_effective | bool %}
+  env:
+    # The collector config below refers to these as ${env:...}. Putting the
+    # credentials in the environment rather than inline in the config keeps
+    # them out of the OpenTelemetryCollector resource, which is world-readable
+    # to anyone with `get` on the namespace.
+    - name: KAFKA_USERNAME
+      valueFrom:
+        secretKeyRef:
+          name: {{ kafka_sasl_secret_name }}
+          key: {{ kafka_sasl_username_key }}
+    - name: KAFKA_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: {{ kafka_sasl_secret_name }}
+          key: {{ kafka_sasl_password_key }}
+{% endif %}
+{% if (kafka_tls_effective | bool) and not (kafka_tls_insecure_skip_verify | bool) %}
+  volumes:
+    - name: kafka-ca
+      secret:
+        secretName: {{ kafka_ca_secret_name }}
+  volumeMounts:
+    - name: kafka-ca
+      mountPath: /etc/kafka-ca
+      readOnly: true
+{% endif %}
+  config:
+    receivers:
+{% if tracing_enabled | bool %}
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317   # compiled-in SDKs use this
+          http:
+            endpoint: 0.0.0.0:4318   # injected auto-instrumentation agents use this
+{% endif %}
+{% if metrics_federation_enabled | bool %}
+      # Prometheus keeps a short local TSDB either way - a /federate endpoint
+      # requires one - so this is not "adding storage". It is reading the store
+      # OpenShift already runs and republishing it to a topic, which is what
+      # makes the metrics leave the cluster.
+      #
+      # Federation returns EVERY series matching `match[]` on EVERY scrape.
+      # Widen the selectors in group_vars/all.yml one at a time and watch this
+      # collector's memory; `{__name__=~".+"}` will melt both ends.
+      prometheus/federate:
+        config:
+          scrape_configs:
+            - job_name: openshift-platform
+              scrape_interval: {{ metrics_federation_interval }}
+              metrics_path: /federate
+              # Federated samples arrive already carrying job and instance
+              # labels. Without honor_labels Prometheus semantics would
+              # overwrite them with this scrape's own, and every series would
+              # claim to come from job="openshift-platform".
+              honor_labels: true
+              scheme: https
+              tls_config:
+                ca_file: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt
+                server_name: {{ platform_federate_endpoint.split(':')[0] }}
+              authorization:
+                type: Bearer
+                credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+              params:
+                'match[]':
+{% for m in platform_federate_match %}
+                  - '{{ m }}'
+{% endfor %}
+              static_configs:
+                - targets: ['{{ platform_federate_endpoint }}']
+            - job_name: openshift-user-workload
+              scrape_interval: {{ metrics_federation_interval }}
+              metrics_path: /federate
+              honor_labels: true
+              scheme: https
+              tls_config:
+                ca_file: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt
+                server_name: {{ uwm_federate_endpoint.split(':')[0] }}
+              authorization:
+                type: Bearer
+                credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+              params:
+                'match[]':
+{% for m in uwm_federate_match %}
+                  - '{{ m }}'
+{% endfor %}
+              static_configs:
+                - targets: ['{{ uwm_federate_endpoint }}']
+{% endif %}
+    processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_percentage: 50
+        spike_limit_percentage: 30
+      # Stamps pod, namespace, node and workload identity onto every record from
+      # the pod metadata, so a consumer can attribute a span or a log line
+      # without the application having been told who it is. Needs the ClusterRole
+      # in otel-rbac.yaml.j2.
+      k8sattributes:
+        auth_type: serviceAccount
+        passthrough: false
+        extract:
+          metadata:
+            - k8s.namespace.name
+            - k8s.pod.name
+            - k8s.pod.uid
+            - k8s.node.name
+            - k8s.deployment.name
+      # Batching is what makes producing to Kafka efficient. These are the two
+      # numbers to raise first if the broker complains about request rate, and
+      # to LOWER if it rejects oversized requests - a full batch has to fit
+      # inside the broker's message.max.bytes.
+      batch:
+        send_batch_size: 8192
+        send_batch_max_size: 16384
+        timeout: 5s
+{% if spanmetrics_enabled | bool %}
+    connectors:
+      # An exporter on the trace pipeline and a receiver on a metrics pipeline.
+      # It counts spans and records their durations, manufacturing RED metrics
+      # for an application that exposes no /metrics endpoint of its own - and
+      # here they go straight to their own topic rather than to a Prometheus.
+      spanmetrics:
+        metrics_flush_interval: 15s
+        histogram:
+          explicit:
+            buckets: [10ms, 50ms, 100ms, 250ms, 500ms, 1s, 5s]
+        dimensions:
+          - name: http.method
+          - name: http.status_code
+{% endif %}
+    exporters:
+{% macro kafka_exporter(name, topic) %}
+      kafka/{{ name }}:
+        brokers:
+{% for b in kafka_bootstrap_effective %}
+          - {{ b }}
+{% endfor %}
+        topic: {{ topic }}
+        encoding: {{ otel_kafka_encoding }}
+{% if otel_kafka_protocol_version | default('') | length > 0 %}
+        protocol_version: "{{ otel_kafka_protocol_version }}"
+{% endif %}
+        # A slow or briefly unreachable broker must not become backpressure all
+        # the way to the application. The queue absorbs it; past that, records
+        # are dropped and counted rather than blocking the receiver.
+        sending_queue:
+          enabled: true
+          num_consumers: 4
+          queue_size: 1000
+        retry_on_failure:
+          enabled: true
+          initial_interval: 5s
+          max_interval: 30s
+          max_elapsed_time: 300s
+{% if (kafka_tls_effective | bool) or (kafka_sasl_effective | bool) %}
+{% if otel_kafka_auth_style == 'nested' %}
+        auth:
+{% if kafka_tls_effective | bool %}
+          tls:
+{% if kafka_tls_insecure_skip_verify | bool %}
+            insecure_skip_verify: true
+{% else %}
+            ca_file: /etc/kafka-ca/{{ kafka_ca_secret_key }}
+{% endif %}
+{% endif %}
+{% if kafka_sasl_effective | bool %}
+          sasl:
+            mechanism: {{ kafka_sasl_mechanism }}
+            username: ${env:KAFKA_USERNAME}
+            password: ${env:KAFKA_PASSWORD}
+{% endif %}
+{% else %}
+{% if kafka_tls_effective | bool %}
+        tls:
+{% if kafka_tls_insecure_skip_verify | bool %}
+          insecure_skip_verify: true
+{% else %}
+          ca_file: /etc/kafka-ca/{{ kafka_ca_secret_key }}
+{% endif %}
+{% endif %}
+{% if kafka_sasl_effective | bool %}
+        sasl:
+          mechanism: {{ kafka_sasl_mechanism }}
+          username: ${env:KAFKA_USERNAME}
+          password: ${env:KAFKA_PASSWORD}
+{% endif %}
+{% endif %}
+{% endif %}
+{% endmacro %}
+{% if tracing_enabled | bool %}
+{{ kafka_exporter('traces', kafka_topic_traces) }}
+{% endif %}
+{% if (tracing_enabled | bool) and (spanmetrics_enabled | bool) %}
+{{ kafka_exporter('spanmetrics', kafka_topic_spanmetrics) }}
+{% endif %}
+{% if metrics_federation_enabled | bool %}
+{{ kafka_exporter('metrics', kafka_topic_metrics) }}
+{% endif %}
+    service:
+      telemetry:
+        logs:
+          level: info
+      pipelines:
+{% if tracing_enabled | bool %}
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, k8sattributes, batch]
+{% if spanmetrics_enabled | bool %}
+          # Forked: the same spans go to the traces topic AND into the
+          # spanmetrics connector, which turns them into their own topic.
+          exporters: [kafka/traces, spanmetrics]
+{% else %}
+          exporters: [kafka/traces]
+{% endif %}
+{% endif %}
+{% if (tracing_enabled | bool) and (spanmetrics_enabled | bool) %}
+        metrics/spanmetrics:
+          receivers: [spanmetrics]
+          processors: [memory_limiter, batch]
+          exporters: [kafka/spanmetrics]
+{% endif %}
+{% if metrics_federation_enabled | bool %}
+        # Separate pipeline, separate topic. Span metrics and federated
+        # Prometheus metrics have different shapes, different cardinality and
+        # different consumers; merging them into one topic makes both harder to
+        # read and impossible to retain differently.
+        metrics/federated:
+          receivers: [prometheus/federate]
+          processors: [memory_limiter, batch]
+          exporters: [kafka/metrics]
+{% endif %}
+{#
+  NOT here, on purpose:
+    - an `otlp` exporter to a Tempo gateway, and the bearertokenauth extension
+      and tempostack-traces-write ClusterRole it needs
+    - a `prometheus` exporter and the ServiceMonitors that scrape it back into
+      the cluster's own Prometheus
+  Both would put the data back on the cluster, which is the thing this
+  directory exists to avoid.
+#}

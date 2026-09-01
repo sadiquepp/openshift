@@ -1,0 +1,10 @@
+# Kafka client material. Never commit.
+#
+# kafka-credentials.yml is the optional local var file holding the SASL user,
+# password and CA bundle for the external broker - the equivalent of the
+# s3-credentials.yml handoff in ../../ansible, except nobody generates this one
+# for you: it comes from whoever runs the Kafka cluster.
+kafka-credentials.yml
+kafka-credentials.yml.vault
+*.pem
+ca.crt

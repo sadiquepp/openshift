@@ -1,0 +1,20 @@
+---
+# ansible-galaxy collection install -r requirements.yml
+#
+# THE SUPPORTED SETUP: ansible-core 2.17 in a virtualenv on Python 3.11 or 3.12.
+# See "Ansible and Python versions" in README.md for the venv commands.
+#
+# On ansible-core 2.13-2.16 (the RHEL 9 AppStream `ansible-core` package is
+# 2.14) use requirements-legacy.yml instead. `ansible-galaxy` does NOT consider
+# a collection's `requires_ansible` when resolving versions, so on an older
+# ansible-core this file installs a collection that warns and then misbehaves
+# rather than failing cleanly.
+#
+# Only one collection is needed here. There is no AWS phase - no bucket, no IAM
+# user, no access key - because nothing in this stack stores anything on the
+# cluster or in an object store. amazon.aws is deliberately absent.
+#
+# kubernetes.core needs the `kubernetes` Python library in the same venv.
+collections:
+  - name: kubernetes.core
+    version: ">=6.0.0,<7.0.0"     # 6.5.0 requires ansible-core >=2.16.0

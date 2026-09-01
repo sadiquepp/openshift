@@ -1,0 +1,172 @@
+---
+# ── preflight ─────────────────────────────────────────────────────────────────
+# Fails early and loudly, before anything has been created, on the things that
+# otherwise fail deep inside a role with an unhelpful message. Unlike
+# ../../ansible there is no S3 credentials check - there is no object store -
+# but there IS a Kafka endpoint and a set of credentials to validate instead.
+
+- name: Validate the Kafka mode
+  ansible.builtin.assert:
+    that:
+      - kafka_mode in ['external', 'incluster']
+    fail_msg: "kafka_mode must be `external` or `incluster`."
+    quiet: true
+
+- name: Require bootstrap servers in external mode
+  ansible.builtin.assert:
+    that:
+      - kafka_bootstrap_servers | length > 0
+      - kafka_bootstrap_servers | select('search', ':[0-9]+$') | list | length
+          == kafka_bootstrap_servers | length
+    fail_msg: >-
+      `kafka_bootstrap_servers` must be a non-empty list of host:port entries,
+      e.g. -e '{"kafka_bootstrap_servers": ["kafka-1.example.com:9093"]}'.
+      Every producer here writes to that broker and nowhere else. If you have no
+      broker to point at yet, run with -e kafka_mode=incluster to have Streams
+      for Apache Kafka deploy a lab one.
+    quiet: true
+  when: kafka_mode == 'external'
+
+- name: Require SASL credentials when SASL is on
+  ansible.builtin.assert:
+    that:
+      - kafka_sasl_username | default('') | length > 0
+      - kafka_sasl_password | default('') | length > 0
+      - kafka_sasl_mechanism in ['PLAIN', 'SCRAM-SHA-256', 'SCRAM-SHA-512']
+    fail_msg: >-
+      `kafka_sasl_enabled` is true, so `kafka_sasl_username` and
+      `kafka_sasl_password` must be set and `kafka_sasl_mechanism` must be one
+      of PLAIN, SCRAM-SHA-256, SCRAM-SHA-512. Keep the password out of your
+      shell history: put both in kafka-credentials.yml (gitignored) and pass
+      -e @kafka-credentials.yml. Set -e kafka_sasl_enabled=false for an
+      unauthenticated lab broker.
+    quiet: true
+  when:
+    - kafka_sasl_enabled | bool
+    - kafka_mode == 'external'
+  no_log: true
+
+- name: Read the CA bundle from disk
+  ansible.builtin.set_fact:
+    kafka_ca_cert: "{{ lookup('ansible.builtin.file', kafka_ca_cert_file) }}"
+  when:
+    - kafka_tls_enabled | bool
+    - kafka_ca_cert | default('') | length == 0
+    - kafka_ca_cert_file | default('') | length > 0
+
+- name: Require a CA bundle when TLS is on
+  ansible.builtin.assert:
+    that:
+      - (kafka_ca_cert | default('')) is search('BEGIN CERTIFICATE')
+    fail_msg: >-
+      `kafka_tls_enabled` is true, so the CA that signed the broker's serving
+      certificate must be supplied - either inline in `kafka_ca_cert` or as a
+      file path in `kafka_ca_cert_file`. Set
+      -e kafka_tls_insecure_skip_verify=true to skip verification instead
+      (lab only), or -e kafka_tls_enabled=false for a plaintext listener.
+    quiet: true
+  when:
+    - kafka_tls_enabled | bool
+    - kafka_mode == 'external'
+    - not (kafka_tls_insecure_skip_verify | bool)
+
+- name: Require at least one producer
+  ansible.builtin.assert:
+    that:
+      - (logging_enabled | bool) or (netobserv_enabled | bool)
+        or (tracing_enabled | bool) or (metrics_federation_enabled | bool)
+    fail_msg: >-
+      Every layer is disabled, so nothing would produce to Kafka. Enable at
+      least one of logging_enabled, netobserv_enabled, tracing_enabled,
+      metrics_federation_enabled.
+    quiet: true
+
+# ── The cluster ───────────────────────────────────────────────────────────────
+- name: Check the cluster is reachable and read its version
+  kubernetes.core.k8s_info:
+    api_version: config.openshift.io/v1
+    kind: ClusterVersion
+    name: version
+  register: _cv
+  # This is also the connection test. If it fails with "Failed to get client
+  # due to Invalid kube-config file" or a connection refused, nothing has been
+  # created yet - point the modules at the right cluster with KUBECONFIG, or
+  # -e kubeconfig=... and -e kube_context=... See group_vars/all.yml.
+
+- name: Read the API server URL
+  kubernetes.core.k8s_info:
+    api_version: config.openshift.io/v1
+    kind: Infrastructure
+    name: cluster
+  register: _infra
+
+- name: Confirm we are cluster-admin
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: authorization.k8s.io/v1
+      kind: SelfSubjectAccessReview
+      spec:
+        resourceAttributes:
+          group: operators.coreos.com
+          resource: subscriptions
+          verb: create
+  register: _ssar
+  changed_when: false
+
+- name: Fail if the current user cannot install operators
+  ansible.builtin.assert:
+    that:
+      - _ssar.result.status.allowed | default(true) | bool
+    fail_msg: >-
+      The current kubeconfig context cannot create Subscriptions. Everything up
+      to the test workload needs cluster-admin. Run `oc whoami` and log in as an
+      admin.
+    quiet: true
+
+- name: Check `oc` is on PATH
+  ansible.builtin.command: oc version --client
+  register: _oc
+  changed_when: false
+  failed_when: _oc.rc != 0
+  when: workload_enabled | bool
+  # Only the test workload needs the binary - it is rendered with `oc kustomize`.
+  # Everything else goes through the Kubernetes API directly.
+
+- name: Report what is about to happen
+  ansible.builtin.debug:
+    msg:
+      - "Target:    {{ (_infra.resources[0].status.apiServerURL) | default('unknown') }}"
+      - "Version:   OpenShift {{ (_cv.resources[0].status.desired.version) | default('unknown') }}"
+      - "Kafka:     {{ kafka_mode }} -> {{ kafka_bootstrap_effective | join(',') }}"
+      - "Security:  {{ kafka_security_protocol }}{{ ' / ' ~ kafka_sasl_mechanism if (kafka_sasl_effective | bool) else '' }}"
+      - "Producing: logs={{ logging_enabled }}, flows={{ netobserv_enabled }},
+         traces={{ tracing_enabled }} (spanmetrics={{ spanmetrics_enabled }}),
+         federated metrics={{ metrics_federation_enabled }}"
+      - "Topics:    {{ kafka_topics | selectattr('enabled', 'true') | map(attribute='name') | join(', ') }}"
+      - "Stores:    none. No LokiStack, no TempoStack, no bucket."
+
+# ── Last chance to bail ───────────────────────────────────────────────────────
+# Everything above is read-only. The target is restated here rather than relying
+# on it still being on screen - by this point the operator-install output has
+# usually scrolled it away.
+
+- name: Pause before making any changes
+  ansible.builtin.pause:
+    seconds: "{{ confirm_pause_seconds | int }}"
+    prompt: |
+
+      About to make cluster-wide changes to:
+
+          {{ (_infra.resources[0].status.apiServerURL) | default('unknown') }}
+          OpenShift {{ (_cv.resources[0].status.desired.version) | default('unknown') }}
+
+      and stream every signal it produces to:
+
+          {{ kafka_bootstrap_effective | join(',') }}  ({{ kafka_security_protocol }})
+
+      Ctrl-C then 'A' to abort if that is not the cluster you meant.
+      Ctrl-C then 'C' to continue immediately.
+      Set -e confirm_pause_seconds=0 to skip this entirely.
+
+  when: (confirm_pause_seconds | int) > 0

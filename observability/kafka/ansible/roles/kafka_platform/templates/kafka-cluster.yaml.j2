@@ -1,0 +1,36 @@
+apiVersion: kafka.strimzi.io/v1beta2
+kind: Kafka
+metadata:
+  name: {{ kafka_cluster_name }}
+  namespace: {{ kafka_namespace }}
+  annotations:
+    # Both are required for a KRaft cluster driven by KafkaNodePools. Without
+    # them the operator falls back to ZooKeeper mode and rejects the pool.
+    strimzi.io/node-pools: enabled
+    strimzi.io/kraft: enabled
+spec:
+  kafka:
+    listeners:
+      # ONE listener, plain, internal. The producers are all in-cluster, and a
+      # lab broker with mutual TLS to configure is a lab broker nobody finishes
+      # setting up. For anything beyond a lab, use kafka_mode: external and
+      # point at a broker somebody operates.
+      - name: plain
+        port: 9092
+        type: internal
+        tls: false
+    config:
+      offsets.topic.replication.factor: {{ [kafka_topic_replication_factor | int, kafka_cluster_replicas | int] | min }}
+      transaction.state.log.replication.factor: {{ [kafka_topic_replication_factor | int, kafka_cluster_replicas | int] | min }}
+      transaction.state.log.min.isr: 1
+      default.replication.factor: {{ [kafka_topic_replication_factor | int, kafka_cluster_replicas | int] | min }}
+      min.insync.replicas: 1
+      # The observability signals are large-ish batches of protobuf. The 1 MiB
+      # default rejects a busy OTLP batch outright, and the producer retries it
+      # forever.
+      message.max.bytes: "10485760"
+  entityOperator:
+    # The Topic Operator is what reconciles the KafkaTopic resources. Without
+    # it they are inert YAML.
+    topicOperator: {}
+    userOperator: {}

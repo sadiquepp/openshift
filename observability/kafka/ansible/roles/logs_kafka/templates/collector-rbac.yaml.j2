@@ -1,0 +1,56 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: logging-collector
+  namespace: {{ logging_namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: logging-collector:collect-application
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: collect-application-logs
+subjects:
+  - kind: ServiceAccount
+    name: logging-collector
+    namespace: {{ logging_namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: logging-collector:collect-infrastructure
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: collect-infrastructure-logs
+subjects:
+  - kind: ServiceAccount
+    name: logging-collector
+    namespace: {{ logging_namespace }}
+{% if logging_include_audit | bool %}
+---
+# Audit logs are the one input that is not on by default anywhere. They are also
+# the reason a lot of people want logs off the cluster in the first place, so
+# they are included here - but they roughly double the volume on a busy API
+# server. Set logging_include_audit=false to drop them.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: logging-collector:collect-audit
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: collect-audit-logs
+subjects:
+  - kind: ServiceAccount
+    name: logging-collector
+    namespace: {{ logging_namespace }}
+{% endif %}
+{#
+  NOTE what is NOT here: logging-collector-logs-writer, the ClusterRole that
+  lets the collector write to a LokiStack gateway. There is no LokiStack, and
+  binding a role for an API that is not installed leaves a dangling
+  ClusterRoleBinding.
+#}

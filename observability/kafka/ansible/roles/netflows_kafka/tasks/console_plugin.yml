@@ -1,0 +1,67 @@
+---
+# Observe -> Network Traffic is served by the console plugin shipped with the
+# operator, registered with the console operator. With Loki disabled the plugin
+# still draws the Overview dashboards and the Topology from the aggregated
+# metrics the processor publishes to the platform Prometheus - only the raw
+# "Traffic flows" table is gone, because that one reads from Loki.
+#
+# The FlowCollector defaults spec.consolePlugin.enable/register to true, so the
+# operator normally registers it on its own. This makes that deterministic.
+
+- name: Wait for the console plugin pod
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    namespace: "{{ netobserv_namespace }}"
+    label_selectors:
+      - app=netobserv-plugin
+  register: _plugin
+  retries: 30
+  delay: 10
+  until: >-
+    _plugin.resources | length > 0
+    and (_plugin.resources[0].status.readyReplicas | default(0)) > 0
+
+- name: Read the registered console plugins
+  kubernetes.core.k8s_info:
+    api_version: operator.openshift.io/v1
+    kind: Console
+    name: cluster
+  register: _console
+
+- name: Register netobserv-plugin with the console operator
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: operator.openshift.io/v1
+      kind: Console
+      metadata:
+        name: cluster
+      spec:
+        # Append, not replace: this preserves monitoring-plugin and anything
+        # else already registered. Plain concatenation rather than `union` on
+        # purpose - union is set-based and returns the elements in arbitrary
+        # order, so every re-run would rewrite spec.plugins with a reshuffled
+        # list and roll the console Deployment for no reason. The `when` below
+        # is what keeps this idempotent.
+        plugins: "{{ (_console.resources[0].spec.plugins | default([])) + ['netobserv-plugin'] }}"
+  when: "'netobserv-plugin' not in (_console.resources[0].spec.plugins | default([]))"
+  register: _console_patched
+
+- name: Wait for the console to roll out
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    name: console
+    namespace: openshift-console
+  register: _console_deploy
+  retries: 30
+  delay: 10
+  until: >-
+    _console_deploy.resources | length > 0
+    and (_console_deploy.resources[0].status.readyReplicas | default(0)) > 0
+    and (_console_deploy.resources[0].status.updatedReplicas | default(0))
+        == (_console_deploy.resources[0].spec.replicas | default(-1))
+  when: _console_patched is changed
+  # The plugin bundle is cached client-side, so a browser already open on the
+  # console needs a hard refresh even after this reports ready.

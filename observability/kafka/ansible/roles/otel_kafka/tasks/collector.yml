@@ -1,0 +1,58 @@
+---
+# A separate file so it can be re-applied on its own:
+#   ansible-playbook site.yml --tags otel
+
+- name: Create the OpenTelemetryCollector
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition: "{{ lookup('ansible.builtin.template', 'otel-collector.yaml.j2') | from_yaml }}"
+
+- name: Wait for the collector to roll out
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    name: "{{ otel_collector_name }}-collector"
+    namespace: "{{ otel_namespace }}"
+  register: _otel_rollout
+  retries: 40
+  delay: 10
+  until: >-
+    _otel_rollout.resources | length > 0
+    and (_otel_rollout.resources[0].status.readyReplicas | default(0)) > 0
+    and (_otel_rollout.resources[0].status.updatedReplicas | default(0))
+        == (_otel_rollout.resources[0].spec.replicas | default(-1))
+  ignore_errors: true
+  # Not fatal on its own: the next two tasks turn "retries exhausted" into the
+  # collector's actual startup error, which is the thing worth reading.
+  # ignore_errors rather than failed_when:false because the registered result
+  # has to STAY failed for those two to trigger.
+
+- name: Read the collector's logs if it did not roll out
+  kubernetes.core.k8s_log:
+    api_version: apps/v1
+    kind: Deployment
+    name: "{{ otel_collector_name }}-collector"
+    namespace: "{{ otel_namespace }}"
+    tail_lines: 40
+  register: _otel_log
+  failed_when: false
+  when: _otel_rollout is failed
+
+- name: Fail with the collector's own error
+  ansible.builtin.fail:
+    msg: |-
+      The collector did not become ready. Its config is the usual cause, and a
+      config error is fatal at startup rather than silent. In particular, check
+      `otel_kafka_auth_style`: this run used `{{ otel_kafka_auth_style }}`, and
+      an `error decoding 'exporters'` below means the build you have wants the
+      other one.
+
+      {{ _otel_log.log | default('(no log yet - oc get pods -n ' ~ otel_namespace ~ ')') }}
+  when: _otel_rollout is failed
+
+- name: Report the OTLP endpoints
+  ansible.builtin.debug:
+    msg:
+      - "gRPC: {{ otel_collector_name }}-collector.{{ otel_namespace }}.svc.cluster.local:4317"
+      - "HTTP: {{ otel_collector_name }}-collector.{{ otel_namespace }}.svc.cluster.local:4318"

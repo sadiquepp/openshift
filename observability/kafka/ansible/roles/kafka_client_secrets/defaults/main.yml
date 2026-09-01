@@ -1,0 +1,11 @@
+---
+# ── kafka_client_secrets ──────────────────────────────────────────────────────
+# Included once per producing namespace. The three producers cannot share one
+# Secret: a Secret is namespaced, and Vector, the flow processor and the
+# collector all run in different namespaces.
+#
+#   - include_role:
+#       name: kafka_client_secrets
+#     vars:
+#       kafka_secret_namespace: openshift-logging
+kafka_secret_namespace: ""

@@ -1,0 +1,17 @@
+---
+# Fallback for system ansible-core 2.13-2.16 (RHEL 9 AppStream ships 2.14).
+#
+#   ansible-galaxy collection install -r requirements-legacy.yml --force
+#
+# `--force` matters: galaxy will not DOWNGRADE to satisfy a constraint that an
+# already-installed newer version also meets, so without it you get
+# "Nothing to do. All requested collections are already installed."
+#
+# 3.3.1 is the newest kubernetes.core that genuinely supports 2.14. Every module
+# used here exists in it with the same parameter and return names, with one
+# exception handled in the playbooks: kubernetes.core.k8s_json_patch is not a
+# member of the `k8s` action group in 3.3.1, so it is given its own
+# module_defaults entry rather than relying on the group.
+collections:
+  - name: kubernetes.core
+    version: "3.3.1"

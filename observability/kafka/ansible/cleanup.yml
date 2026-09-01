@@ -1,0 +1,148 @@
+---
+# ═══════════════════════════════════════════════════════════════════════════════
+# Teardown. DESTRUCTIVE - the guard is deliberate.
+#
+#   Cluster resources only (the default):
+#     ansible-playbook cleanup.yml -e cleanup_confirm=yes
+#
+#   ...and the topics on the broker:
+#     ansible-playbook cleanup.yml -e cleanup_confirm=yes -e cleanup_topics=yes \
+#                                  -e @kafka-credentials.yml
+#
+# Producers first, then topics - deleting a topic while Vector and the flow
+# processor are still producing to it just has the broker recreate it (if
+# auto-creation is on) or has them retry forever (if it is not).
+#
+# DELETING THE TOPICS DELETES DATA THAT IS NOT ON THIS CLUSTER. On an external
+# broker those topics may be shared, may hold records nobody has consumed yet,
+# and are not this cluster's to remove - which is why cleanup_topics is a
+# separate flag from cleanup_confirm and is off even when you asked to tear the
+# stack down.
+#
+# Operators, Subscriptions and CSVs are left in place: removing them is rarely
+# what you want mid-iteration and they cost nothing idle.
+# ═══════════════════════════════════════════════════════════════════════════════
+- name: Tear down the Kafka export stack
+  hosts: localhost
+  gather_facts: false
+
+  module_defaults:
+    group/kubernetes.core.k8s: &k8s_connection
+      kubeconfig: "{{ kubeconfig if (kubeconfig | default('') | length > 0) else omit }}"
+      context: "{{ kube_context if (kube_context | default('') | length > 0) else omit }}"
+    kubernetes.core.k8s_json_patch: *k8s_connection
+    kubernetes.core.k8s_log: *k8s_connection
+
+  vars:
+    cleanup_confirm: "no"
+    cleanup_topics: "no"
+    cleanup_incluster_kafka: "yes"
+
+  tasks:
+    - name: Require explicit confirmation
+      ansible.builtin.assert:
+        that:
+          - cleanup_confirm | string | lower in ['yes', 'true']
+        fail_msg: "Refusing to delete anything without -e cleanup_confirm=yes."
+        quiet: true
+
+    - name: Delete the test workload
+      kubernetes.core.k8s:
+        state: absent
+        api_version: v1
+        kind: Namespace
+        name: "{{ app_namespace }}"
+        wait: true
+        wait_timeout: 300
+
+    - name: Stop the producers
+      kubernetes.core.k8s:
+        state: absent
+        api_version: "{{ item.api_version }}"
+        kind: "{{ item.kind }}"
+        name: "{{ item.name }}"
+        namespace: "{{ item.namespace | default(omit) }}"
+      loop:
+        - { api_version: "flows.netobserv.io/v1beta2", kind: FlowCollector, name: cluster }
+        - { api_version: "observability.openshift.io/v1", kind: ClusterLogForwarder, name: instance, namespace: "{{ logging_namespace }}" }
+        - { api_version: "opentelemetry.io/v1beta1", kind: OpenTelemetryCollector, name: "{{ otel_collector_name }}", namespace: "{{ otel_namespace }}" }
+      loop_control:
+        label: "{{ item.kind }}/{{ item.name }}"
+
+    - name: Delete the Kafka client Secrets
+      kubernetes.core.k8s:
+        state: absent
+        api_version: v1
+        kind: Secret
+        name: "{{ item.1 }}"
+        namespace: "{{ item.0 }}"
+      loop: "{{ [logging_namespace, netobserv_namespace, otel_namespace, kafka_namespace]
+                | product([kafka_ca_secret_name, kafka_sasl_secret_name]) | list }}"
+      loop_control:
+        label: "{{ item.0 }}/{{ item.1 }}"
+
+    - name: Delete the topics on the broker
+      when: cleanup_topics | string | lower in ['yes', 'true']
+      block:
+        - name: Resolve the Kafka container image
+          ansible.builtin.include_role:
+            name: kafka_platform
+            tasks_from: image.yml
+          when: kafka_admin_image | default('') | length == 0
+
+        - name: Remove any previous delete Job
+          kubernetes.core.k8s:
+            state: absent
+            api_version: batch/v1
+            kind: Job
+            name: kafka-delete-topics
+            namespace: "{{ kafka_namespace }}"
+            wait: true
+            wait_timeout: 120
+
+        - name: Run the delete Job
+          kubernetes.core.k8s:
+            state: present
+            definition: "{{ lookup('ansible.builtin.template', 'roles/kafka_platform/templates/delete-topics-job.yaml.j2') | from_yaml }}"
+
+        - name: Wait for it to finish
+          kubernetes.core.k8s_info:
+            api_version: batch/v1
+            kind: Job
+            name: kafka-delete-topics
+            namespace: "{{ kafka_namespace }}"
+          register: _delete_job
+          retries: 30
+          delay: 10
+          until: >-
+            _delete_job.resources | length > 0
+            and (((_delete_job.resources[0].status.succeeded | default(0)) | int) > 0
+                 or ((_delete_job.resources[0].status.failed | default(0)) | int) > 0)
+
+        - name: Read the Job's output
+          kubernetes.core.k8s_log:
+            api_version: batch/v1
+            kind: Job
+            name: kafka-delete-topics
+            namespace: "{{ kafka_namespace }}"
+          register: _delete_log
+          failed_when: false
+
+        - name: Report
+          ansible.builtin.debug:
+            msg: "{{ (_delete_log.log | default('')).splitlines() }}"
+
+    - name: Delete the in-cluster lab broker
+      kubernetes.core.k8s:
+        state: absent
+        api_version: v1
+        kind: Namespace
+        name: "{{ kafka_namespace }}"
+        wait: true
+        wait_timeout: 600
+      when:
+        - kafka_mode == 'incluster'
+        - cleanup_incluster_kafka | string | lower in ['yes', 'true']
+      # Only in `incluster` mode. In `external` mode this namespace holds
+      # nothing but the admin Jobs and their config, and removing it would also
+      # remove the credentials Secret a later run reuses - so it is left alone.

@@ -1,0 +1,87 @@
+---
+# ── netflows_kafka ────────────────────────────────────────────────────────────
+# Network Observability with the flows going to Kafka and nowhere else.
+#
+# There are two entirely different things called "Kafka" in this operator, and
+# picking the wrong one is the usual mistake:
+#
+#   spec.deploymentModel: Kafka  - Kafka as INTERNAL TRANSPORT between the eBPF
+#                                  agents and the flow processor. The processor
+#                                  still has to write somewhere afterwards.
+#   spec.exporters[].type: Kafka - the enriched flows leaving the cluster. This
+#                                  is the one that matches the diagram, and the
+#                                  one used here.
+#
+# So: deploymentModel Direct, loki disabled, one Kafka exporter.
+
+- name: Install the Network Observability Operator
+  ansible.builtin.include_role:
+    name: olm_operator
+  vars:
+    olm_namespace: openshift-netobserv-operator
+    olm_operator_group_name: netobserv-operator
+    olm_subscription_name: netobserv-operator
+    olm_package: netobserv-operator
+    olm_channel: "{{ netobserv_channel }}"
+    olm_wait_for_crds:
+      - flowcollectors.flows.netobserv.io
+
+- name: Create the flow collector namespace
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ netobserv_namespace }}"
+
+- name: Create the Kafka client Secrets
+  ansible.builtin.include_role:
+    name: kafka_client_secrets
+  vars:
+    kafka_secret_namespace: "{{ netobserv_namespace }}"
+
+- name: Create the FlowCollector
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition: "{{ lookup('ansible.builtin.template', 'flowcollector.yaml.j2') | from_yaml }}"
+  # Cluster-scoped and must be named `cluster`; only one can exist per cluster.
+  # If ../../ansible already deployed one on this cluster, this REPLACES its
+  # loki configuration - re-applying is the documented way to switch, but it is
+  # the same singleton object, so the two stacks cannot both have their way.
+
+- name: Wait for the FlowCollector to be Ready
+  kubernetes.core.k8s_info:
+    api_version: flows.netobserv.io/v1beta2
+    kind: FlowCollector
+    name: cluster
+  register: _fc
+  retries: 60
+  delay: 10
+  until: >-
+    _fc.resources | length > 0
+    and (_fc.resources[0].status.conditions | default([]))
+        | selectattr('type', 'equalto', 'Ready')
+        | selectattr('status', 'equalto', 'True')
+        | list | length > 0
+
+- name: Wait for the eBPF agent DaemonSet on every node
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: DaemonSet
+    name: netobserv-ebpf-agent
+    namespace: "{{ netobserv_namespace }}-privileged"
+  register: _ebpf
+  retries: 40
+  delay: 10
+  until: >-
+    _ebpf.resources | length > 0
+    and (_ebpf.resources[0].status.numberReady | default(0)) > 0
+    and (_ebpf.resources[0].status.numberReady | default(0))
+        == (_ebpf.resources[0].status.desiredNumberScheduled | default(-1))
+
+- name: Register the console plugin
+  ansible.builtin.include_tasks: console_plugin.yml
+  when: netobserv_console_enabled | bool

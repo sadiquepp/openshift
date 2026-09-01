@@ -1,0 +1,100 @@
+---
+# ── logs_kafka ────────────────────────────────────────────────────────────────
+# Cluster Logging Operator -> collector ServiceAccount and RBAC ->
+# ClusterLogForwarder with a `kafka` output.
+#
+# This is the whole of "OpenShift Logging" from ../../README.md minus the Loki
+# Operator, minus the LokiStack, minus its S3 bucket and IAM user, and minus the
+# Logging UIPlugin - a console plugin that reads from a LokiStack has nothing to
+# read when there is no LokiStack. Vector is the same collector either way; only
+# the output type changes.
+
+- name: Create the {{ logging_namespace }} namespace
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ logging_namespace }}"
+        labels:
+          openshift.io/cluster-monitoring: "true"
+
+- name: Install the Cluster Logging Operator
+  ansible.builtin.include_role:
+    name: olm_operator
+  vars:
+    olm_namespace: "{{ logging_namespace }}"
+    olm_create_namespace: false          # created above, with the monitoring label
+    olm_operator_group_name: cluster-logging
+    olm_subscription_name: cluster-logging
+    olm_channel: "{{ cluster_logging_channel }}"
+    olm_wait_for_crds:
+      - clusterlogforwarders.observability.openshift.io
+
+- name: Create the Kafka client Secrets
+  ansible.builtin.include_role:
+    name: kafka_client_secrets
+  vars:
+    kafka_secret_namespace: "{{ logging_namespace }}"
+
+- name: Create the collector ServiceAccount and RBAC
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition: "{{ item }}"
+  loop: "{{ lookup('ansible.builtin.template', 'collector-rbac.yaml.j2') | from_yaml_all | list }}"
+  loop_control:
+    label: "{{ item.kind }}/{{ item.metadata.name }}"
+
+- name: Create the ClusterLogForwarder
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition: "{{ lookup('ansible.builtin.template', 'clusterlogforwarder.yaml.j2') | from_yaml }}"
+
+- name: Wait for the collector DaemonSet to roll out
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: DaemonSet
+    namespace: "{{ logging_namespace }}"
+    label_selectors:
+      - app.kubernetes.io/component=collector
+  register: _collector_ds
+  retries: 60
+  delay: 10
+  until: >-
+    _collector_ds.resources | length > 0
+    and (_collector_ds.resources[0].status.numberReady | default(0)) > 0
+    and (_collector_ds.resources[0].status.numberReady | default(0))
+        == (_collector_ds.resources[0].status.desiredNumberScheduled | default(-1))
+
+- name: Check the forwarder is not reporting an output problem
+  kubernetes.core.k8s_info:
+    api_version: observability.openshift.io/v1
+    kind: ClusterLogForwarder
+    name: instance
+    namespace: "{{ logging_namespace }}"
+  register: _clf
+  retries: 12
+  delay: 10
+  until: >-
+    _clf.resources | length > 0
+    and (_clf.resources[0].status.conditions | default([]))
+        | selectattr('type', 'equalto', 'Valid')
+        | selectattr('status', 'equalto', 'True')
+        | list | length > 0
+  failed_when: false
+  # Deliberately not fatal. A Valid=False here is nearly always the Kafka
+  # credentials or the broker address, and the message on the condition says
+  # which - but the DaemonSet above is already running and the rest of the
+  # stack is still worth deploying. Read it with:
+  #   oc get clusterlogforwarder instance -n {{ logging_namespace }} -o yaml
+
+- name: Report the forwarder status
+  ansible.builtin.debug:
+    msg: >-
+      ClusterLogForwarder Valid={{ (((_clf.resources | default([{}]))[0].status.conditions | default([]))
+        | selectattr('type', 'equalto', 'Valid') | map(attribute='status') | first) | default('unknown') }}
+      -> {{ kafka_topic_logs }}

@@ -1,0 +1,306 @@
+---
+# ═══════════════════════════════════════════════════════════════════════════════
+# Automation of observability/kafka/README.md
+#
+# Every signal the cluster produces - traces, span metrics, federated Prometheus
+# metrics, logs and network flows - is written to a Kafka topic and nothing else.
+# There is no LokiStack, no TempoStack, no S3 bucket and no IAM user anywhere in
+# this directory: retention is the Kafka cluster's problem, off-cluster.
+#
+# Every value here can be overridden on the command line with -e, or by dropping
+# a file into group_vars/. The only values with no usable default are the Kafka
+# bootstrap servers and, if the broker is authenticated, its credentials.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ── Cluster connection ────────────────────────────────────────────────────────
+# Both empty is the normal case: the modules fall back to the KUBECONFIG
+# environment variable, then to ~/.kube/config's current-context.
+#
+# Set them when you do not want to rely on the environment - a kubeconfig
+# dropped by openshift-install, or a ~/.kube/config holding several clusters
+# where current-context is not the one you mean:
+#
+#   -e kubeconfig=~/clusters/lab/auth/kubeconfig
+#   -e kube_context=admin/api-lab-example-com:6443/system:admin
+#
+# Preflight prints the API server URL it resolved, so you can see which cluster
+# you are about to install into before anything is created.
+kubeconfig: ""
+kube_context: ""
+
+# ── Safety ────────────────────────────────────────────────────────────────────
+# Seconds to hold at the end of preflight, after the target cluster and the
+# target broker have been named and every read-only check has passed, before
+# anything is created. Ctrl-C then 'A' aborts; Ctrl-C then 'C' continues.
+#
+# Set to 0 for unattended runs - a pause with nobody watching is just latency.
+confirm_pause_seconds: 30
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# THE KAFKA CLUSTER
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# `external`  - the real deployment. An off-cluster Kafka you already run. The
+#               operator is still installed (it brings the Kafka CRDs and the
+#               Kafka container image the topic-admin Job runs), but no broker
+#               is created on the cluster and the topics are created with
+#               bin/kafka-topics.sh against your bootstrap servers.
+#
+# `incluster` - a lab broker, so the whole pipeline can be proven on a cluster
+#               that has no Kafka to point at. Streams for Apache Kafka deploys
+#               a KRaft cluster and reconciles KafkaTopic custom resources.
+#               Storage is EPHEMERAL by default: this is a bus to prove the
+#               wiring with, not somewhere to keep data.
+kafka_mode: external
+
+# REQUIRED in `external` mode. host:port of the broker listener the cluster will
+# produce to. Several entries are fine; the first is used wherever a single
+# address is all the API accepts.
+#
+#   -e '{"kafka_bootstrap_servers": ["kafka-1.example.com:9093"]}'
+kafka_bootstrap_servers: []
+
+# ── Broker security ───────────────────────────────────────────────────────────
+# These four combinations map onto the Kafka client `security.protocol` values:
+#
+#   tls + sasl  ->  SASL_SSL        (the normal production shape)
+#   tls only    ->  SSL
+#   sasl only   ->  SASL_PLAINTEXT
+#   neither     ->  PLAINTEXT       (lab only; `incluster` mode defaults here)
+kafka_tls_enabled: true
+kafka_sasl_enabled: true
+
+# PLAIN | SCRAM-SHA-256 | SCRAM-SHA-512. Spelled differently by each of the four
+# producers; the roles translate it, this is the one you set.
+kafka_sasl_mechanism: SCRAM-SHA-512
+
+# The SASL user. Keep the password out of your shell history and out of git:
+# put both in kafka-credentials.yml (gitignored) and pass
+# -e @kafka-credentials.yml, optionally ansible-vault encrypted.
+kafka_sasl_username: ""
+kafka_sasl_password: ""
+
+# The CA that signed the broker's serving certificate, as PEM. Either paste it
+# into kafka_ca_cert, or point kafka_ca_cert_file at a file on the control node
+# and leave kafka_ca_cert empty.
+kafka_ca_cert: ""
+kafka_ca_cert_file: ""
+
+# Last resort for a lab broker with a self-signed certificate you cannot get the
+# CA for. Every producer then trusts whatever it is handed.
+kafka_tls_insecure_skip_verify: false
+
+# ── Derived: the effective broker, resolved once ──────────────────────────────
+# The in-cluster lab broker exposes ONE listener: plain, internal, on 9092. So
+# in `incluster` mode the TLS and SASL toggles above do not apply - these three
+# are what every role actually reads, and they collapse the mode difference in
+# one place instead of five.
+kafka_incluster_bootstrap: "{{ kafka_cluster_name }}-kafka-bootstrap.{{ kafka_namespace }}.svc:9092"
+
+kafka_bootstrap_effective: >-
+  {{ kafka_bootstrap_servers if kafka_mode == 'external'
+     else [kafka_incluster_bootstrap] }}
+
+kafka_tls_effective: "{{ (kafka_tls_enabled | bool) if kafka_mode == 'external' else false }}"
+kafka_sasl_effective: "{{ (kafka_sasl_enabled | bool) if kafka_mode == 'external' else false }}"
+
+# The Kafka client `security.protocol` that combination adds up to. Used
+# verbatim in the topic-admin Job's client.properties, and reported by preflight
+# so a plaintext production broker is obvious before anything is created.
+kafka_security_protocol: >-
+  {{ 'SASL_SSL'            if ((kafka_tls_effective | bool) and (kafka_sasl_effective | bool))
+     else 'SSL'            if (kafka_tls_effective | bool)
+     else 'SASL_PLAINTEXT' if (kafka_sasl_effective | bool)
+     else 'PLAINTEXT' }}
+
+# ── Names of the Secrets the producers read ───────────────────────────────────
+# One pair per namespace that produces to Kafka. Created by the
+# kafka_client_secrets role, from the values above.
+kafka_ca_secret_name: kafka-ca
+kafka_ca_secret_key: ca.crt
+kafka_sasl_secret_name: kafka-sasl
+kafka_sasl_username_key: username
+kafka_sasl_password_key: password
+
+# ── Topics ────────────────────────────────────────────────────────────────────
+# One topic per signal, so a consumer can subscribe to exactly what it wants and
+# retention can differ per signal. `enabled` follows the layer toggles below, so
+# turning a producer off also stops its topic being created.
+kafka_topic_traces: otlp-traces
+kafka_topic_spanmetrics: otlp-spanmetrics
+kafka_topic_metrics: federated-metrics
+kafka_topic_logs: cluster-logs
+kafka_topic_flows: network-flows
+
+# Partitions and replication for the topics this creates. Replication above 1
+# needs at least that many brokers - a three-broker cluster is the assumption.
+kafka_topic_partitions: 3
+kafka_topic_replication_factor: 3
+
+# Applied to every topic created here. Retention is the whole point of pushing
+# the data off-cluster, so it is set explicitly rather than inherited from the
+# broker default: 24h of buffer for a consumer that falls behind.
+kafka_topic_config:
+  retention.ms: "86400000"          # 24h
+  cleanup.policy: delete
+  compression.type: producer
+
+# Logs and flows are the two high-volume signals; give them more partitions.
+kafka_topics:
+  - key: traces
+    name: "{{ kafka_topic_traces }}"
+    enabled: "{{ tracing_enabled | bool }}"
+    partitions: "{{ kafka_topic_partitions }}"
+  - key: spanmetrics
+    name: "{{ kafka_topic_spanmetrics }}"
+    enabled: "{{ (tracing_enabled | bool) and (spanmetrics_enabled | bool) }}"
+    partitions: "{{ kafka_topic_partitions }}"
+  - key: metrics
+    name: "{{ kafka_topic_metrics }}"
+    enabled: "{{ metrics_federation_enabled | bool }}"
+    partitions: "{{ kafka_topic_partitions }}"
+  - key: logs
+    name: "{{ kafka_topic_logs }}"
+    enabled: "{{ logging_enabled | bool }}"
+    partitions: "{{ (kafka_topic_partitions | int) * 2 }}"
+  - key: flows
+    name: "{{ kafka_topic_flows }}"
+    enabled: "{{ netobserv_enabled | bool }}"
+    partitions: "{{ (kafka_topic_partitions | int) * 2 }}"
+
+# ── The operator ──────────────────────────────────────────────────────────────
+# Red Hat Streams for Apache Kafka, previously AMQ Streams. The OLM package name
+# is still `amq-streams`.
+kafka_operator_namespace: openshift-operators
+kafka_operator_package: amq-streams
+kafka_channel: stable
+
+# Where the in-cluster broker and the topic-admin Job live.
+kafka_namespace: kafka
+
+# The Kafka container image the topic-admin Job runs bin/kafka-topics.sh from.
+# Empty means "read it out of the running cluster operator", which is the only
+# way to be certain the tag matches the operator you just installed - the roles
+# find the Deployment carrying STRIMZI_KAFKA_IMAGES and take the newest entry.
+# Set it explicitly for a disconnected cluster, where it has to be a reference
+# into your mirror registry.
+kafka_admin_image: ""
+
+# ── In-cluster lab broker (kafka_mode: incluster only) ────────────────────────
+kafka_cluster_name: observability
+kafka_cluster_replicas: 3
+# `ephemeral` or `persistent-claim`. Ephemeral is the default on purpose: this
+# broker exists to prove the wiring, and a pod restart losing a buffer nobody
+# is consuming is not a loss. Switch to persistent-claim, and set
+# kafka_storage_size / kafka_storage_class, if you want the lab bus to survive.
+kafka_storage_type: ephemeral
+kafka_storage_size: 20Gi
+kafka_storage_class: ""
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# WHAT TO DEPLOY
+# ═══════════════════════════════════════════════════════════════════════════════
+logging_enabled: true          # Vector -> ClusterLogForwarder kafka output
+netobserv_enabled: true        # eBPF agent -> FLP -> Kafka exporter
+tracing_enabled: true          # OTLP receiver -> kafka exporter
+spanmetrics_enabled: true      # spanmetrics connector -> its own topic
+metrics_federation_enabled: true   # /federate scrape -> kafka exporter
+workload_enabled: true         # Online Boutique, so the topics are not empty
+
+# ── Namespaces ────────────────────────────────────────────────────────────────
+logging_namespace: openshift-logging
+netobserv_namespace: netobserv
+otel_namespace: otel-collector
+app_namespace: online-boutique
+
+# ── Operator channels ─────────────────────────────────────────────────────────
+cluster_logging_channel: stable-6.6
+netobserv_channel: stable
+otel_channel: stable
+operator_catalog_source: redhat-operators
+operator_wait_timeout: 600      # seconds, per operator
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# LOGS
+# ═══════════════════════════════════════════════════════════════════════════════
+# application + infrastructure always; audit costs an extra ClusterRoleBinding
+# and roughly doubles the volume on a busy cluster.
+logging_include_audit: true
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# NETWORK FLOWS
+# ═══════════════════════════════════════════════════════════════════════════════
+# 1 = every flow. 50 is the operator default and a reasonable starting point on
+# a cluster with real traffic.
+netobserv_sampling: 50
+
+# The FlowCollector still publishes its own aggregated metrics to the platform
+# Prometheus - that is how Observe -> Network Traffic draws its dashboards, and
+# it is a handful of series, not per-flow records. Set false for a cluster where
+# the console pages are not wanted at all.
+netobserv_console_enabled: true
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TRACES, SPAN METRICS AND METRICS
+# ═══════════════════════════════════════════════════════════════════════════════
+otel_collector_name: otel
+otel_collector_replicas: 2
+
+# otlp_proto is the interchange format every OTLP-native backend reads and the
+# only one that carries the full data model. otlp_json is human-readable on the
+# topic and roughly three times the bytes.
+otel_kafka_encoding: otlp_proto
+
+# The Kafka protocol version the exporter negotiates with. Must be <= the
+# broker's. Leave empty to let the client negotiate.
+otel_kafka_protocol_version: "3.5.0"
+
+# WHERE THE EXPORTER'S TLS AND SASL SETTINGS GO IN THE CONFIG.
+#
+#   nested - `auth: {tls: {...}, sasl: {...}}`, the long-standing layout and
+#            what the Red Hat build of OpenTelemetry currently ships.
+#   flat   - top-level `tls: {...}` / `sasl: {...}`, which upstream moved to and
+#            which newer collector builds will eventually require.
+#
+# Getting this wrong is a startup failure with `error decoding 'exporters'`, not
+# a silent misconfiguration. Check with:
+#   oc logs -n {{ otel_namespace }} deploy/{{ otel_collector_name }}-collector
+otel_kafka_auth_style: nested
+
+# ── Prometheus federation ─────────────────────────────────────────────────────
+# The collector pulls /federate on both Prometheus instances and republishes the
+# result to Kafka. Prometheus keeps its own short local TSDB either way - a
+# /federate endpoint requires one - but nothing else is stored on the cluster.
+metrics_federation_interval: 30s
+
+# Federation returns EVERY series matching these selectors on every scrape, so a
+# `{__name__=~".+"}` here will melt both ends. These are deliberately curated;
+# widen them one selector at a time and watch the collector's memory.
+platform_federate_endpoint: prometheus-k8s.openshift-monitoring.svc:9091
+platform_federate_match:
+  - '{__name__=~"cluster:.+"}'
+  - '{job="node-exporter",__name__=~"node_(cpu|memory|filesystem|network)_.+"}'
+  - '{job="kube-state-metrics",__name__=~"kube_(pod|deployment|node|namespace)_.+"}'
+  - '{job="etcd"}'
+  - '{__name__=~"apiserver_request_(total|duration_seconds_bucket)"}'
+
+uwm_federate_endpoint: prometheus-user-workload.openshift-user-workload-monitoring.svc:9091
+uwm_federate_match:
+  - '{namespace="{{ app_namespace }}"}'
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TEST WORKLOAD
+# ═══════════════════════════════════════════════════════════════════════════════
+app_dir: "{{ playbook_dir }}/../../../test-workloads/online-boutique"
+# The `tracing` overlay hardcodes the collector address used by
+# ../../README.md. The role repoints it at this collector after applying, so the
+# two stacks can coexist on one cluster.
+app_overlay: "{{ 'tracing' if (tracing_enabled | bool) else 'default' }}"
+app_traced_deployments:
+  - frontend
+  - checkoutservice
+  - currencyservice
+  - emailservice
+  - paymentservice
+  - productcatalogservice
+  - recommendationservice

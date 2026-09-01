@@ -1,0 +1,81 @@
+---
+# ═══════════════════════════════════════════════════════════════════════════════
+# Did anything actually arrive?
+#
+#   ansible-playbook verify.yml -e @kafka-credentials.yml
+#
+# Runs bin/kafka-get-offsets.sh against every topic this stack creates and
+# prints the end offset per partition. A non-zero total means records have been
+# written; zero means the producer for that signal is not reaching the broker.
+#
+# Offsets rather than a console consumer on purpose: the payloads are protobuf,
+# so consuming them prints a screen of binary and proves the same one thing.
+# ═══════════════════════════════════════════════════════════════════════════════
+- name: Verify the topics are receiving data
+  hosts: localhost
+  gather_facts: false
+
+  module_defaults:
+    group/kubernetes.core.k8s: &k8s_connection
+      kubeconfig: "{{ kubeconfig if (kubeconfig | default('') | length > 0) else omit }}"
+      context: "{{ kube_context if (kube_context | default('') | length > 0) else omit }}"
+    kubernetes.core.k8s_log: *k8s_connection
+
+  tasks:
+    - name: Resolve the Kafka container image
+      ansible.builtin.include_role:
+        name: kafka_platform
+        tasks_from: image.yml
+      when: kafka_admin_image | default('') | length == 0
+
+    - name: Remove any previous verify Job
+      kubernetes.core.k8s:
+        state: absent
+        api_version: batch/v1
+        kind: Job
+        name: kafka-verify-topics
+        namespace: "{{ kafka_namespace }}"
+        wait: true
+        wait_timeout: 120
+
+    - name: Run the verify Job
+      kubernetes.core.k8s:
+        state: present
+        definition: "{{ lookup('ansible.builtin.template', 'roles/kafka_platform/templates/verify-job.yaml.j2') | from_yaml }}"
+
+    - name: Wait for it to finish
+      kubernetes.core.k8s_info:
+        api_version: batch/v1
+        kind: Job
+        name: kafka-verify-topics
+        namespace: "{{ kafka_namespace }}"
+      register: _verify_job
+      retries: 30
+      delay: 10
+      until: >-
+        _verify_job.resources | length > 0
+        and (((_verify_job.resources[0].status.succeeded | default(0)) | int) > 0
+             or ((_verify_job.resources[0].status.failed | default(0)) | int) > 0)
+
+    - name: Read the offsets
+      kubernetes.core.k8s_log:
+        api_version: batch/v1
+        kind: Job
+        name: kafka-verify-topics
+        namespace: "{{ kafka_namespace }}"
+      register: _verify_log
+      failed_when: false
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: "{{ (_verify_log.log | default('')).splitlines() }}"
+
+    - name: Point out any topic still at zero
+      ansible.builtin.debug:
+        msg: >-
+          Every `:0` above is a topic nothing has written to yet. Traces and
+          span metrics need traffic through an instrumented workload; federated
+          metrics appear within one scrape interval
+          ({{ metrics_federation_interval }}); logs and flows appear as soon as
+          the collectors are running. If one stays at zero, the producer for
+          that signal is the place to look - see "Troubleshooting" in README.md.

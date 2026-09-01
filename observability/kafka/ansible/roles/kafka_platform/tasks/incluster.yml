@@ -1,0 +1,80 @@
+---
+# The lab broker. Exists so the whole pipeline can be proven on a cluster with
+# no Kafka to point at - not as somewhere to keep data. One plain internal
+# listener on 9092, ephemeral storage by default, and the Topic Operator doing
+# the topic creation through KafkaTopic custom resources.
+
+- name: Create the KafkaNodePool
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition: "{{ lookup('ansible.builtin.template', 'kafka-nodepool.yaml.j2') | from_yaml }}"
+
+- name: Create the Kafka cluster
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition: "{{ lookup('ansible.builtin.template', 'kafka-cluster.yaml.j2') | from_yaml }}"
+
+- name: Wait for the Kafka cluster to be Ready
+  kubernetes.core.k8s_info:
+    api_version: kafka.strimzi.io/v1beta2
+    kind: Kafka
+    name: "{{ kafka_cluster_name }}"
+    namespace: "{{ kafka_namespace }}"
+  register: _kafka
+  retries: 60
+  delay: 15
+  until: >-
+    _kafka.resources | length > 0
+    and (_kafka.resources[0].status.conditions | default([]))
+        | selectattr('type', 'equalto', 'Ready')
+        | selectattr('status', 'equalto', 'True')
+        | list | length > 0
+
+- name: Create the KafkaTopics
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition:
+      apiVersion: kafka.strimzi.io/v1beta2
+      kind: KafkaTopic
+      metadata:
+        name: "{{ item.name }}"
+        namespace: "{{ kafka_namespace }}"
+        labels:
+          # How the Topic Operator knows which cluster the topic belongs to.
+          # Without this label the resource is created and then ignored.
+          strimzi.io/cluster: "{{ kafka_cluster_name }}"
+      spec:
+        topicName: "{{ item.name }}"
+        partitions: "{{ item.partitions | int }}"
+        replicas: "{{ [kafka_topic_replication_factor | int, kafka_cluster_replicas | int] | min }}"
+        config: "{{ kafka_topic_config }}"
+  loop: "{{ kafka_topics }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: item.enabled | bool
+  # replicas is clamped to the broker count: a KafkaTopic asking for more
+  # replicas than there are brokers is accepted by the API and then fails to
+  # reconcile with an unhelpful message.
+
+- name: Wait for the topics to be Ready
+  kubernetes.core.k8s_info:
+    api_version: kafka.strimzi.io/v1beta2
+    kind: KafkaTopic
+    name: "{{ item.name }}"
+    namespace: "{{ kafka_namespace }}"
+  register: _kafka_topic
+  retries: 30
+  delay: 5
+  until: >-
+    _kafka_topic.resources | length > 0
+    and (_kafka_topic.resources[0].status.conditions | default([]))
+        | selectattr('type', 'equalto', 'Ready')
+        | selectattr('status', 'equalto', 'True')
+        | list | length > 0
+  loop: "{{ kafka_topics }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: item.enabled | bool

@@ -1,0 +1,52 @@
+---
+# The Kafka image the admin Job runs bin/kafka-topics.sh from.
+#
+# Hardcoding a tag here would rot: the image has to match the operator, and on
+# a disconnected cluster it has to be a reference into the mirror registry. The
+# cluster operator already knows - it carries STRIMZI_KAFKA_IMAGES, a
+# newline-separated `<kafka version>=<image>` map of exactly the images it is
+# willing to run - so read it from there.
+#
+# Found by looking for that environment variable rather than by Deployment name,
+# because the name carries the operator version (amq-streams-cluster-operator-v...).
+
+- name: List the Deployments in {{ kafka_operator_namespace }}
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    namespace: "{{ kafka_operator_namespace }}"
+  register: _kafka_operator_deploys
+  retries: 30
+  delay: 10
+  until: >-
+    _kafka_operator_deploys.resources | default([])
+    | map(attribute='spec.template.spec.containers')
+    | flatten
+    | map(attribute='env', default=[])
+    | flatten
+    | selectattr('name', 'equalto', 'STRIMZI_KAFKA_IMAGES')
+    | list | length > 0
+
+- name: Read STRIMZI_KAFKA_IMAGES
+  ansible.builtin.set_fact:
+    _kafka_images_raw: >-
+      {{ (_kafka_operator_deploys.resources
+          | map(attribute='spec.template.spec.containers') | flatten
+          | map(attribute='env', default=[]) | flatten
+          | selectattr('name', 'equalto', 'STRIMZI_KAFKA_IMAGES')
+          | map(attribute='value') | first) }}
+
+- name: Pick the newest Kafka version the operator supports
+  ansible.builtin.set_fact:
+    kafka_admin_image: >-
+      {{ (_kafka_images_raw.splitlines()
+          | map('trim') | select('search', '=')
+          | list | last).split('=', 1)[1] | trim }}
+  # The entries are ordered oldest-first, so the last one is the newest Kafka
+  # the operator ships. Values are usually digest-pinned
+  # (registry.redhat.io/amq-streams/kafka-XX-rhel9@sha256:...), which is exactly
+  # what you want for a Job.
+
+- name: Report the image
+  ansible.builtin.debug:
+    msg: "Kafka admin CLI image: {{ kafka_admin_image }}"
