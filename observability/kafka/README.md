@@ -2245,16 +2245,109 @@ Four things a first attempt at this usually gets wrong:
 | **Reaching the broker** | See below. This is the one that wastes an afternoon. |
 | **`group_id`** | Left unset the script joins no consumer group, so it commits nothing and cannot move a real consumer's offsets. Set one only if you want to resume where you left off. |
 
-> **`oc port-forward` does not work for Kafka.** The client connects to the bootstrap address,
-> receives a metadata response listing the brokers by their **advertised** addresses, and then
-> connects to *those*. Strimzi's internal listener advertises
-> `<pod>.observability-kafka-brokers.$KAFKA_NAMESPACE.svc`, which does not resolve on your
-> laptop — so the bootstrap connection succeeds and every subsequent one fails, which looks like a
-> hang rather than a DNS error.
+> **On Path B you cannot run this from your workstation**, and it fails in one of two ways
+> depending on how hard you try:
 >
-> On **Path A** the broker is already reachable, so run the script anywhere. On **Path B** either
-> run it from a pod on the cluster, or add an external listener (`type: route` or `nodeport`) to the
-> `Kafka` resource so the advertised addresses resolve from outside.
+> ```
+> KafkaTimeoutError: Unable to bootstrap from ['observability-kafka-bootstrap.kafka.svc:9092']
+> ```
+>
+> `…svc` is cluster-internal DNS. Off-cluster it does not resolve, so the client never reaches the
+> broker at all. That is the honest, early failure.
+>
+> **`oc port-forward` does not rescue it, and fails later and more confusingly.** Forward
+> `svc/observability-kafka-bootstrap` and point the client at `localhost:9092`: the bootstrap
+> connection now succeeds, the broker answers with a metadata response listing its **advertised**
+> addresses — `<pod>.observability-kafka-brokers.$KAFKA_NAMESPACE.svc` — and the client then tries
+> to connect to *those*. They do not resolve either. Every fetch times out while the connection
+> looks established, so it presents as a hang rather than a name-resolution error. The Kafka
+> protocol always redirects to advertised addresses; no amount of forwarding changes that.
+>
+> **Path A is unaffected** — an external broker is reachable by definition, so run the script
+> wherever you are.
+
+Three ways to actually run it on Path B, cheapest first.
+
+**1. Use the collector instead.** The
+[collector-as-a-consumer](#decoding-the-protobuf-topics) above needs no Python, no `pip` and no
+egress — it runs on the cluster, where the `.svc` name resolves, using an image already pulled. On
+Path B this is the path of least resistance and it is the better test anyway.
+
+**2. Run the script in a pod.** Ship it in as a ConfigMap:
+
+```bash
+oc create configmap otlp-peek -n $KAFKA_NAMESPACE \
+  --from-file=otlp-peek.py=tools/otlp-peek.py --dry-run=client -o yaml | oc apply -f -
+```
+
+```bash
+cat <<EOF | oc apply -f -
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: otlp-peek
+  namespace: $KAFKA_NAMESPACE
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: peek
+        image: registry.access.redhat.com/ubi9/python-311
+        command:
+        - /bin/bash
+        - -c
+        - |
+          pip install --quiet --user opentelemetry-proto kafka-python
+          python3 /opt/peek/otlp-peek.py --bootstrap $KAFKA_BOOTSTRAP \
+            --topic $TOPIC_TRACES --max 1
+        volumeMounts:
+        - { name: script, mountPath: /opt/peek, readOnly: true }
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          capabilities: { drop: ["ALL"] }
+          seccompProfile: { type: RuntimeDefault }
+      volumes:
+      - name: script
+        configMap: { name: otlp-peek }
+EOF
+```
+
+```bash
+oc wait --for=condition=complete job/otlp-peek -n $KAFKA_NAMESPACE --timeout=180s
+oc logs -n $KAFKA_NAMESPACE job/otlp-peek
+```
+
+The `pip install` needs egress to PyPI. On a disconnected cluster point it at your internal index,
+or bake the two libraries into an image in your mirror registry — or just use option 1, which needs
+neither.
+
+**3. Give the lab broker an external listener.** Worth it if you are going to iterate from your
+workstation. Add a second listener to the `Kafka` resource — Strimzi then advertises addresses that
+resolve from outside:
+
+```yaml
+    listeners:
+    - name: plain
+      port: 9092
+      type: internal
+      tls: false
+    - name: external
+      port: 9094
+      type: nodeport
+      tls: false
+```
+
+```bash
+oc get kafka observability -n $KAFKA_NAMESPACE \
+  -o jsonpath='{.status.listeners[?(@.name=="external")].bootstrapServers}{"\n"}'
+```
+
+Use that address as `--bootstrap`. It is a plaintext listener reachable from anywhere that can
+reach a node, so keep it to a lab.
 
 If the decoder raises `DecodeError`, the record is not `otlp_proto` — most likely the topic is
 carrying `otlp_json` from a debugging change that was never reverted.
@@ -2305,6 +2398,7 @@ directly. The two JSON topics are the ones a SIEM or an archival pipeline consum
 | ...but a probe pod in the same namespace connects fine | Expected, and it confirms the policy: the probe does not carry the `part-of=netobserv-operator` label the policy selects on, so it is not subject to it. |
 | Flows missing but the agent is running | The `FlowCollector` has no `exporters` entry, or `deploymentModel: Kafka` was set instead — that is internal transport, not export. |
 | `'kafkaexporter.Config' has invalid keys: encoding, topic` | The build wants `topic` and `encoding` nested under `traces:` / `metrics:`. `invalid keys: traces, metrics` means the opposite. |
+| `KafkaTimeoutError: Unable to bootstrap from ['…svc:9092']` | A cluster-internal address used from off-cluster. `oc port-forward` does not fix it — see [Decoding the protobuf topics](#decoding-the-protobuf-topics) for the three options. |
 | `kafka-peek`: `Expecting value: line 1 column 1` or `Extra data: line 2 column 1` | Not a data problem. The consumer's `Processed a total of N messages` summary is on stderr and `oc logs` merges it with the record. Filter first: `oc logs … \| grep -m1 '^{' \| python3 -m json.tool`. |
 | Vector: `too old resource version ... reason: Expired, code: 410` | **Benign.** A Kubernetes watch fell behind and the reflector is re-listing; it retries and recovers on its own. It says nothing about whether logs are reaching the topic — check the `cluster-logs` offsets for that. |
 | `Observe → Network Traffic` shows no "Traffic flows" table | Expected. That table reads from Loki, and there is none. Overview and Topology still work. |
