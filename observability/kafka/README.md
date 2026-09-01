@@ -2224,9 +2224,62 @@ python3 tools/otlp-peek.py --bootstrap $KAFKA_BOOTSTRAP --topic $TOPIC_TRACES --
 
 ```
 record 1: partition 0 offset 0 278 bytes
-  resource: service.name=frontend  k8s=online-boutique/frontend-7d9c8b6f5d-x2klm
+  resource: service.name=frontend  k8s.namespace.name=online-boutique k8s.pod.name=frontend-7d9c8b6f5d-x2klm
     GET /product/{id}    trace=5b8efff798038103d269b633813fc60c span=eee19b7ec3c1b174 parent=-  kind=2 106.0ms
 ```
+
+**`--max 1` reads one Kafka record, and a record is one export batch — often a single span.** A
+first read commonly lands on something like this:
+
+```
+    grpc.health.v1.Health/Check   trace=a0f880ef… span=a65604c9e8b196bc parent=-  kind=2 0.2ms
+```
+
+That is a **health probe**, not a request: one span, no parent, a fraction of a millisecond. The
+kubelet generates them constantly, so on `--from-beginning` they crowd out everything else. They are
+excluded by default; `--exclude ''` keeps them.
+
+**To see a whole distributed trace, use `--group`.** Spans from one request are spread across
+several records — each service's collector batches and flushes independently — so a single record
+almost never holds a complete trace. `--group` reads many records, stitches spans back together by
+`trace_id`, and prints the largest traces first:
+
+```bash
+python3 tools/otlp-peek.py --bootstrap $KAFKA_BOOTSTRAP --topic $TOPIC_TRACES \
+  --max 200 --group --min-spans 3
+```
+
+```
+trace a0f880ef973b0e7127a4d395dba68b5e  (4 spans, 4 services, 142.3ms)  checkoutservice, frontend, paymentservice, productcatalogservice
+  frontend                 POST /cart/checkout                      142.30ms  SERVER
+    checkoutservice          hipstershop.CheckoutService/PlaceOrder   118.70ms  SERVER
+      productcatalogservice    ListProducts                               4.10ms  SERVER
+      paymentservice           hipstershop.PaymentService/Charge         31.20ms  SERVER
+
+200 records -> 214 spans in 63 traces; 9 with >= 3 spans
+```
+
+That is the reassembly a real backend performs, done from the topic alone — and it is the strongest
+evidence the export is intact, because it only works if every service's spans arrived **and** kept
+their `trace_id` and `parent_span_id` relationships.
+
+**`--full` prints every field** rather than the summary line — resource attributes, scope, span
+attributes, events, links, and status:
+
+```bash
+python3 tools/otlp-peek.py --bootstrap $KAFKA_BOOTSTRAP --topic $TOPIC_TRACES --max 20 --full
+```
+
+```
+    hipstershop.PaymentService/Charge
+      span=dddddddddddddddd parent=bbbbbbbbbbbbbbbb
+      kind=SERVER  31.200ms
+      status=ERROR  card declined
+      attr rpc.system = grpc
+      event exception
+```
+
+Combine them: `--group --full` renders the tree with every span expanded.
 
 For an authenticated broker:
 
