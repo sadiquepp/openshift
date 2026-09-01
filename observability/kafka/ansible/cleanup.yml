@@ -69,6 +69,14 @@
       loop_control:
         label: "{{ item.kind }}/{{ item.name }}"
 
+    - name: Delete the supplementary egress policy
+      kubernetes.core.k8s:
+        state: absent
+        api_version: networking.k8s.io/v1
+        kind: NetworkPolicy
+        name: netobserv-egress-kafka
+        namespace: "{{ netobserv_namespace }}"
+
     - name: Delete the Kafka client Secrets
       kubernetes.core.k8s:
         state: absent

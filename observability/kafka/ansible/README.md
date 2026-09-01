@@ -244,7 +244,10 @@ Everything lives in [`group_vars/all.yml`](group_vars/all.yml), commented. The o
 | `spanmetrics_enabled` | `true` | The `spanmetrics` connector and its topic. |
 | `logging_include_audit` | `true` | Audit logs. Roughly doubles the volume on a busy API server. |
 | `netobserv_sampling` | `50` | One flow in fifty. `1` exports everything. |
-| `otel_kafka_auth_style` | `nested` | `nested` or `flat` — see [deviations](#where-this-deviates-from-the-runbook). |
+| `otel_kafka_topic_style` | `per_signal` | `per_signal` nests `topic`/`encoding` under `traces:`/`metrics:`; `flat` keeps them top-level. Collector builds differ. |
+| `otel_kafka_auth_style` | `nested` | `nested` puts TLS/SASL under `auth:`; `flat` puts them top-level. A separate axis from the above. |
+| `netobserv_kafka_egress_policy` | `true` | Adds a NetworkPolicy letting the flow processor reach the broker. NetObserv's own policy blocks it otherwise. |
+| `netobserv_kafka_egress_cidrs` | `[]` | Narrows that rule to specific destinations. Empty means any destination on the broker port. |
 | `platform_federate_match` / `uwm_federate_match` | curated selectors | What `/federate` returns on every scrape. Widen carefully. |
 | `confirm_pause_seconds` | `30` | Hold before the first change. `0` for unattended runs. |
 | `kubeconfig` / `kube_context` | `""` | Empty falls back to `KUBECONFIG`, then `~/.kube/config`. |
@@ -336,7 +339,14 @@ both broker modes behind one interface.
    first `OpenTelemetryCollector` applied, rather than added in later sections. The final state is
    identical.
 
-4. **`replicas` on a `KafkaTopic` is clamped to the broker count** in `incluster` mode. A topic
+4. **A supplementary NetworkPolicy is created in the netobserv namespace.** The runbook covers it
+   as its own step, because it is not optional: NetObserv installs a policy on its own namespace
+   whose egress rules do not include Kafka, so the flow processor cannot reach any broker,
+   in-cluster or external, until something allows it. This adds a second policy rather than editing
+   NetObserv's — policies are additive, so nothing has to race the operator's reconcile loop, and it
+   does not depend on a `spec.networkPolicy` field older FlowCollector versions lack.
+
+5. **`replicas` on a `KafkaTopic` is clamped to the broker count** in `incluster` mode. A topic
    asking for more replicas than there are brokers is accepted by the API and then fails to
    reconcile with an unhelpful message.
 
@@ -373,7 +383,10 @@ Safe to re-run. Specifics worth knowing:
 | "could not resolve its value - it is neither an inline `value` nor an annotation this can read" | The operator moved `STRIMZI_KAFKA_IMAGES` again. Read it off the Deployment yourself and pass `-e kafka_admin_image=...`. |
 | "wait for the Subscription to resolve" times out | Almost always a wrong channel. `oc describe subscription <name> -n <ns>` and look for `ResolutionFailed`. |
 | The topic-admin Job fails | The playbook prints the Job's own output, which is the Java client's error — `TimeoutException` (address/firewall), `SSL handshake failed` (CA), `Authentication failed` (SASL), `INVALID_REPLICATION_FACTOR` (fewer brokers than replicas). This is the first task that talks to the broker, so it is where all of those surface. |
-| Collector rollout fails, `error decoding 'exporters'` | Flip `-e otel_kafka_auth_style=flat`. The role prints the collector's log on failure and says so. |
+| Collector rollout fails, `'kafkaexporter.Config' has invalid keys: encoding, topic` | Flip `-e otel_kafka_topic_style=flat` (or to `per_signal` if it named `traces, metrics`). The role prints the collector's log on failure with both settings and what each message means. |
+| Collector rollout fails, `invalid keys: auth` / `invalid keys: tls, sasl` | The other axis: `-e otel_kafka_auth_style=flat` or `=nested`. |
+| `encodeKafka error: dial tcp <ip>:<port>: i/o timeout` in the flow processor | NetObserv's own NetworkPolicy allows egress only to same-namespace pods, the API server, DNS and monitoring. `netobserv_kafka_egress_policy` (default true) adds the supplementary rule; if you set it false, add your own. Affects an external broker too. |
+| Vector: `too old resource version ... Expired, code: 410` | Benign — a watch fell behind and the reflector re-lists. Check the `cluster-logs` offsets to see whether logs are actually flowing. |
 | `federated-metrics` stays at offset 0 | A `403` on `/federate` — check the `cluster-monitoring-view` binding — or user workload monitoring never came up. |
 | `otlp-traces` stays at offset 0 | Nothing is producing spans. `-e workload_enabled=true`, and check `COLLECTOR_SERVICE_ADDR` on the app Deployments. |
 | ClusterLogForwarder `Valid=False` | A referenced Secret is missing or has the wrong key. Not fatal to the run by design; `oc get clusterlogforwarder instance -n openshift-logging -o yaml`. |

@@ -27,6 +27,7 @@ follow start to finish without it.
   - [Create the ClusterLogForwarder](#create-the-clusterlogforwarder)
 - [Network flows](#network-flows)
   - [Install the Network Observability Operator](#install-the-network-observability-operator)
+  - [Let the flow processor out to the broker](#let-the-flow-processor-out-to-the-broker)
   - [Create the FlowCollector](#create-the-flowcollector)
 - [Traces, span metrics and metrics](#traces-span-metrics-and-metrics)
   - [Install the OpenTelemetry Collector Operator](#install-the-opentelemetry-collector-operator)
@@ -909,6 +910,79 @@ oc get csv -n openshift-netobserv-operator
 oc create namespace $NETOBSERV_NAMESPACE --dry-run=client -o yaml | oc apply -f -
 ```
 
+### Let the flow processor out to the broker
+
+**Do this before creating the FlowCollector.** Recent NetObserv releases install a NetworkPolicy on
+their own namespace with `policyTypes: [Ingress, Egress]`, and its egress rules allow only four
+things: pods in the same namespace, the API server, `openshift-dns` and `openshift-monitoring`.
+
+Kafka is in none of them. So the flow processor's connection is dropped, and the only symptom is
+this, on repeat, in a component that otherwise looks healthy:
+
+```
+level=error msg=encodeKafka error: dial tcp 172.30.197.88:9092: i/o timeout
+```
+
+**This applies to an external broker exactly as much as to the in-cluster one** — there is no egress
+rule for the outside world either. It is a timeout rather than a connection refused because the
+packets are dropped, not rejected.
+
+Network policies are **additive**: traffic allowed by any policy selecting the pod is allowed. So
+this does not modify, replace or race the policy NetObserv manages — it only allows the one thing
+that policy omits.
+
+```bash
+cat <<EOF > netobserv-egress-kafka.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: netobserv-egress-kafka
+  namespace: $NETOBSERV_NAMESPACE
+spec:
+  podSelector:
+    matchLabels:
+      part-of: netobserv-operator
+  policyTypes:
+  - Egress
+  egress:
+  - ports:
+    - port: ${KAFKA_BOOTSTRAP##*:}
+      protocol: TCP
+EOF
+```
+
+```bash
+oc apply -f netobserv-egress-kafka.yaml
+```
+
+The pod selector matches NetObserv's own, so it covers the flow processor wherever the operator puts
+it — a DaemonSet in `Direct` mode, a Deployment behind Kafka transport.
+
+That rule is scoped to the broker **port** but not to a destination, because resolving your broker's
+hostname to a CIDR is not something a runbook can do for you. Narrow it when you know the addresses:
+
+```yaml
+  egress:
+  - ports:
+    - port: 9093
+      protocol: TCP
+    to:
+    - ipBlock:
+        cidr: 10.0.5.0/24
+```
+
+On Path B the destination is a namespace, which is exact and worth using:
+
+```yaml
+    to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kafka
+```
+
+If your NetObserv is old enough not to install that policy, or the cluster has no policy
+enforcement, this is harmless — an allow rule for traffic nothing was blocking.
+
 ### Create the FlowCollector
 
 The `FlowCollector` is cluster-scoped and must be named `cluster`. Only one can exist per cluster.
@@ -1344,8 +1418,9 @@ spec:
     exporters:
       kafka/traces:
         brokers: ["$KAFKA_BOOTSTRAP"]
-        topic: $TOPIC_TRACES
-        encoding: otlp_proto
+        traces:
+          topic: $TOPIC_TRACES
+          encoding: otlp_proto
         protocol_version: "3.5.0"
         sending_queue: { enabled: true, num_consumers: 4, queue_size: 1000 }
         retry_on_failure: { enabled: true, initial_interval: 5s, max_interval: 30s, max_elapsed_time: 300s }
@@ -1358,8 +1433,9 @@ spec:
             password: \${env:KAFKA_PASSWORD}
       kafka/spanmetrics:
         brokers: ["$KAFKA_BOOTSTRAP"]
-        topic: $TOPIC_SPANMETRICS
-        encoding: otlp_proto
+        metrics:
+          topic: $TOPIC_SPANMETRICS
+          encoding: otlp_proto
         protocol_version: "3.5.0"
         sending_queue: { enabled: true, num_consumers: 4, queue_size: 1000 }
         retry_on_failure: { enabled: true, initial_interval: 5s, max_interval: 30s, max_elapsed_time: 300s }
@@ -1372,8 +1448,9 @@ spec:
             password: \${env:KAFKA_PASSWORD}
       kafka/metrics:
         brokers: ["$KAFKA_BOOTSTRAP"]
-        topic: $TOPIC_METRICS
-        encoding: otlp_proto
+        metrics:
+          topic: $TOPIC_METRICS
+          encoding: otlp_proto
         protocol_version: "3.5.0"
         sending_queue: { enabled: true, num_consumers: 4, queue_size: 1000 }
         retry_on_failure: { enabled: true, initial_interval: 5s, max_interval: 30s, max_elapsed_time: 300s }
@@ -1495,22 +1572,25 @@ spec:
     exporters:
       kafka/traces:
         brokers: ["$KAFKA_BOOTSTRAP"]
-        topic: $TOPIC_TRACES
-        encoding: otlp_proto
+        traces:
+          topic: $TOPIC_TRACES
+          encoding: otlp_proto
         protocol_version: "3.5.0"
         sending_queue: { enabled: true, num_consumers: 4, queue_size: 1000 }
         retry_on_failure: { enabled: true, initial_interval: 5s, max_interval: 30s, max_elapsed_time: 300s }
       kafka/spanmetrics:
         brokers: ["$KAFKA_BOOTSTRAP"]
-        topic: $TOPIC_SPANMETRICS
-        encoding: otlp_proto
+        metrics:
+          topic: $TOPIC_SPANMETRICS
+          encoding: otlp_proto
         protocol_version: "3.5.0"
         sending_queue: { enabled: true, num_consumers: 4, queue_size: 1000 }
         retry_on_failure: { enabled: true, initial_interval: 5s, max_interval: 30s, max_elapsed_time: 300s }
       kafka/metrics:
         brokers: ["$KAFKA_BOOTSTRAP"]
-        topic: $TOPIC_METRICS
-        encoding: otlp_proto
+        metrics:
+          topic: $TOPIC_METRICS
+          encoding: otlp_proto
         protocol_version: "3.5.0"
         sending_queue: { enabled: true, num_consumers: 4, queue_size: 1000 }
         retry_on_failure: { enabled: true, initial_interval: 5s, max_interval: 30s, max_elapsed_time: 300s }
@@ -1539,11 +1619,30 @@ oc apply -f otel-collector.yaml
 
 Several things in there are worth knowing before you have to debug them:
 
-- **Where the TLS and SASL settings go has moved.** The `auth: {tls:, sasl:}` layout above is what
-  the Red Hat build currently ships. Upstream moved to top-level `tls:` and `sasl:` keys on the
-  exporter, and newer builds will eventually require that instead. Getting it wrong is a **startup
-  failure** with `error decoding 'exporters'`, not a silent misconfiguration — so the collector logs
-  tell you immediately which one your build wants.
+- **`topic` and `encoding` are nested under the signal, not top-level.** The Kafka exporter moved
+  them into per-signal sections — `traces:`, `metrics:`, `logs:` — so one exporter instance can
+  serve several signals with a topic each. Each instance here still carries one signal, which is why
+  `kafka/spanmetrics` and `kafka/metrics` both use `metrics:` and differ only by topic. A build that
+  has not moved them yet rejects the nested form; put both keys back at the top level, alongside
+  `brokers`, if you see `has invalid keys: traces, metrics`.
+
+- **Where the TLS and SASL settings go has moved too, on a separate schedule.** The
+  `auth: {tls:, sasl:}` layout above is what the Red Hat build currently ships. Upstream moved to
+  top-level `tls:` and `sasl:` keys on the exporter, and newer builds will eventually require that
+  instead. `brokers`, `protocol_version`, `sending_queue` and `retry_on_failure` stayed top-level
+  through both changes.
+
+> **Both are startup failures, and the message names the keys.** A config error is fatal rather than
+> silent, and the collector says exactly what it rejected:
+>
+> ```
+> 'kafkaexporter.Config' has invalid keys: encoding, topic
+> ```
+>
+> means the build wants the **nested** form shown above. `invalid keys: traces, metrics` means it
+> wants the flat one. `invalid keys: auth` means the TLS and SASL blocks belong at the top level;
+> `invalid keys: tls, sasl` means they belong under `auth`. Read it with
+> `oc logs -n $OTEL_NAMESPACE deploy/otel-collector` and change only what it named.
 
 - **The traces pipeline forks.** The same spans go to `kafka/traces` for storage *and* into the
   `spanmetrics` connector, which is an exporter on one pipeline and a receiver on the next. That is
@@ -1741,7 +1840,11 @@ directly. The two JSON topics are the ones a SIEM or an archival pipeline consum
 | Collector running, `federated-metrics` at offset 0 | A `403` on `/federate`. The `cluster-monitoring-view` binding is missing, or user workload monitoring is not enabled and the second scrape target has no endpoints. Check `oc logs -n $OTEL_NAMESPACE deploy/otel-collector \| grep -i scrape`. |
 | Collector memory climbing steadily | The `match[]` selectors are too broad. Federation returns every matching series on every scrape. |
 | `otlp-traces` at offset 0 with the workload running | The services are still pointed at `otel-collector.tracing-system`. `oc set env deploy/frontend -n $APP_NAMESPACE --list \| grep COLLECTOR`. |
+| `encodeKafka error: dial tcp <ip>:<port>: i/o timeout` in the flow processor | NetObserv's own NetworkPolicy has no egress rule for Kafka. See [Let the flow processor out to the broker](#let-the-flow-processor-out-to-the-broker). A timeout rather than a refusal is the tell: the packets are dropped, not rejected. Affects an external broker too. |
+| ...but a probe pod in the same namespace connects fine | Expected, and it confirms the policy: the probe does not carry the `part-of=netobserv-operator` label the policy selects on, so it is not subject to it. |
 | Flows missing but the agent is running | The `FlowCollector` has no `exporters` entry, or `deploymentModel: Kafka` was set instead — that is internal transport, not export. |
+| `'kafkaexporter.Config' has invalid keys: encoding, topic` | The build wants `topic` and `encoding` nested under `traces:` / `metrics:`. `invalid keys: traces, metrics` means the opposite. |
+| Vector: `too old resource version ... reason: Expired, code: 410` | **Benign.** A Kubernetes watch fell behind and the reflector is re-listing; it retries and recovers on its own. It says nothing about whether logs are reaching the topic — check the `cluster-logs` offsets for that. |
 | `Observe → Network Traffic` shows no "Traffic flows" table | Expected. That table reads from Loki, and there is none. Overview and Topology still work. |
 
 ## Clean up
@@ -1764,6 +1867,10 @@ oc delete opentelemetrycollector otel -n $OTEL_NAMESPACE --ignore-not-found
 for ns in $LOGGING_NAMESPACE $NETOBSERV_NAMESPACE $OTEL_NAMESPACE; do
   oc delete secret kafka-ca kafka-sasl -n $ns --ignore-not-found
 done
+```
+
+```bash
+oc delete networkpolicy netobserv-egress-kafka -n $NETOBSERV_NAMESPACE --ignore-not-found
 ```
 
 The topics are a separate decision, and on an external broker they are **not this cluster's to

@@ -140,14 +140,24 @@ spec:
           - name: http.status_code
 {% endif %}
     exporters:
-{% macro kafka_exporter(name, topic) %}
+{% macro kafka_exporter(name, signal, topic) %}
       kafka/{{ name }}:
         brokers:
 {% for b in kafka_bootstrap_effective %}
           - {{ b }}
 {% endfor %}
+{% if otel_kafka_topic_style == 'per_signal' %}
+        # Per-signal, which is where the exporter moved these two. One exporter
+        # instance still serves one signal here, so the section names the signal
+        # its pipeline carries - spanmetrics and the federated scrape are both
+        # `metrics`, they differ only by topic.
+        {{ signal }}:
+          topic: {{ topic }}
+          encoding: {{ otel_kafka_encoding }}
+{% else %}
         topic: {{ topic }}
         encoding: {{ otel_kafka_encoding }}
+{% endif %}
 {% if otel_kafka_protocol_version | default('') | length > 0 %}
         protocol_version: "{{ otel_kafka_protocol_version }}"
 {% endif %}
@@ -199,13 +209,13 @@ spec:
 {% endif %}
 {% endmacro %}
 {% if tracing_enabled | bool %}
-{{ kafka_exporter('traces', kafka_topic_traces) }}
+{{ kafka_exporter('traces', 'traces', kafka_topic_traces) }}
 {% endif %}
 {% if (tracing_enabled | bool) and (spanmetrics_enabled | bool) %}
-{{ kafka_exporter('spanmetrics', kafka_topic_spanmetrics) }}
+{{ kafka_exporter('spanmetrics', 'metrics', kafka_topic_spanmetrics) }}
 {% endif %}
 {% if metrics_federation_enabled | bool %}
-{{ kafka_exporter('metrics', kafka_topic_metrics) }}
+{{ kafka_exporter('metrics', 'metrics', kafka_topic_metrics) }}
 {% endif %}
     service:
       telemetry:

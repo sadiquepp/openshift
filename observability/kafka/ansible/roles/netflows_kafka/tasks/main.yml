@@ -42,6 +42,15 @@
   vars:
     kafka_secret_namespace: "{{ netobserv_namespace }}"
 
+- name: Allow the flow processor out to the broker
+  kubernetes.core.k8s:
+    state: "{{ 'present' if (netobserv_kafka_egress_policy | bool) else 'absent' }}"
+    apply: "{{ netobserv_kafka_egress_policy | bool }}"
+    definition: "{{ lookup('ansible.builtin.template', 'egress-policy.yaml.j2') | from_yaml }}"
+  # BEFORE the FlowCollector, so the processor's very first connection attempt
+  # is already permitted. Applied the other way round it works too, but the log
+  # fills with dial timeouts until this lands.
+
 - name: Create the FlowCollector
   kubernetes.core.k8s:
     state: present

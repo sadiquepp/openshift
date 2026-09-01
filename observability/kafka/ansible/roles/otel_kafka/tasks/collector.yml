@@ -43,10 +43,17 @@
   ansible.builtin.fail:
     msg: |-
       The collector did not become ready. Its config is the usual cause, and a
-      config error is fatal at startup rather than silent. In particular, check
-      `otel_kafka_auth_style`: this run used `{{ otel_kafka_auth_style }}`, and
-      an `error decoding 'exporters'` below means the build you have wants the
-      other one.
+      config error is fatal at startup rather than silent - the log below names
+      the keys it rejected. Two settings move between collector builds, and
+      each has the other value to try:
+
+        otel_kafka_topic_style = {{ otel_kafka_topic_style }}
+          "invalid keys: encoding, topic"  -> use per_signal
+          "invalid keys: traces, metrics"  -> use flat
+
+        otel_kafka_auth_style  = {{ otel_kafka_auth_style }}
+          "invalid keys: auth"             -> use flat
+          "invalid keys: tls, sasl"        -> use nested
 
       {{ _otel_log.log | default('(no log yet - oc get pods -n ' ~ otel_namespace ~ ')') }}
   when: _otel_rollout is failed

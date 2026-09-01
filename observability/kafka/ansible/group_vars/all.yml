@@ -234,6 +234,41 @@ logging_include_audit: true
 # a cluster with real traffic.
 netobserv_sampling: 50
 
+# THE NETWORK POLICY THE FLOWCOLLECTOR INSTALLS ON ITS OWN NAMESPACE.
+#
+# Recent NetObserv releases create a NetworkPolicy on the netobserv namespace
+# with policyTypes [Ingress, Egress], and its egress rules allow ONLY:
+# same-namespace pods, the API server, openshift-dns and openshift-monitoring.
+# Kafka is in none of those, so the flow processor's connection to the broker is
+# dropped and the only symptom is
+#
+#   encodeKafka error: dial tcp <ip>:9092: i/o timeout
+#
+# in the flowlogs-pipeline log. This applies to an EXTERNAL broker just as much
+# as to the in-cluster one - there is no egress rule for the outside world
+# either.
+#
+# So a second, supplementary NetworkPolicy is created alongside it. Network
+# policies are additive - traffic any policy allows is allowed - so this opens
+# the broker port without touching the policy NetObserv manages, and without
+# depending on a `spec.networkPolicy` field that older FlowCollector versions
+# do not have.
+#
+# Set false only if you have disabled NetObserv's policy yourself, or if your
+# cluster has no policy enforcement at all.
+netobserv_kafka_egress_policy: true
+
+# Destinations the rule allows, on the broker port. Empty means "any" - the rule
+# is port-scoped but not destination-scoped, which is the only thing that works
+# without resolving your broker's hostname here. Narrow it by listing the
+# broker CIDRs, e.g. -e '{"netobserv_kafka_egress_cidrs": ["10.0.5.0/24"]}'.
+# Ignored in `incluster` mode, which selects the Kafka namespace instead.
+netobserv_kafka_egress_cidrs: []
+
+# The port(s) that rule opens, taken from the bootstrap servers.
+kafka_broker_ports: >-
+  {{ kafka_bootstrap_effective | map('regex_replace', '^.*:', '') | unique | list }}
+
 # The FlowCollector still publishes its own aggregated metrics to the platform
 # Prometheus - that is how Observe -> Network Traffic draws its dashboards, and
 # it is a handful of series, not per-flow records. Set false for a cluster where
@@ -254,6 +289,23 @@ otel_kafka_encoding: otlp_proto
 # The Kafka protocol version the exporter negotiates with. Must be <= the
 # broker's. Leave empty to let the client negotiate.
 otel_kafka_protocol_version: "3.5.0"
+
+# WHERE THE EXPORTER'S TOPIC AND ENCODING GO IN THE CONFIG.
+#
+#   per_signal - `traces: {topic:, encoding:}` / `metrics: {topic:, encoding:}`,
+#                which is where the Kafka exporter moved them so one exporter
+#                instance can serve several signals with a topic each.
+#   flat       - top-level `topic:` / `encoding:`, the older layout.
+#
+# Getting this wrong is a startup failure naming the keys it rejected:
+#   'kafkaexporter.Config' has invalid keys: encoding, topic
+# means the build wants `per_signal`. The opposite - a build that has not moved
+# them yet - rejects `traces` and `metrics` instead.
+#
+# Note this is a SEPARATE axis from otel_kafka_auth_style below: `auth`,
+# `brokers`, `protocol_version`, `sending_queue` and `retry_on_failure` stayed
+# top-level when topic and encoding moved.
+otel_kafka_topic_style: per_signal
 
 # WHERE THE EXPORTER'S TLS AND SASL SETTINGS GO IN THE CONFIG.
 #
