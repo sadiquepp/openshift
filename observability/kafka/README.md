@@ -19,6 +19,7 @@ follow start to finish without it.
 - [Create the topics](#create-the-topics)
   - [Path A: an external Kafka cluster](#path-a-an-external-kafka-cluster)
   - [Path B: a lab broker on the cluster](#path-b-a-lab-broker-on-the-cluster)
+- [Create the producer namespaces](#create-the-producer-namespaces)
 - [Create the client Secrets](#create-the-client-secrets)
 - [Logs](#logs)
   - [Install the Cluster Logging Operator](#install-the-cluster-logging-operator)
@@ -362,10 +363,15 @@ For a cluster with no Kafka to point at. This is a bus to prove the wiring with,
 to keep data: one plain internal listener, ephemeral storage, and no authentication. For anything
 beyond a lab, use Path A and point at a broker somebody operates.
 
+Repoint `KAFKA_BOOTSTRAP` at the Service the operator will create. Every later section reads it,
+and the blocks marked **Path B** in each of them expect it to be this.
+
 ```bash
 export KAFKA_BOOTSTRAP=observability-kafka-bootstrap.$KAFKA_NAMESPACE.svc:9092
-export KAFKA_TLS=false KAFKA_SASL=false
 ```
+
+`KAFKA_USER`, `KAFKA_PASSWORD` and `KAFKA_CA_FILE` are not used on this path — this broker has no
+authentication and no TLS — so they can stay unset.
 
 - Create the node pool. KRaft, so no ZooKeeper; one dual-role pool is the simplest shape that still
   gives a replicated cluster.
@@ -472,17 +478,56 @@ done
 oc get kafkatopic -n $KAFKA_NAMESPACE
 ```
 
+- Create the admin client configuration. Nothing has needed it yet — the Topic Operator created the
+  topics, not the CLI — but [Verify](#verify) does, and so does any later `kafka-topics.sh` run.
+  There is no truststore and no SASL section, because the listener has neither.
+
+```bash
+cat <<EOF > client.properties
+bootstrap.servers=$KAFKA_BOOTSTRAP
+security.protocol=PLAINTEXT
+request.timeout.ms=30000
+EOF
+```
+
+```bash
+oc create secret generic kafka-admin-config -n $KAFKA_NAMESPACE \
+  --from-file=client.properties=client.properties \
+  --dry-run=client -o yaml | oc apply -f -
+```
+
+```bash
+rm -f client.properties
+```
+
+## Create the producer namespaces
+
+**Both paths.** The three producers each run in their own namespace.
+
+```bash
+for ns in $LOGGING_NAMESPACE $NETOBSERV_NAMESPACE $OTEL_NAMESPACE; do
+  oc create namespace $ns --dry-run=client -o yaml | oc apply -f -
+done
+```
+
+Two of the three are created again later — [Logs](#logs) applies
+`openshift-logging` with the `openshift.io/cluster-monitoring` label, and
+[Network flows](#network-flows) applies `netobserv`. Both are `oc apply`, so
+they add the label to the namespace that already exists rather than failing.
+`$OTEL_NAMESPACE` is created **only here**, which is why this step is not part
+of the Path A-only section below.
+
 ## Create the client Secrets
+
+**Path A only.** Path B's broker has no authentication and no TLS, so there is nothing to create
+here — skip to [Logs](#logs).
 
 Three producers, three namespaces, and a Secret is namespaced — so the same credentials are created
 three times. Only the `FlowCollector` API can name a namespace on a secret reference; the
 `ClusterLogForwarder` and the collector each read from their own.
 
-**Skip this section entirely on Path B**, which has no authentication and no TLS.
-
 ```bash
 for ns in $LOGGING_NAMESPACE $NETOBSERV_NAMESPACE $OTEL_NAMESPACE; do
-  oc create namespace $ns --dry-run=client -o yaml | oc apply -f -
   oc create secret generic kafka-ca -n $ns \
     --from-file=ca.crt=$KAFKA_CA_FILE --dry-run=client -o yaml | oc apply -f -
   oc create secret generic kafka-sasl -n $ns \
@@ -629,6 +674,10 @@ oc apply -f logging-collector-rbac.yaml
 
 ### Create the ClusterLogForwarder
 
+Take the block that matches the path you followed.
+
+- **Path A** — an authenticated broker.
+
 ```bash
 cat <<EOF > clusterlogforwarder.yaml
 apiVersion: observability.openshift.io/v1
@@ -674,13 +723,50 @@ spec:
 EOF
 ```
 
+- **Path B** — the plaintext lab broker. Same resource with no `authentication` and no `tls`, and
+  `tcp://` in place of `tls://`.
+
+```bash
+cat <<EOF > clusterlogforwarder.yaml
+apiVersion: observability.openshift.io/v1
+kind: ClusterLogForwarder
+metadata:
+  name: instance
+  namespace: $LOGGING_NAMESPACE
+spec:
+  serviceAccount:
+    name: logging-collector
+  outputs:
+  - name: kafka-out
+    type: kafka
+    kafka:
+      url: tcp://$KAFKA_BOOTSTRAP/$TOPIC_LOGS
+      topic: $TOPIC_LOGS
+  filters:
+  - name: multiline-exceptions
+    type: detectMultilineException
+  pipelines:
+  - name: all-logs-to-kafka
+    inputRefs:
+    - application
+    - infrastructure
+    - audit
+    outputRefs:
+    - kafka-out
+    filters:
+    - multiline-exceptions
+EOF
+```
+
+- Apply whichever you wrote.
+
 ```bash
 oc apply -f clusterlogforwarder.yaml
 ```
 
-- The URL scheme carries the transport: `tls://` for an encrypted listener, `tcp://` for a plaintext
-  one. On Path B, drop the `authentication` and `tls` blocks and use
-  `tcp://$KAFKA_BOOTSTRAP/$TOPIC_LOGS`.
+- The URL scheme is what carries the transport: `tls://` for an encrypted listener, `tcp://` for a
+  plaintext one. That is the only difference between the two blocks beyond the two credential
+  sections, and getting it wrong is a connection that hangs rather than a clear error.
 
 - For more than one broker, add a `brokers` list alongside `url`:
 
@@ -802,6 +888,10 @@ oc create namespace $NETOBSERV_NAMESPACE --dry-run=client -o yaml | oc apply -f 
 
 The `FlowCollector` is cluster-scoped and must be named `cluster`. Only one can exist per cluster.
 
+Take the block that matches the path you followed.
+
+- **Path A** — an authenticated broker.
+
 ```bash
 cat <<EOF > flowcollector.yaml
 apiVersion: flows.netobserv.io/v1beta2
@@ -865,6 +955,55 @@ spec:
 EOF
 ```
 
+- **Path B** — the plaintext lab broker. Identical except that the exporter carries neither `tls`
+  nor `sasl`.
+
+```bash
+cat <<EOF > flowcollector.yaml
+apiVersion: flows.netobserv.io/v1beta2
+kind: FlowCollector
+metadata:
+  name: cluster
+spec:
+  namespace: $NETOBSERV_NAMESPACE
+  deploymentModel: Direct
+  agent:
+    type: eBPF
+    ebpf:
+      sampling: 50
+      logLevel: info
+      privileged: false
+      resources:
+        requests:
+          cpu: 100m
+          memory: 50Mi
+        limits:
+          memory: 800Mi
+  processor:
+    logTypes: Flows
+    logLevel: info
+    resources:
+      requests:
+        cpu: 100m
+        memory: 100Mi
+      limits:
+        memory: 800Mi
+  loki:
+    enable: false
+  prometheus:
+    querier:
+      enable: true
+      mode: Auto
+  exporters:
+  - type: Kafka
+    kafka:
+      address: $KAFKA_BOOTSTRAP
+      topic: $TOPIC_FLOWS
+EOF
+```
+
+- Apply whichever you wrote.
+
 ```bash
 oc apply -f flowcollector.yaml
 ```
@@ -873,8 +1012,6 @@ oc apply -f flowcollector.yaml
 > `ScramSHA512`, not `PLAIN` and `SCRAM-SHA-512`. And it offers only those two: a broker that
 > accepts only SCRAM-SHA-256 needs a second SASL user for the flow exporter. Confirm with
 > `oc explain flowcollector.spec.exporters.kafka.sasl`.
->
-> On Path B, drop the `tls` and `sasl` blocks entirely.
 
 - `sampling: 50` means one flow in fifty. Set it to `1` to export every flow, and size the topic for
   it — this is the highest-volume signal on the list by a wide margin.
@@ -1074,6 +1211,10 @@ Note what this is *not* for. [`../README.md`](../README.md) enables user workloa
 
 ### Create the OpenTelemetryCollector
 
+Take the block that matches the path you followed.
+
+- **Path A** — an authenticated broker.
+
 ```bash
 cat <<EOF > otel-collector.yaml
 apiVersion: opentelemetry.io/v1beta1
@@ -1235,6 +1376,138 @@ spec:
 EOF
 ```
 
+- **Path B** — the plaintext lab broker. There are no credentials to hand the collector, so the
+  `env`, `volumes` and `volumeMounts` blocks go with the `auth` block on each of the three
+  exporters. Everything else — the receivers, the processors, the connector and all three
+  pipelines — is unchanged.
+
+```bash
+cat <<EOF > otel-collector.yaml
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: otel
+  namespace: $OTEL_NAMESPACE
+spec:
+  mode: deployment
+  replicas: 2
+  serviceAccount: otel-collector
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+      prometheus/federate:
+        config:
+          scrape_configs:
+          - job_name: openshift-platform
+            scrape_interval: 30s
+            metrics_path: /federate
+            honor_labels: true
+            scheme: https
+            tls_config:
+              ca_file: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt
+              server_name: prometheus-k8s.openshift-monitoring.svc
+            authorization:
+              type: Bearer
+              credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+            params:
+              'match[]':
+              - '{__name__=~"cluster:.+"}'
+              - '{job="node-exporter",__name__=~"node_(cpu|memory|filesystem|network)_.+"}'
+              - '{job="kube-state-metrics",__name__=~"kube_(pod|deployment|node|namespace)_.+"}'
+              - '{job="etcd"}'
+              - '{__name__=~"apiserver_request_(total|duration_seconds_bucket)"}'
+            static_configs:
+            - targets: ['prometheus-k8s.openshift-monitoring.svc:9091']
+          - job_name: openshift-user-workload
+            scrape_interval: 30s
+            metrics_path: /federate
+            honor_labels: true
+            scheme: https
+            tls_config:
+              ca_file: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt
+              server_name: prometheus-user-workload.openshift-user-workload-monitoring.svc
+            authorization:
+              type: Bearer
+              credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+            params:
+              'match[]':
+              - '{namespace="$APP_NAMESPACE"}'
+            static_configs:
+            - targets: ['prometheus-user-workload.openshift-user-workload-monitoring.svc:9091']
+    processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_percentage: 50
+        spike_limit_percentage: 30
+      k8sattributes:
+        auth_type: serviceAccount
+        passthrough: false
+        extract:
+          metadata:
+          - k8s.namespace.name
+          - k8s.pod.name
+          - k8s.pod.uid
+          - k8s.node.name
+          - k8s.deployment.name
+      batch:
+        send_batch_size: 8192
+        send_batch_max_size: 16384
+        timeout: 5s
+    connectors:
+      spanmetrics:
+        metrics_flush_interval: 15s
+        histogram:
+          explicit:
+            buckets: [10ms, 50ms, 100ms, 250ms, 500ms, 1s, 5s]
+        dimensions:
+        - name: http.method
+        - name: http.status_code
+    exporters:
+      kafka/traces:
+        brokers: ["$KAFKA_BOOTSTRAP"]
+        topic: $TOPIC_TRACES
+        encoding: otlp_proto
+        protocol_version: "3.5.0"
+        sending_queue: { enabled: true, num_consumers: 4, queue_size: 1000 }
+        retry_on_failure: { enabled: true, initial_interval: 5s, max_interval: 30s, max_elapsed_time: 300s }
+      kafka/spanmetrics:
+        brokers: ["$KAFKA_BOOTSTRAP"]
+        topic: $TOPIC_SPANMETRICS
+        encoding: otlp_proto
+        protocol_version: "3.5.0"
+        sending_queue: { enabled: true, num_consumers: 4, queue_size: 1000 }
+        retry_on_failure: { enabled: true, initial_interval: 5s, max_interval: 30s, max_elapsed_time: 300s }
+      kafka/metrics:
+        brokers: ["$KAFKA_BOOTSTRAP"]
+        topic: $TOPIC_METRICS
+        encoding: otlp_proto
+        protocol_version: "3.5.0"
+        sending_queue: { enabled: true, num_consumers: 4, queue_size: 1000 }
+        retry_on_failure: { enabled: true, initial_interval: 5s, max_interval: 30s, max_elapsed_time: 300s }
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, k8sattributes, batch]
+          exporters: [kafka/traces, spanmetrics]
+        metrics/spanmetrics:
+          receivers: [spanmetrics]
+          processors: [memory_limiter, batch]
+          exporters: [kafka/spanmetrics]
+        metrics/federated:
+          receivers: [prometheus/federate]
+          processors: [memory_limiter, batch]
+          exporters: [kafka/metrics]
+EOF
+```
+
+- Apply whichever you wrote.
+
 ```bash
 oc apply -f otel-collector.yaml
 ```
@@ -1265,8 +1538,6 @@ Several things in there are worth knowing before you have to debug them:
 
 - **`sending_queue` is what stops a slow broker becoming backpressure** all the way to the
   application. Past the queue, records are dropped and counted rather than blocking the receiver.
-
-- On Path B, drop the `env`, `volumes`, `volumeMounts` and all three `auth` blocks.
 
 - Verify.
 
@@ -1314,6 +1585,10 @@ oc get route frontend -n $APP_NAMESPACE -o jsonpath='{.spec.host}{"\n"}'
 The shortest proof that data is arriving is the end offset on each topic — the offset that will be
 written next. Non-zero means records have landed.
 
+Take the block that matches the path you followed.
+
+- **Path A** — an authenticated broker.
+
 ```bash
 cat <<EOF | oc apply -f -
 apiVersion: batch/v1
@@ -1352,6 +1627,49 @@ spec:
       - { name: kafka-ca, secret: { secretName: kafka-ca } }
 EOF
 ```
+
+- **Path B** — the plaintext lab broker. There is no `kafka-ca` Secret to mount, so the volume and
+  its mount go; `client.properties` is the one written at the end of
+  [Path B](#path-b-a-lab-broker-on-the-cluster).
+
+```bash
+cat <<EOF | oc apply -f -
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kafka-verify-topics
+  namespace: $KAFKA_NAMESPACE
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: kafka-offsets
+        image: $KAFKA_IMAGE
+        command:
+        - /bin/bash
+        - -c
+        - |
+          for t in $TOPIC_TRACES $TOPIC_SPANMETRICS $TOPIC_METRICS $TOPIC_LOGS $TOPIC_FLOWS; do
+            echo "==> \$t"
+            bin/kafka-get-offsets.sh --bootstrap-server $KAFKA_BOOTSTRAP \
+              --command-config /etc/kafka-admin/client.properties --topic "\$t" | sed 's/^/    /'
+          done
+        volumeMounts:
+        - { name: admin-config, mountPath: /etc/kafka-admin, readOnly: true }
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          capabilities: { drop: ["ALL"] }
+          seccompProfile: { type: RuntimeDefault }
+      volumes:
+      - { name: admin-config, secret: { secretName: kafka-admin-config } }
+EOF
+```
+
+- Read the offsets.
 
 ```bash
 oc wait --for=condition=complete job/kafka-verify-topics -n $KAFKA_NAMESPACE --timeout=180s
