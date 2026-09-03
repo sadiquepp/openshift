@@ -16,6 +16,8 @@ follow start to finish without it.
 - [Collector topology](#collector-topology)
   - [The four modes](#the-four-modes)
   - [What is correct in which mode](#what-is-correct-in-which-mode)
+  - [The StatefulSet is not self-sufficient](#the-statefulset-is-not-self-sufficient)
+  - [Choosing the tier in front of the shards](#choosing-the-tier-in-front-of-the-shards)
 - [Pre-requisites](#pre-requisites)
   - [Variables](#variables)
 - [Install the Streams for Apache Kafka operator](#install-the-streams-for-apache-kafka-operator)
@@ -195,6 +197,65 @@ resources into a service-level series, or when one pod's stream is split mid-fli
 
 **Tail sampling is the hard requirement.** A sampling decision needs the whole trace, which only
 `traceID` routing to a stable backend can guarantee. Nothing here uses it today.
+
+### The StatefulSet is not self-sufficient
+
+**What makes routing deterministic is the `load_balancing` exporter, not the StatefulSet.** The
+StatefulSet only supplies addressable backends for it to hash onto. So a shard tier always needs
+something in front of it — but that something is not required to be a Deployment.
+
+Point apps **straight at the shards' own ClusterIP Service** and you get nothing: it load-balances
+like any other Service, with the same connection pinning, and no hashing happens anywhere. You have
+deployed a Deployment whose pods happen to have ordinal names.
+
+Two things follow:
+
+- **A StatefulSet on its own is only worth it for persistence.** If you want a `file_storage`-backed
+  sending queue that survives a restart, you need a PVC, and a PVC needs stable volume binding. That
+  is a real standalone use and has nothing to do with routing.
+- **The shards cannot sensibly route among themselves.** Having each pod hash and forward to a peer
+  loops: the peer receives on the same OTLP port, whose pipeline also exports to `load_balancing`, so
+  it forwards again. Breaking that needs a second receiver port and a second pipeline for
+  already-routed traffic — more fragile than simply having two tiers, which is why two tiers is the
+  standard shape.
+
+### Choosing the tier in front of the shards
+
+Any of the other three modes can host the `load_balancing` exporter. On the same 100-node, 200-pod,
+3-shard cluster:
+
+| | `daemonset` in front | `deployment` in front | `sidecar` in front |
+|---|---|---|---|
+| App reaches it via | `$(K8S_NODE_IP):4317`, downward API | a Service | `localhost:4317` |
+| Crosses a NetworkPolicy | node-local, usually not | **yes** — app namespace to yours | never |
+| Inbound connections to the shards | 100 × 3 = **300** | 2 × 3 = **6** | 200 × 3 = **600** |
+| Batch size arriving at the hash | one node's worth | **all traffic** — splits into few large per-shard sends | one pod's worth, split into tiny sends |
+| Config change restarts | every node | 2 pods | **every workload** |
+| Buffer during a shard restart | per-node queue | one large shared queue | tiny per-pod queue |
+| Per-team collector config | no | no | **yes** |
+| Can host cluster-wide receivers (`/federate`) | no — would scrape N times | **yes** | no |
+
+**Pick in this order:**
+
+1. **Already running a `daemonset`** for node-local telemetry — `hostmetrics`, `filelog` on
+   `/var/log/pods`, `kubeletstats`? Put `load_balancing` on it and add no tier at all. The agents
+   route straight to the shards.
+2. **Can apps not reach a central Service** — strict multi-tenancy, NetworkPolicies you do not
+   control, or teams that need their own collector config? `sidecar`. It is the only shape that
+   never crosses a network boundary before the first hop.
+3. **Otherwise `deployment`.** Fewest moving parts, by far the fewest connections into the shard
+   tier, the best batching, and the only one that can also host cluster-wide receivers.
+
+> **Where `k8sattributes` can live is decided by this choice, and getting it wrong is silent.**
+> The processor resolves the **source IP of the incoming connection** to a pod. That works on a
+> daemonset (the app is on the same node) and on a gateway (the app connects directly). It does
+> **not** work on the shards: by then the source IP is the router tier, so every span would be
+> attributed to the gateway's own pod — plausible-looking output, entirely wrong.
+>
+> So `k8sattributes` belongs on whatever the app connects to first, which is why
+> [Topology B](#topology-b-shard-traces-across-a-statefulset) keeps it on the gateway and the shard
+> config has none. On a `sidecar` the source is `localhost` and IP resolution tells you nothing —
+> use the downward API there instead.
 
 ### The two topologies in this document
 
@@ -1801,6 +1862,11 @@ shard. Do it to test the sharded shape, or as the prerequisite for adding `tail_
 
 The gateway stops producing traces to Kafka; the shards do it instead. Federated metrics stay on the
 gateway, because a `/federate` scrape has nothing to shard.
+
+A `deployment` is used as the tier in front here because this document already runs one and it is
+the right default — but a `daemonset` or `sidecar` can host `load_balancing` just as well. See
+[Choosing the tier in front of the shards](#choosing-the-tier-in-front-of-the-shards) if you are
+picking rather than following.
 
 ```
 apps ──OTLP──▶ otel (deployment)  ──load_balancing──┬──▶ otel-shard-0 ──┬─ kafka/traces
