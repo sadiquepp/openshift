@@ -49,6 +49,11 @@
     - [Scrape the collector](#scrape-the-collector)
     - [Finding them in the console](#finding-them-in-the-console)
     - [The metrics you get](#the-metrics-you-get)
+    - [Optional: exemplars, from a p95 to the trace behind it](#optional-exemplars-from-a-p95-to-the-trace-behind-it)
+    - [Emit exemplars from the connector](#emit-exemplars-from-the-connector)
+    - [Store exemplars in user workload monitoring](#store-exemplars-in-user-workload-monitoring)
+    - [Read exemplars back](#read-exemplars-back)
+    - [The limits of exemplars on OpenShift](#the-limits-of-exemplars-on-openshift)
   - [Tear down the workload](#tear-down-the-workload)
 - [Clean up](#clean-up)
 
@@ -3173,6 +3178,339 @@ topk(10, histogram_quantile(0.95,
 
 This is the payoff of running spanmetrics next to Tempo: the metrics tell you *which* service
 slowed down, and the trace view tells you *why*, for the same request.
+
+### Optional: exemplars, from a p95 to the trace behind it
+
+The sentence above — the metric says *which*, the trace says *why* — still leaves you doing the join
+by hand: read a bad p95 off a graph, guess a time window, filter Tempo to that service, and hope the
+trace you open is one of the slow ones. An **exemplar** removes the guessing. It is a trace ID
+attached to a single observation as it lands in a histogram bucket or increments a counter, stored
+by Prometheus alongside the series but outside it. The p95 stops being an aggregate you have to
+reason backwards from: it hands you the ID of an actual request that was slow.
+
+Nothing here is new machinery. The spans already carry trace IDs, the connector already sees every
+span, and Tempo already holds the traces. What follows is turning on the plumbing that carries the
+ID through the metrics path, and it is worth doing once just to see where OpenShift lets you take it
+and where it stops.
+
+Four things have to line up, and they are not equally easy:
+
+| Layer | What is needed | Effort |
+|---|---|---|
+| Produce | `spanmetrics` attaches exemplars to its data points | two lines of config |
+| Expose | the `prometheus` exporter serves OpenMetrics — exemplars exist in no other exposition format | one line of config |
+| Store | Prometheus started with `--enable-feature=exemplar-storage`, or it silently discards every one | one switch, and it is not where you would look |
+| Read | something that queries `/api/v1/query_exemplars` | the API, not the console |
+
+### Emit exemplars from the connector
+
+Two additions to the collector from [Add the spanmetrics connector](#add-the-spanmetrics-connector),
+marked below. Everything else is unchanged, so this replaces that collector in place.
+
+```bash
+cat <<EOF > otel-collector-exemplars.yaml
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: otel
+  namespace: $TRACING_NAMESPACE
+spec:
+  mode: deployment
+  serviceAccount: otel-collector
+  ports:
+  - name: promexporter
+    port: 8889
+    protocol: TCP
+  config:
+    extensions:
+      bearertokenauth:
+        filename: "/var/run/secrets/kubernetes.io/serviceaccount/token"
+    receivers:
+      otlp:
+        protocols:
+          grpc: {}
+          http: {}
+    processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_percentage: 50
+        spike_limit_percentage: 30
+      batch: {}
+    connectors:
+      spanmetrics:
+        metrics_flush_interval: 15s
+        histogram:
+          explicit:
+            buckets: [10ms, 50ms, 100ms, 250ms, 500ms, 1s, 5s]
+        dimensions:
+        - name: http.method
+        - name: http.status_code
+        # NEW. Each data point now carries up to five spans that contributed to
+        # it, as trace_id/span_id pairs. Off by default.
+        exemplars:
+          enabled: true
+          max_per_data_point: 5
+    exporters:
+      otlp:
+        endpoint: tempo-tempo-gateway.$TRACING_NAMESPACE.svc.cluster.local:8090
+        tls:
+          insecure: false
+          ca_file: "/var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt"
+        auth:
+          authenticator: bearertokenauth
+        headers:
+          X-Scope-OrgID: "$TEMPO_TENANT_NAME"
+      prometheus:
+        endpoint: "0.0.0.0:8889"
+        resource_to_telemetry_conversion:
+          enabled: true
+        # NEW. The classic Prometheus text format has nowhere to put an
+        # exemplar, so without this the connector's exemplars are built and then
+        # dropped at the exposition boundary. Only counters and histogram
+        # buckets carry them - gauges never do.
+        enable_open_metrics: true
+    service:
+      extensions: [bearertokenauth]
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [otlp, spanmetrics]
+        metrics:
+          receivers: [spanmetrics]
+          processors: [memory_limiter, batch]
+          exporters: [prometheus]
+EOF
+```
+
+```bash
+oc apply -f otel-collector-exemplars.yaml
+```
+
+- Prove it at the source before going near Prometheus. The endpoint serves OpenMetrics only when the
+  caller asks for it, which makes this a clean two-command test: the same endpoint, one header
+  apart.
+
+```bash
+oc port-forward -n $TRACING_NAMESPACE deploy/otel-collector 8889:8889 &
+```
+
+```bash
+curl -s -H 'Accept: application/openmetrics-text; version=1.0.0' http://localhost:8889/metrics \
+  | grep 'traces_span_metrics_duration_milliseconds_bucket' | grep '#' | head -3
+```
+
+  Each match ends with an exemplar appended after a `#`, which is the OpenMetrics syntax for one:
+
+```
+traces_span_metrics_duration_milliseconds_bucket{service_name="checkoutservice",span_name="oteldemo.CheckoutService/PlaceOrder",le="500"} 3 # {trace_id="4b1e...",span_id="9a2c..."} 412.7 1.7e+09
+```
+
+  Drop the `Accept` header and the same series comes back with nothing after the value — that is the
+  Prometheus text format, and it is the check to run first if exemplars never reach storage. Stop
+  the tunnel with `kill %1`.
+
+### Store exemplars in user workload monitoring
+
+Prometheus discards scraped exemplars unless it was started with
+`--enable-feature=exemplar-storage`. On the Prometheus CR that is `spec.enableFeatures`, but the
+user workload `Prometheus` object is owned by the Cluster Monitoring Operator: edit it directly and
+CMO reverts you within seconds. There is no `enableFeatures` field in the
+`user-workload-monitoring-config` ConfigMap either.
+
+The one supported switch is an indirect one. Setting `sendExemplars` on a **remote write** target
+makes CMO append the feature flag for you:
+
+```go
+// Since `SendExemplars` is experimental currently, we need to enable "exemplar-storage" explicitly to make sure
+// CMO turns this on automatically in Prometheus if any *UWM* RemoteWrite[] enables this.
+```
+
+— `cluster-monitoring-operator/pkg/manifests/manifests.go`, which is the only place the flag is set.
+
+That is the whole mechanism: you are asking for exemplars to be *sent somewhere*, and enabling local
+exemplar storage is the side effect you actually want. It also means you need a remote write
+endpoint that exists, even though nothing downstream is going to read it.
+
+- Create the sink. The Cluster Observability Operator installed for the UIPlugins also provides
+  `MonitoringStack`, which is a Prometheus you own outright — one replica, no Alertmanager, no
+  service discovery, short retention, and the remote write receiver switched on. It is the cheapest
+  honest endpoint available on a cluster that already has COO.
+
+```bash
+cat <<EOF > exemplar-sink.yaml
+apiVersion: monitoring.rhobs/v1alpha1
+kind: MonitoringStack
+metadata:
+  name: exemplar-sink
+  namespace: $TRACING_NAMESPACE
+spec:
+  # Null, not empty: an empty selector means "discover everything", null means
+  # "discover nothing". This stack scrapes no targets at all - it exists only to
+  # be written to.
+  resourceSelector:
+  retention: 6h
+  alertmanagerConfig:
+    disabled: true
+  prometheusConfig:
+    replicas: 1
+    enableRemoteWriteReceiver: true
+EOF
+```
+
+```bash
+oc apply -f exemplar-sink.yaml
+```
+
+```bash
+oc -n $TRACING_NAMESPACE rollout status statefulset/prometheus-exemplar-sink --timeout=5m
+```
+
+> **The two names are reversed, and it will catch you.** COO names the `Prometheus` object after the
+> stack, so the StatefulSet is `prometheus-exemplar-sink` — but it names the Service
+> `exemplar-sink-prometheus`. Wait on the first, write to the second. Give the operator a few
+> seconds to create the StatefulSet before running the command above, or `rollout status` returns
+> "not found" and you go looking for a failure that has not happened yet.
+
+- Point user workload monitoring at it. The `writeRelabelConfigs` block keeps the link genuinely
+  alive while sending almost nothing — see the note below on why a dead endpoint is the wrong
+  shortcut.
+
+```bash
+cat <<EOF > uwm-monitoring-config.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: user-workload-monitoring-config
+  namespace: openshift-user-workload-monitoring
+data:
+  config.yaml: |
+    prometheus:
+      remoteWrite:
+      - url: "http://exemplar-sink-prometheus.$TRACING_NAMESPACE.svc.cluster.local:9090/api/v1/write"
+        sendExemplars: true
+        writeRelabelConfigs:
+        - sourceLabels: [__name__]
+          regex: up
+          action: keep
+EOF
+```
+
+> **Read before applying on a cluster that is not a lab.** This overwrites
+> `user-workload-monitoring-config` wholesale. On a cluster where it already carries retention,
+> node placement or resource settings, merge into the existing `config.yaml` rather than replacing
+> it — the same read-modify-write care the automation takes with `cluster-monitoring-config`.
+
+```bash
+oc apply -f uwm-monitoring-config.yaml
+```
+
+  Applying this restarts the user workload Prometheus.
+
+```bash
+oc -n openshift-user-workload-monitoring rollout status statefulset/prometheus-user-workload --timeout=5m
+```
+
+- Confirm the flag actually landed on the CR CMO owns. This is the single check that tells you
+  whether the indirection worked.
+
+```bash
+oc -n openshift-user-workload-monitoring get prometheus user-workload \
+  -o jsonpath='{.spec.enableFeatures}{"\n"}'
+```
+
+  `["exemplar-storage"]` means storage is on. An empty result means CMO did not see
+  `sendExemplars: true` — check the ConfigMap parsed as YAML and that the key sits under
+  `prometheus:`, not at the top level.
+
+### Read exemplars back
+
+Exemplars come out of a different endpoint from ordinary queries — `/api/v1/query_exemplars`, which
+takes a series selector and a time range rather than a PromQL expression. The user workload
+Prometheus listens on localhost inside its pod, so port-forward to it directly.
+
+```bash
+oc -n openshift-user-workload-monitoring port-forward prometheus-user-workload-0 9090:9090 &
+```
+
+```bash
+curl -s --get http://localhost:9090/api/v1/query_exemplars \
+  --data-urlencode 'query=traces_span_metrics_duration_milliseconds_bucket{service_name="checkoutservice"}' \
+  --data-urlencode "start=$(date -u -d '15 min ago' +%s)" \
+  --data-urlencode "end=$(date -u +%s)" \
+  | jq -r '.data[].exemplars[] | "\(.value)ms  \(.labels.trace_id)"' | sort -rn | head -10
+```
+
+> **`date -d` is GNU date.** On a macOS workstation the relative form is `date -u -v-15M +%s`
+> instead, or the request comes back with a parse error rather than an empty result.
+
+Which is the point of the whole exercise:
+
+```
+1840.3ms  8c1d0f4a2b6e9d3705fa1c8e4b27d960
+612.9ms   3fa9b7c05d18e4620a7c3d9f8b214e77
+...
+```
+
+A latency, and the ID of the request that produced it. Take the top one to **Observe → Traces**,
+paste it into the trace ID field, and you are looking at the span breakdown for the exact request
+behind the tail of your p95 — no time-window guessing, no filtering by service and opening traces
+until a slow one appears. Stop the tunnel with `kill %1`.
+
+The Thanos querier exposes the same path to cluster admins, if you would rather not port-forward.
+This one goes through Thanos rather than to Prometheus directly, so it depends on the sidecar
+surfacing its exemplars API — if it returns an empty `data` array while the port-forward above
+returns rows, that is a difference between the two read paths, not a storage problem.
+
+```bash
+THANOS=$(oc get route thanos-querier -n openshift-monitoring -o jsonpath='https://{.spec.host}')
+```
+
+```bash
+curl -sk -H "Authorization: Bearer $(oc whoami -t)" --get $THANOS/api/v1/query_exemplars \
+  --data-urlencode 'query=traces_span_metrics_duration_milliseconds_bucket' \
+  --data-urlencode "start=$(date -u -d '15 min ago' +%s)" \
+  --data-urlencode "end=$(date -u +%s)" | jq .
+```
+
+### The limits of exemplars on OpenShift
+
+> **The console will not draw them.** Grafana renders exemplars as dots on the graph and that is the
+> demo everyone has seen; the OpenShift console's **Observe → Metrics** has no equivalent. Nor is
+> this reachable for non-admins: the Thanos querier's tenancy proxy — the namespace-scoped path the
+> Developer perspective uses — allow-lists exactly five API paths (`query`, `query_range`, `labels`,
+> `label/*/values`, `series`), and `query_exemplars` is not among them. The pivot is real, the
+> click-through is not. Budget for a terminal on screen.
+
+> **Expect gaps, and do not debug them.** The connector keeps an exemplar for **one flush interval**
+> (15s here) and then drops it, while Prometheus scrapes every 30s. Roughly half of what is
+> generated is never scraped, by construction. Exemplars are also held in a fixed 100,000-entry
+> in-memory ring buffer that does not survive a Prometheus restart and is not shipped to long-term
+> storage — this is a live-debugging aid, not history. A quiet service may return no exemplars at
+> all simply because no span landed in the window.
+
+> **Do not point remote write at a black hole.** It is tempting to give `url` a nonexistent Service
+> since nothing reads the sink anyway. Don't: `PrometheusRemoteWriteBehind` fires 15 minutes later
+> and sits in **Observe → Alerting** for the rest of the demo. Keeping one trivial series flowing to
+> a real endpoint, as above, costs a couple of samples per scrape and keeps the alert quiet.
+
+> **Every exemplar here resolves in Tempo because this cluster samples at 100%.** The
+> `Instrumentation` CR uses `parentbased_traceidratio` with `argument: "1"`. Lower that and exemplars
+> begin referencing traces that were never stored — the metric still points at a real request, but
+> Tempo returns nothing for the ID, which is confusing in a way that looks like breakage.
+
+
+Reverting is three deletes. The collector change is additive and harmless to leave on, but the rest
+costs you a Prometheus and a restart:
+
+```bash
+oc apply -f otel-collector-spanmetrics.yaml
+oc delete monitoringstack exemplar-sink -n $TRACING_NAMESPACE --ignore-not-found
+oc delete configmap user-workload-monitoring-config -n openshift-user-workload-monitoring --ignore-not-found
+```
+
+Deleting the ConfigMap removes the remote write target, and CMO drops `exemplar-storage` on the next
+reconcile — restarting the user workload Prometheus once more.
 
 ### Tear down the workload
 
