@@ -13,6 +13,9 @@ follow start to finish without it.
 ## Contents
 - [What this deploys](#what-this-deploys)
 - [What is deliberately missing](#what-is-deliberately-missing)
+- [Collector topology](#collector-topology)
+  - [The four modes](#the-four-modes)
+  - [What is correct in which mode](#what-is-correct-in-which-mode)
 - [Pre-requisites](#pre-requisites)
   - [Variables](#variables)
 - [Install the Streams for Apache Kafka operator](#install-the-streams-for-apache-kafka-operator)
@@ -34,6 +37,7 @@ follow start to finish without it.
   - [Create the collector service account and RBAC](#create-the-collector-service-account-and-rbac-1)
   - [Enable monitoring for user-defined projects](#enable-monitoring-for-user-defined-projects)
   - [Create the OpenTelemetryCollector](#create-the-opentelemetrycollector)
+  - [Topology B: shard traces across a StatefulSet](#topology-b-shard-traces-across-a-statefulset)
 - [Test workload](#test-workload)
 - [Verify](#verify)
   - [Is it still flowing?](#is-it-still-flowing)
@@ -102,6 +106,109 @@ Compared with [`../README.md`](../README.md), these are gone and their absence i
   few hundred series, not per-flow records, and it is what keeps **Observe → Network Traffic**
   drawing its Overview and Topology pages. The per-flow records — the ones that would have needed
   Loki — go only to Kafka.
+
+## Collector topology
+
+`spec.mode` on the `OpenTelemetryCollector` decides which Kubernetes object the operator creates.
+All four run the **same binary with the same config format**; what changes is where instances land,
+how the app addresses them, and — the part that actually constrains your config — **what subset of
+the data each instance sees**.
+
+### The four modes
+
+**`daemonset`** — one pod per node. The only mode that can reach node-local sources (`hostmetrics`,
+`filelog` on `/var/log/pods`, the local `kubeletstats`). Apps target it through the downward API, so
+traffic never leaves the node. Scales with cluster size, not load; cannot be autoscaled.
+
+```
+app pod (node A) ──OTLP──▶ collector (node A) ──┬── kafka/traces ──────▶ otlp-traces
+                                                └── spanmetrics ──────▶ otlp-spanmetrics
+app pod (node B) ──OTLP──▶ collector (node B) ──┬── kafka/traces ──────▶ otlp-traces
+                                                └── spanmetrics ──────▶ otlp-spanmetrics
+```
+
+**`deployment`** — a Deployment plus a Service, with `spec.autoscaler` for an HPA. The gateway tier,
+and **what this document deploys**.
+
+```
+app pods ──OTLP:4317──▶ Service ──┬─▶ replica 1 ──┬── kafka/traces ──▶ otlp-traces
+                                  │               └── spanmetrics ───▶ otlp-spanmetrics
+                                  └─▶ replica 2 ──┴── …
+```
+
+**`sidecar`** — a container injected into the app pod by a mutating webhook, on the
+`sidecar.opentelemetry.io/inject` annotation. Creating the CR deploys nothing by itself; it is a
+template. The app exports to `localhost:4317`, so there is no service discovery and no NetworkPolicy
+to cross. Costs a collector's memory *per pod*, and a config change restarts every workload.
+
+```
+┌─ app pod ────────────────────────────────┐
+│  app ──OTLP localhost:4317──▶ sidecar ───┼──▶ usually a gateway, rarely Kafka direct
+└──────────────────────────────────────────┘
+```
+
+**`statefulset`** — a StatefulSet plus a headless Service, so each pod has a **stable identity**.
+That is what lets an upstream tier address instances individually and route deterministically. Also
+the only mode where a PVC makes sense, e.g. a `file_storage`-backed sending queue that survives a
+restart.
+
+```
+app ──OTLP──▶ gateway (deployment)          otel-shard-0 ──┬─ kafka/traces
+                    │  load_balancing   ┌──▶ otel-shard-1 ──┤  spanmetrics
+                    └─ routing_key: ────┼──▶ otel-shard-2 ──┘
+                       service / traceID │
+                       resolver: dns → …-collector-headless
+```
+
+### How many Kafka producers each shape gives you
+
+Every producer holds connections to every broker it writes to, and needs the SASL credentials
+mounted. On a 100-node cluster running 200 instrumented pods against 3 brokers:
+
+| Mode | Producers | Broker connections | Credentials land on |
+|---|---|---|---|
+| `daemonset` | 100 | 300 | every node |
+| `deployment` (2 replicas) | 2 | 6 | two pods |
+| `sidecar` | 200 | 600 | every workload namespace |
+| `statefulset` (3, behind a gateway) | 3 | 9 | three pods |
+
+A gateway also batches better: it sees all the traffic, so batches fill on size rather than on the
+timeout, giving fewer and larger Kafka records.
+
+### What is correct in which mode
+
+| | Traces | Span metrics | Tail sampling |
+|---|---|---|---|
+| `daemonset` | yes, always | usually — an app pod sits on one node, so its spans consistently reach one collector | no |
+| `deployment` | yes, always | usually — OTLP/gRPC pins a client to one replica, but a reconnect or an HPA scale moves it | no, above 1 replica |
+| `sidecar` | yes, always | one series set per pod | no |
+| `statefulset` + `load_balancing` | yes, always | **deterministic** with `routing_key: service` | yes, with `routing_key: traceID` |
+
+**Traces are correct in every mode.** A span is a self-contained record carrying its own `trace_id`
+and `parent_span_id`; the backend reassembles the tree no matter which collector produced it. That is
+exactly what [reading a trace off the topic](#decoding-the-protobuf-topics) demonstrates.
+
+**Span metrics are an aggregation**, so they are correct only when every span that belongs in one
+series reaches one instance. The `spanmetrics` connector keys its output on the input spans'
+resource, so per-pod series stay distinct and the common cases work out. It breaks when you flatten
+resources into a service-level series, or when one pod's stream is split mid-flight.
+
+**Tail sampling is the hard requirement.** A sampling decision needs the whole trace, which only
+`traceID` routing to a stable backend can guarantee. Nothing here uses it today.
+
+### The two topologies in this document
+
+| | Topology A | Topology B |
+|---|---|---|
+| Shape | one `deployment` gateway | `deployment` gateway → `statefulset` shards |
+| Where `spanmetrics` runs | on the gateway | on the shards, deterministically routed |
+| Pods | 2 | 2 + 3 |
+| Kafka producers | 2 | 3 (the gateway stops producing traces) |
+| Tail sampling possible | no | yes |
+| Section | [Create the OpenTelemetryCollector](#create-the-opentelemetrycollector) | [Topology B](#topology-b-shard-traces-across-a-statefulset) |
+
+**Topology A is the default and the rest of this document assumes it.** Topology B is a bolt-on you
+can apply afterwards and revert; it exists so the sharded shape can be tested on the same cluster.
 
 ## Pre-requisites
 
@@ -1685,6 +1792,253 @@ Instrumented workloads should send OTLP to:
 
 - gRPC: `otel-collector.$OTEL_NAMESPACE.svc.cluster.local:4317`
 - HTTP: `otel-collector.$OTEL_NAMESPACE.svc.cluster.local:4318`
+
+### Topology B: shard traces across a StatefulSet
+
+**Optional, and applied on top of a working Topology A.** It moves the `spanmetrics` connector off
+the gateway and onto a StatefulSet tier, with the gateway routing each service's spans to a fixed
+shard. Do it to test the sharded shape, or as the prerequisite for adding `tail_sampling` later.
+
+The gateway stops producing traces to Kafka; the shards do it instead. Federated metrics stay on the
+gateway, because a `/federate` scrape has nothing to shard.
+
+```
+apps ──OTLP──▶ otel (deployment)  ──load_balancing──┬──▶ otel-shard-0 ──┬─ kafka/traces
+                    │  routing_key: service         ├──▶ otel-shard-1 ──┤  spanmetrics
+                    │                               └──▶ otel-shard-2 ──┴─ kafka/spanmetrics
+                    └── prometheus/federate ─────────────────────────────── kafka/metrics
+```
+
+#### 1. Create the shard tier
+
+Same Kafka exporters as the gateway had, plus the `spanmetrics` connector. **No `k8sattributes`** —
+the gateway already stamped those attributes onto the resource and they travel with the spans.
+
+```bash
+cat <<EOF > otel-shard.yaml
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: otel-shard
+  namespace: $OTEL_NAMESPACE
+spec:
+  mode: statefulset
+  replicas: 3
+  serviceAccount: otel-collector
+  env:
+  - name: KAFKA_USERNAME
+    valueFrom:
+      secretKeyRef: { name: kafka-sasl, key: username }
+  - name: KAFKA_PASSWORD
+    valueFrom:
+      secretKeyRef: { name: kafka-sasl, key: password }
+  volumes:
+  - name: kafka-ca
+    secret:
+      secretName: kafka-ca
+  volumeMounts:
+  - name: kafka-ca
+    mountPath: /etc/kafka-ca
+    readOnly: true
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+    processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_percentage: 50
+        spike_limit_percentage: 30
+      batch:
+        send_batch_size: 8192
+        send_batch_max_size: 16384
+        timeout: 5s
+    connectors:
+      spanmetrics:
+        metrics_flush_interval: 15s
+        histogram:
+          explicit:
+            buckets: [10ms, 50ms, 100ms, 250ms, 500ms, 1s, 5s]
+        dimensions:
+        - name: http.method
+        - name: http.status_code
+    exporters:
+      kafka/traces:
+        brokers: ["$KAFKA_BOOTSTRAP"]
+        traces:
+          topic: $TOPIC_TRACES
+          encoding: otlp_proto
+        protocol_version: "3.5.0"
+        sending_queue: { enabled: true, num_consumers: 4, queue_size: 1000 }
+        auth:
+          tls:
+            ca_file: /etc/kafka-ca/ca.crt
+          sasl:
+            mechanism: $KAFKA_SASL_MECHANISM
+            username: \${env:KAFKA_USERNAME}
+            password: \${env:KAFKA_PASSWORD}
+      kafka/spanmetrics:
+        brokers: ["$KAFKA_BOOTSTRAP"]
+        metrics:
+          topic: $TOPIC_SPANMETRICS
+          encoding: otlp_proto
+        protocol_version: "3.5.0"
+        sending_queue: { enabled: true, num_consumers: 4, queue_size: 1000 }
+        auth:
+          tls:
+            ca_file: /etc/kafka-ca/ca.crt
+          sasl:
+            mechanism: $KAFKA_SASL_MECHANISM
+            username: \${env:KAFKA_USERNAME}
+            password: \${env:KAFKA_PASSWORD}
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [kafka/traces, spanmetrics]
+        metrics/spanmetrics:
+          receivers: [spanmetrics]
+          processors: [memory_limiter, batch]
+          exporters: [kafka/spanmetrics]
+EOF
+```
+
+```bash
+oc apply -f otel-shard.yaml
+oc rollout status statefulset/otel-shard-collector -n $OTEL_NAMESPACE --timeout=300s
+```
+
+On Path B drop the `env`, `volumes`, `volumeMounts` and both `auth` blocks, exactly as in the
+gateway.
+
+#### 2. Find the headless Service — do not assume its name
+
+```bash
+oc get svc -n $OTEL_NAMESPACE
+```
+
+You want the one with `CLUSTER-IP` of `None`, normally `otel-shard-collector-headless`. Confirm it
+has one endpoint per replica:
+
+```bash
+oc get endpointslice -n $OTEL_NAMESPACE -l kubernetes.io/service-name=otel-shard-collector-headless
+```
+
+> **Why the headless Service and not per-pod DNS.** The operator does not set the StatefulSet's
+> `serviceName`, so `otel-shard-collector-0.otel-shard-collector-headless…` may not resolve. It does
+> not need to: the `load_balancing` exporter's DNS resolver reads the **A records of the headless
+> Service**, which list every ready pod IP, and a headless Service always publishes those. Stable
+> *identity* is what StatefulSet gives us here — stable per-pod *DNS* is not required.
+
+#### 3. Repoint the gateway
+
+Re-apply the collector from [Create the OpenTelemetryCollector](#create-the-opentelemetrycollector)
+with three changes: drop the `spanmetrics` connector, replace the `kafka/traces` and
+`kafka/spanmetrics` exporters with `load_balancing`, and point the `traces` pipeline at it. Leave the
+`prometheus/federate` receiver and `kafka/metrics` exporter exactly as they are.
+
+```yaml
+    exporters:
+      load_balancing:
+        routing_key: service
+        protocol:
+          otlp:
+            tls:
+              insecure: true
+        resolver:
+          dns:
+            hostname: otel-shard-collector-headless.$OTEL_NAMESPACE.svc.cluster.local
+            port: 4317
+            interval: 5s
+      kafka/metrics:
+        # unchanged
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, k8sattributes, batch]
+          exporters: [load_balancing]
+        metrics/federated:
+          receivers: [prometheus/federate]
+          processors: [memory_limiter, batch]
+          exporters: [kafka/metrics]
+```
+
+```bash
+oc rollout status deploy/otel-collector -n $OTEL_NAMESPACE --timeout=300s
+```
+
+- **`routing_key: service`** is the one that matters here — it hashes on the `service.name` resource
+  attribute, so every span from `checkoutservice` reaches the same shard and that shard computes the
+  complete RED metrics for it. Use `traceID` instead if you are adding `tail_sampling`, which needs
+  whole traces rather than whole services. You cannot have both on one tier.
+- `tls: insecure: true` is collector-to-collector inside the cluster. Give the shards a serving
+  certificate and point `ca_file` at it if that hop has to be encrypted.
+
+#### 4. Prove the routing is sticky
+
+This is the test worth running, because sharding that silently degrades to round-robin looks
+identical from the topic. Sample each shard's accepted spans over a minute:
+
+```bash
+sample() {
+  for i in 0 1 2; do
+    oc port-forward -n $OTEL_NAMESPACE pod/otel-shard-collector-$i 8888:8888 >/dev/null 2>&1 &
+    sleep 2
+    printf 'shard %s %s\n' "$i" "$(curl -s localhost:8888/metrics \
+      | awk '/^otelcol_receiver_accepted_spans/ {s+=$2} END {print s+0}')"
+    kill %1 2>/dev/null; wait %1 2>/dev/null
+  done
+}
+sample > /tmp/shards-1; sleep 60; sample > /tmp/shards-2
+join /tmp/shards-1 /tmp/shards-2 -j 2 | awk '{printf "shard %s  +%d spans/min\n", $1, $5-$3}'
+```
+
+Expect an **uneven** split — with a handful of services hashed across three shards, even is the
+suspicious answer. Then restart the gateway and repeat:
+
+```bash
+oc rollout restart deploy/otel-collector -n $OTEL_NAMESPACE
+oc rollout status deploy/otel-collector -n $OTEL_NAMESPACE --timeout=300s
+```
+
+**The proportions should come back the same.** Consistent hashing puts each service on the same
+shard across gateway restarts; round-robin would reshuffle them. If the split changes materially,
+`routing_key` is not being applied — check the gateway's log for `load_balancing` resolver errors,
+and confirm the resolver hostname resolves from inside the gateway pod.
+
+#### 5. Confirm Kafka is still receiving
+
+The producers changed; the topics did not.
+
+```bash
+oc delete job kafka-verify-topics -n $KAFKA_NAMESPACE --ignore-not-found
+```
+
+Re-run the [verify Job](#verify). `otlp-traces` and `otlp-spanmetrics` should keep advancing — now
+written by the shards rather than the gateway — and `federated-metrics` should be unaffected, since
+that pipeline never moved.
+
+#### Reverting
+
+```bash
+oc delete opentelemetrycollector otel-shard -n $OTEL_NAMESPACE
+```
+
+then re-apply the original gateway from
+[Create the OpenTelemetryCollector](#create-the-opentelemetrycollector). Delete the shards **after**
+restoring the gateway, or the gateway spends the gap logging export failures against a resolver with
+no backends.
+
+#### What it costs
+
+One more network hop per span, three more pods, and a second collector config to keep in step with
+the first. Worth it when you need `tail_sampling`, when `spanmetrics` cardinality has outgrown one
+process, or when you want trace throughput to scale independently of the gateway. Not worth it
+otherwise — Topology A is two pods and one config.
 
 ## Test workload
 
