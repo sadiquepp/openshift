@@ -1888,10 +1888,40 @@ shard. Do it to test the sharded shape, or as the prerequisite for adding `tail_
 > ```
 >
 > **Note what that error does: it lists every valid type for your build.** Deliberately configuring
-> a bogus component name is the fastest way to enumerate what a collector actually ships — it works
-> for receivers and processors too, and beats guessing from documentation that may lead or lag the
-> binary. Same class of version-dependent detail as `otel_kafka_topic_style` and
-> `otel_kafka_auth_style`.
+> a bogus component name is the fastest way to enumerate what a collector actually ships — swap the
+> bogus entry into `receivers:`, `processors:` or `connectors:` to enumerate those. It beats both
+> the documentation and the distribution manifest, either of which can lead or lag the binary.
+
+#### What RHOSDT actually registers
+
+Enumerated with that trick against a cluster running collector **0.152.1**. Treat it as a worked
+example of the method, not a specification — run it against your own build:
+
+```
+exporters   awsemf loadbalancing file debug otlp otlp_http otlphttp prometheusremotewrite
+            kafka awsxray googlecloud otlp_grpc prometheus awscloudwatchlogs
+
+processors  batch memory_limiter span resourcedetection probabilistic_sampler tail_sampling
+            k8s_attributes cumulativetodelta metric_start_time groupbyattrs transform filter
+            attributes resource k8sattributes metricstarttime
+```
+
+Four things worth reading off that:
+
+- **`tail_sampling` is present**, so the sampling design is buildable. Presence is not a support
+  tier, though — check the Processors page for whether it is GA or Technology Preview, as
+  `loadbalancing` is.
+- **`kafka` is present**, which is what this whole document rests on.
+- **Some components register under two names** — `k8s_attributes`/`k8sattributes` and
+  `metric_start_time`/`metricstarttime` — the same underscore migration that renamed the load
+  balancing exporter, caught mid-flight with both aliases live. This document uses `k8sattributes`,
+  valid in both.
+- **`groupbytrace` is absent**, and does not need to be: `tail_sampling` has its own `decision_wait`
+  buffer, so grouping is built in rather than a separate processor.
+
+One caution the same exercise exposed: the upstream distribution manifest on `main` lists a
+`redaction` processor that this 0.152.1 build does **not** register. Reading component availability
+off a repository manifest tells you about `main`, not about what you are running.
 
 The gateway stops producing traces to Kafka; the shards do it instead. Federated metrics stay on the
 gateway, because a `/federate` scrape has nothing to shard.
