@@ -260,7 +260,8 @@ resource, so per-pod series stay distinct and the common cases work out. It brea
 resources into a service-level series, or when one pod's stream is split mid-flight.
 
 **Tail sampling is the hard requirement.** A sampling decision needs the whole trace, which only
-`traceID` routing to a stable backend can guarantee. Nothing here uses it today.
+`traceID` routing to a stable backend can guarantee. Topology A cannot do it;
+[Topology B's optional sampler](#optional-tail-sampling-on-the-shards) is where it becomes possible.
 
 ### Why the collector does not assemble traces
 
@@ -372,7 +373,7 @@ Any of the other three modes can host the `loadbalancing` exporter. On the same 
 | Where `spanmetrics` runs | on the gateway | on the shards, deterministically routed |
 | Pods | 2 | 2 + 3 |
 | Kafka producers | 2 | 3 (the gateway stops producing traces) |
-| Tail sampling possible | no | yes |
+| Tail sampling possible | no | [yes](#optional-tail-sampling-on-the-shards) |
 | Section | [Create the OpenTelemetryCollector](#create-the-opentelemetrycollector) | [Topology B](#topology-b-shard-traces-across-a-statefulset) |
 
 **Topology A is the default and the rest of this document assumes it.** Topology B is a bolt-on you
@@ -2013,7 +2014,8 @@ Instrumented workloads should send OTLP to:
 
 **Optional, and applied on top of a working Topology A.** It moves the `spanmetrics` connector off
 the gateway and onto a StatefulSet tier, with the gateway routing each service's spans to a fixed
-shard. Do it to test the sharded shape, or as the prerequisite for adding `tail_sampling` later.
+shard. Do it to test the sharded shape, or as the prerequisite for
+[tail sampling](#optional-tail-sampling-on-the-shards), which is built on top of it below.
 
 > **The Load Balancing Exporter is Technology Preview in the Red Hat build of OpenTelemetry.**
 > Red Hat's own documentation states it is *"not supported with Red Hat production service level
@@ -2254,8 +2256,9 @@ oc rollout status deploy/otel-collector -n $OTEL_NAMESPACE --timeout=300s
 
 - **`routing_key: service`** is the one that matters here — it hashes on the `service.name` resource
   attribute, so every span from `checkoutservice` reaches the same shard and that shard computes the
-  complete RED metrics for it. Use `traceID` instead if you are adding `tail_sampling`, which needs
-  whole traces rather than whole services. You cannot have both on one tier.
+  complete RED metrics for it. Use `traceID` instead if you are adding
+  [tail sampling](#optional-tail-sampling-on-the-shards), which needs whole traces rather than whole
+  services. You cannot have both on one tier.
 - `tls: insecure: true` is collector-to-collector inside the cluster. Give the shards a serving
   certificate and point `ca_file` at it if that hop has to be encrypted.
 
@@ -2303,7 +2306,248 @@ Re-run the [verify Job](#verify). `otlp-traces` and `otlp-spanmetrics` should ke
 written by the shards rather than the gateway — and `federated-metrics` should be unaffected, since
 that pipeline never moved.
 
-#### Reverting
+#### Optional: tail sampling on the shards
+
+Everything so far puts **100%** of traces on `otlp-traces`. That is the right default while you are
+proving the pipeline and the wrong one at volume — one page render of the
+[test workload](#test-workload) is two dozen spans, and the topic grows with request rate rather
+than with anything you will ever look at. The question is which traces you keep, and — the part that
+decides the architecture — **when you decide**.
+
+| | Head sampling (in the SDK) | Tail sampling (here) |
+|---|---|---|
+| Decides | at the root span, before the work happens | after the trace is complete |
+| Knows | the trace ID | every span, every status, the whole duration |
+| Can keep all errors | **no** — nothing has failed yet | yes |
+| Costs | nothing; the spans are never created | every span is created, sent, and buffered |
+| Saves | SDK CPU, network, broker and storage | **broker and storage only** |
+
+Head sampling at 5% throws away 95% of exactly the traces the stack exists to show. Tail sampling
+keeps them, and pays for it by moving the decision into a stateful component — which is what the
+shard tier is for. This is the payoff [Topology B](#topology-b-shard-traces-across-a-statefulset)
+was built for, and it is optional in the same way Topology B is.
+
+> **Two Technology Preview dependencies now, not one.** `loadbalancing` is Technology Preview in
+> the Red Hat build; `tail_sampling` is a contrib processor whose own tier you should check on the
+> [Processors](https://docs.redhat.com/en/documentation/red_hat_build_of_opentelemetry/3.10/html/configuring_the_collector/otel-collector-processors)
+> page for your version. It is *registered* on 0.152.1 — see
+> [What RHOSDT actually registers](#what-rhosdt-actually-registers) — which is availability, not
+> support. If either tier is a blocker, [sampling in the Kafka consumer](#if-technology-preview-is-a-blocker)
+> gets you the same result with no preview component at all.
+
+**Three changes to the topology you just built.**
+
+**1. The routing key changes to `traceID`.** In step 3 the gateway hashes on `service`, so a
+service's spans always reach one shard. A sampler needs the opposite: every span of *one trace* on
+one shard, whatever service produced it.
+
+```yaml
+      loadbalancing:
+        routing_key: traceID          # was: service
+```
+
+Everything a policy can express depends on this. `errors` matching "any span in the trace has status
+Error" is only true if the shard holds the whole trace — otherwise a shard judges a fragment,
+decides it looks healthy, and drops the half of the trace where the failure was. Same for a latency
+threshold, which is measured across the trace, and for `critical-services`, which keeps a *trace*
+because one of its services is on the list.
+
+**2. `spanmetrics` moves back to the gateway**, ahead of the sampler. Relative to
+[Topology A](#create-the-opentelemetrycollector) the gateway then changes in exactly one way —
+`kafka/traces` becomes `loadbalancing` — and keeps its connector, its `kafka/spanmetrics` exporter
+and both metrics pipelines:
+
+```yaml
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, k8sattributes, batch]
+          exporters: [loadbalancing, spanmetrics]
+        metrics/spanmetrics:
+          receivers: [spanmetrics]
+          processors: [memory_limiter, batch]
+          exporters: [kafka/spanmetrics]
+        metrics/federated:
+          # unchanged
+```
+
+> **RED metrics computed after a sampler describe the sample, not the service.** Leave `spanmetrics`
+> on the shards and it sees only what survived — a stream deliberately enriched with every error and
+> every slow request — so the error rate it publishes converges on something near 100% and the
+> latency histogram is weighted towards the tail. The numbers stay plausible, which is what makes it
+> dangerous. Aggregate before you sample; sample only what you store.
+
+**3. The shards become samplers.** They keep the `otlp` receiver and the `kafka/traces` exporter
+from step 1 and drop the `spanmetrics` connector, the `kafka/spanmetrics` exporter and the
+`metrics/spanmetrics` pipeline with it. What replaces them:
+
+```yaml
+    processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_percentage: 75          # was 50 - the sampler's working set is the point
+        spike_limit_percentage: 15
+      batch:
+        send_batch_size: 8192
+        send_batch_max_size: 16384
+        timeout: 5s
+      # Tail-based sampling - keep errors, slow requests, and baseline
+      tail_sampling:
+        decision_wait: 30s
+        num_traces: 100000
+        policies:
+        # 1. Always keep errors
+        - name: errors
+          type: status_code
+          status_code:
+            status_codes: [ERROR]
+        # 2. Always keep slow traces (> 500ms)
+        - name: slow-traces
+          type: latency
+          latency:
+            threshold_ms: 500
+        # 3. Keep traces from critical services at 100%
+        - name: critical-services
+          type: string_attribute
+          string_attribute:
+            key: service.name
+            values: [payment-service, auth-service, fraud-detection]
+        # 4. Baseline: keep 5% of everything else
+        - name: baseline
+          type: probabilistic
+          probabilistic:
+            sampling_percentage: 5
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, tail_sampling, batch]
+          exporters: [kafka/traces]
+```
+
+`memory_limiter` first and `batch` last, as always; `tail_sampling` goes between them. Batching
+before the sampler is work thrown away on traces about to be dropped, and batching after it keeps
+the Kafka records the same size they were.
+
+```bash
+oc apply -f otel-shard.yaml
+oc rollout status statefulset/otel-shard-collector -n $OTEL_NAMESPACE --timeout=300s
+```
+
+**Policies are OR'd, never AND'd.** A trace is kept if *any* policy votes for it, and that is the
+whole trick behind "everything interesting plus 5% of the rest": `baseline` is evaluated against
+every trace, errors included, but an error trace has already been claimed by `errors`, so the 5%
+only ever decides the fate of the ordinary ones. Expressing this with nested `and` / `not`
+sub-policies is the standard way to get it wrong and silently drop errors.
+
+| Policy | Fires when | Worth knowing |
+|---|---|---|
+| `errors` | any span in the trace has status `ERROR` | Span *status*, set by the instrumentation — `otelhttp` and `otelgrpc` mark a span Error on a 5xx or a non-OK gRPC code. A handled exception recorded as a span event without a status change is invisible to it; add an `ottl_condition` policy on `name == "exception"` if your services do that. |
+| `slow-traces` | the trace spans more than 500ms, earliest start to latest end | Not the root span's own duration. **On the test workload this policy never fires** — Online Boutique traces finish in tens of milliseconds. Drop it to `100` to watch it work, and put it back for anything real. |
+| `critical-services` | any span carries `service.name` in the list | The policy matches resource attributes as well as span attributes, which is what makes `service.name` usable here. The three names are **placeholders** — substitute your own; on the test workload they would be `paymentservice`, `checkoutservice`, `frontend`. Matching is exact, so a typo shows up as a policy whose counter never leaves zero. |
+| `baseline` | 5% of everything, by hash of the trace ID | Deterministic on the trace ID, so it is 5% of *traces* rather than 5% of spans — every span of a kept trace is kept, which is the only useful meaning of the number. |
+
+**`decision_wait` and `num_traces` are the whole memory model.** The sampler has no way to know a
+trace is finished — [there is no completion signal in OTLP](#why-the-collector-does-not-assemble-traces) —
+so it holds each trace for `decision_wait` after its **first** span and then judges whatever it has.
+That has three consequences worth stating before you tune anything:
+
+- **The topic lags by `decision_wait`.** At 30s, a trace that happened now reaches `otlp-traces`
+  half a minute from now. Consumers that alert on traces need to know that; consumers that store
+  them do not care.
+- **`num_traces` has to cover the arrival rate for that whole window.** It is a per-instance bound
+  on traces held simultaneously, so it needs to be at least `new traces/sec × decision_wait`.
+  100000 over 30s carries about **3,300 new traces a second per shard**, so roughly 10,000/s across
+  three — comfortable for the test workload and a real number to check against your own rate.
+- **Exceeding it evicts the oldest trace undecided**, which is not the same as sampling it away.
+  `otelcol_processor_tail_sampling_sampling_trace_dropped_too_early` counts those, and anything
+  above zero means the policies never got to vote.
+
+Budget memory to match: on the order of a gigabyte per 100,000 short traces held, so give the shards
+a limit in the low gigabytes rather than the megabytes a forwarding-only collector needs, and let
+`limit_percentage: 75` protect it. `expected_new_traces_per_sec` can be added alongside `num_traces`
+as a pre-allocation hint if your build accepts it; it changes allocation behaviour, not the bound.
+
+**Prove it, on the shard's own counters.** The processor publishes every decision it makes, and
+there is no `ServiceMonitor` in this stack to read them for you — go straight at the port, as in
+[step 4](#4-prove-the-routing-is-sticky):
+
+```bash
+oc port-forward -n $OTEL_NAMESPACE pod/otel-shard-collector-0 8888:8888 >/dev/null 2>&1 &
+sleep 2
+curl -s localhost:8888/metrics | grep -E '^otelcol_processor_tail_sampling' | grep -v '^#'
+kill %1 2>/dev/null; wait %1 2>/dev/null
+```
+
+```
+otelcol_processor_tail_sampling_count_traces_sampled{policy="errors",sampled="true"} 41
+otelcol_processor_tail_sampling_count_traces_sampled{policy="errors",sampled="false"} 3812
+otelcol_processor_tail_sampling_count_traces_sampled{policy="baseline",sampled="true"} 192
+otelcol_processor_tail_sampling_count_traces_sampled{policy="critical-services",sampled="true"} 0
+otelcol_processor_tail_sampling_global_count_traces_sampled{sampled="true"} 228
+otelcol_processor_tail_sampling_sampling_trace_dropped_too_early 0
+```
+
+Read it in this order: `dropped_too_early` at zero (the buffer is big enough), `baseline` at about a
+twentieth of the traces seen (the 5% is working), `errors` at whatever your failure rate is, and
+`critical-services` at zero **only if** none of those names exist on this cluster — a policy that
+should be firing and reads zero is a name that does not match, not a policy that does not work. The
+`_total` suffix and the exact label set vary between builds; grep the prefix rather than assuming a
+full metric name.
+
+**Then read it off Kafka, which is the check that matters.** Re-run the
+[verify Job](#verify) and compare against the rates from
+[Is it still flowing?](#is-it-still-flowing):
+
+| Topic | Expected |
+|---|---|
+| `otlp-traces` | **falls sharply** — towards the 5% baseline plus whatever the other three policies claim |
+| `otlp-spanmetrics` | **unchanged** — computed on the gateway, upstream of the sampler, on 100% of spans |
+| `federated-metrics` | unchanged — that pipeline never went near the shards |
+| `cluster-logs`, `network-flows` | unchanged — different producers entirely |
+
+The fall is not proportional to the sampling rate, because a record is an
+[export batch](#what-the-numbers-mean) rather than a trace: fewer traces mostly means emptier
+batches before it means fewer of them. `otlp-spanmetrics` holding steady while `otlp-traces` drops
+is the single observation that proves both halves of this design at once.
+
+`otlp-peek.py --group` still reassembles whole traces off the topic, because sampling is per trace —
+what changes is that a specific trace ID you saw elsewhere may simply not be there, and that is the
+feature.
+
+**Routing evenness inverts, so do not read step 4's expectation.** Trace IDs are uniformly random,
+so `routing_key: traceID` spreads load **evenly** across the shards — the opposite of the uneven
+split that `routing_key: service` produces with a handful of services. Even is the pass condition
+now; a persistent skew means the resolver is finding fewer backends than you think.
+
+**If you want both the sample and the full stream**, fork the shard receiver into two pipelines
+rather than choosing:
+
+```yaml
+        traces/sampled:
+          receivers: [otlp]
+          processors: [memory_limiter, tail_sampling, batch]
+          exporters: [kafka/traces-sampled]
+        traces/full:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [kafka/traces]
+```
+
+with a second `kafka/…` exporter on its own topic. That gives consumers a cheap "interesting traces"
+topic to drive alerting and dashboards from, and keeps the 100% stream for anyone who needs to pull
+one specific trace — at the cost of the broker throughput sampling was meant to save. Which is the
+honest trade: **tail sampling here saves storage and broker volume, and nothing else.** Every span
+is still created by the SDK, still serialized, still sent over the network and still buffered in a
+collector. If the application-side cost is what hurts, head sampling is the right tool and this is
+the wrong one.
+
+**Reverting the sampler alone** — back to Topology B, without unwinding the shard tier — is
+step 1's shard config re-applied and `routing_key` back to `service` on the gateway. Both roll in
+place; nothing on Kafka needs touching. To unwind the shard tier as well, carry on below.
+
+#### Reverting the shard tier
 
 ```bash
 oc delete opentelemetrycollector otel-shard -n $OTEL_NAMESPACE
@@ -2338,7 +2582,8 @@ already exists and already holds everything.
 #### What it costs
 
 One more network hop per span, three more pods, and a second collector config to keep in step with
-the first. Worth it when you need `tail_sampling`, when `spanmetrics` cardinality has outgrown one
+the first. Worth it when you need [tail sampling](#optional-tail-sampling-on-the-shards), when `spanmetrics`
+cardinality has outgrown one
 process, or when you want trace throughput to scale independently of the gateway. Not worth it
 otherwise — Topology A is two pods and one config.
 
