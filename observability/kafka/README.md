@@ -2402,17 +2402,17 @@ from step 1 and drop the `spanmetrics` connector, the `kafka/spanmetrics` export
           type: status_code
           status_code:
             status_codes: [ERROR]
-        # 2. Always keep slow traces (> 500ms)
+        # 2. Always keep slow traces (> 50ms)
         - name: slow-traces
           type: latency
           latency:
-            threshold_ms: 500
+            threshold_ms: 50
         # 3. Keep traces from critical services at 100%
         - name: critical-services
           type: string_attribute
           string_attribute:
             key: service.name
-            values: [payment-service, auth-service, fraud-detection]
+            values: [paymentservice, checkoutservice, emailservice]
         # 4. Baseline: keep 5% of everything else
         - name: baseline
           type: probabilistic
@@ -2444,9 +2444,15 @@ sub-policies is the standard way to get it wrong and silently drop errors.
 | Policy | Fires when | Worth knowing |
 |---|---|---|
 | `errors` | any span in the trace has status `ERROR` | Span *status*, set by the instrumentation — `otelhttp` and `otelgrpc` mark a span Error on a 5xx or a non-OK gRPC code. A handled exception recorded as a span event without a status change is invisible to it; add an `ottl_condition` policy on `name == "exception"` if your services do that. |
-| `slow-traces` | the trace spans more than 500ms, earliest start to latest end | Not the root span's own duration. **On the test workload this policy never fires** — Online Boutique traces finish in tens of milliseconds. Drop it to `100` to watch it work, and put it back for anything real. |
-| `critical-services` | any span carries `service.name` in the list | The policy matches resource attributes as well as span attributes, which is what makes `service.name` usable here. The three names are **placeholders** — substitute your own; on the test workload they would be `paymentservice`, `checkoutservice`, `frontend`. Matching is exact, so a typo shows up as a policy whose counter never leaves zero. |
+| `slow-traces` | the trace spans more than 50ms, earliest start to latest end | Not the root span's own duration. **50ms is tuned to this workload** — Online Boutique renders a page in tens of milliseconds, so the threshold has to sit inside that range to claim a tail rather than nothing. It is the wrong number for a real service by an order of magnitude: start from your own p95 and raise it until the policy stops claiming most of your traffic. |
+| `critical-services` | any span carries `service.name` in the list | The policy matches resource attributes as well as span attributes, which is what makes `service.name` — a resource attribute — usable here. These three are the [test workload](#test-workload)'s own names, exactly as its `OTEL_SERVICE_NAME` values set them, and together they are the checkout path: every trace that touches money is kept whole. Matching is exact, so a typo shows up as a policy whose counter never leaves zero. |
 | `baseline` | 5% of everything, by hash of the trace ID | Deterministic on the trace ID, so it is 5% of *traces* rather than 5% of spans — every span of a kept trace is kept, which is the only useful meaning of the number. |
+
+> **Do not put `frontend` on that list.** It is on the entry path of essentially every request, so a
+> policy naming it keeps 100% of traces and turns the sampler off without appearing to. A
+> critical-services policy is only worth anything for services that appear on *some* traces — which
+> is why the three above are the checkout path and not the front door.
+
 
 **`decision_wait` and `num_traces` are the whole memory model.** The sampler has no way to know a
 trace is finished — [there is no completion signal in OTLP](#why-the-collector-does-not-assemble-traces) —
@@ -2483,18 +2489,29 @@ kill %1 2>/dev/null; wait %1 2>/dev/null
 ```
 otelcol_processor_tail_sampling_count_traces_sampled{policy="errors",sampled="true"} 41
 otelcol_processor_tail_sampling_count_traces_sampled{policy="errors",sampled="false"} 3812
+otelcol_processor_tail_sampling_count_traces_sampled{policy="slow-traces",sampled="true"} 604
+otelcol_processor_tail_sampling_count_traces_sampled{policy="critical-services",sampled="true"} 187
 otelcol_processor_tail_sampling_count_traces_sampled{policy="baseline",sampled="true"} 192
-otelcol_processor_tail_sampling_count_traces_sampled{policy="critical-services",sampled="true"} 0
-otelcol_processor_tail_sampling_global_count_traces_sampled{sampled="true"} 228
+otelcol_processor_tail_sampling_global_count_traces_sampled{sampled="true"} 847
+otelcol_processor_tail_sampling_global_count_traces_sampled{sampled="false"} 3006
 otelcol_processor_tail_sampling_sampling_trace_dropped_too_early 0
 ```
 
-Read it in this order: `dropped_too_early` at zero (the buffer is big enough), `baseline` at about a
-twentieth of the traces seen (the 5% is working), `errors` at whatever your failure rate is, and
-`critical-services` at zero **only if** none of those names exist on this cluster — a policy that
-should be firing and reads zero is a name that does not match, not a policy that does not work. The
-`_total` suffix and the exact label set vary between builds; grep the prefix rather than assuming a
-full metric name.
+Read it in this order. `dropped_too_early` at zero means the buffer is big enough and every trace
+got a vote. `baseline` at 192 is a twentieth of the 3,853 traces evaluated, so the 5% is working.
+`critical-services` at 187 is about the checkout rate — the load generator checks out roughly once
+every twenty requests, and those are the only traces touching `paymentservice`. `slow-traces` claims
+the most by far, which is what a 50ms threshold on a workload this quick is *for*. And `errors` is
+whatever your failure rate happens to be.
+
+**The global count is smaller than the sum of the policies**, and has to be: 41 + 604 + 187 + 192 is
+1,024, but the union is 847. A slow checkout is claimed by three policies and kept once. That gap is
+the overlap, and watching it is the quickest way to see whether a policy is earning its place — one
+whose sampled count is entirely absorbed by the others is adding nothing.
+
+A policy that *should* be firing and reads zero is a name that does not match, not a policy that
+does not work. The `_total` suffix and the exact label set vary between builds; grep the prefix
+rather than assuming a full metric name.
 
 **Then read it off Kafka, which is the check that matters.** Re-run the
 [verify Job](#verify) and compare against the rates from
@@ -2502,7 +2519,7 @@ full metric name.
 
 | Topic | Expected |
 |---|---|
-| `otlp-traces` | **falls sharply** — towards the 5% baseline plus whatever the other three policies claim |
+| `otlp-traces` | **falls sharply** — to the union of the four policies. On the test workload with these thresholds that is roughly a fifth of the traces, not a twentieth: 5% is the floor the baseline guarantees, not the target |
 | `otlp-spanmetrics` | **unchanged** — computed on the gateway, upstream of the sampler, on 100% of spans |
 | `federated-metrics` | unchanged — that pipeline never went near the shards |
 | `cluster-logs`, `network-flows` | unchanged — different producers entirely |
