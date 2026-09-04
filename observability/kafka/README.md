@@ -156,7 +156,7 @@ restart.
 
 ```
 app ──OTLP──▶ gateway (deployment)          otel-shard-0 ──┬─ kafka/traces
-                    │  load_balancing   ┌──▶ otel-shard-1 ──┤  spanmetrics
+                    │  loadbalancing   ┌──▶ otel-shard-1 ──┤  spanmetrics
                     └─ routing_key: ────┼──▶ otel-shard-2 ──┘
                        service / traceID │
                        resolver: dns → …-collector-headless
@@ -184,9 +184,9 @@ timeout, giving fewer and larger Kafka records.
 | `daemonset` | yes, always | usually — an app pod sits on one node, so its spans consistently reach one collector | no |
 | `deployment` | yes, always | usually — OTLP/gRPC pins a client to one replica, but a reconnect or an HPA scale moves it | no, above 1 replica |
 | `sidecar` | yes, always | one series set per pod | no |
-| `statefulset` + `load_balancing` † | yes, always | **deterministic** with `routing_key: service` | yes, with `routing_key: traceID` |
+| `statefulset` + `loadbalancing` † | yes, always | **deterministic** with `routing_key: service` | yes, with `routing_key: traceID` |
 
-† `load_balancing` is **Technology Preview** in the Red Hat build — functional, but outside
+† `loadbalancing` is **Technology Preview** in the Red Hat build — functional, but outside
 production SLAs. See [Topology B](#topology-b-shard-traces-across-a-statefulset).
 
 **Traces are correct in every mode.** A span is a self-contained record carrying its own `trace_id`
@@ -203,7 +203,7 @@ resources into a service-level series, or when one pod's stream is split mid-fli
 
 ### The StatefulSet is not self-sufficient
 
-**What makes routing deterministic is the `load_balancing` exporter, not the StatefulSet.** The
+**What makes routing deterministic is the `loadbalancing` exporter, not the StatefulSet.** The
 StatefulSet only supplies addressable backends for it to hash onto. So a shard tier always needs
 something in front of it — but that something is not required to be a Deployment.
 
@@ -217,14 +217,14 @@ Two things follow:
   sending queue that survives a restart, you need a PVC, and a PVC needs stable volume binding. That
   is a real standalone use and has nothing to do with routing.
 - **The shards cannot sensibly route among themselves.** Having each pod hash and forward to a peer
-  loops: the peer receives on the same OTLP port, whose pipeline also exports to `load_balancing`, so
+  loops: the peer receives on the same OTLP port, whose pipeline also exports to `loadbalancing`, so
   it forwards again. Breaking that needs a second receiver port and a second pipeline for
   already-routed traffic — more fragile than simply having two tiers, which is why two tiers is the
   standard shape.
 
 ### Choosing the tier in front of the shards
 
-Any of the other three modes can host the `load_balancing` exporter. On the same 100-node, 200-pod,
+Any of the other three modes can host the `loadbalancing` exporter. On the same 100-node, 200-pod,
 3-shard cluster:
 
 | | `daemonset` in front | `deployment` in front | `sidecar` in front |
@@ -241,7 +241,7 @@ Any of the other three modes can host the `load_balancing` exporter. On the same
 **Pick in this order:**
 
 1. **Already running a `daemonset`** for node-local telemetry — `hostmetrics`, `filelog` on
-   `/var/log/pods`, `kubeletstats`? Put `load_balancing` on it and add no tier at all. The agents
+   `/var/log/pods`, `kubeletstats`? Put `loadbalancing` on it and add no tier at all. The agents
    route straight to the shards.
 2. **Can apps not reach a central Service** — strict multi-tenancy, NetworkPolicies you do not
    control, or teams that need their own collector config? `sidecar`. It is the only shape that
@@ -1875,28 +1875,34 @@ shard. Do it to test the sharded shape, or as the prerequisite for adding `tail_
 > page for your version before committing to it, and see
 > [what to do if Technology Preview is a blocker](#if-technology-preview-is-a-blocker) below.
 
-> **The exporter's config key differs between versions — check yours before debugging anything
-> else.** Upstream `metadata.yaml` currently declares `type: "load_balancing"`, while Red Hat's 3.10
-> documentation shows `loadbalancing:`. This document uses `load_balancing`; if your build wants the
-> other, the collector fails at startup naming it:
+> **The exporter's config key was renamed upstream — this document uses the name the Red Hat build
+> registers.** Verified against RHOSDT running collector **0.152.1**, where the type is
+> **`loadbalancing`** (no underscore), matching Red Hat's 3.10 documentation. Upstream contrib has
+> since renamed it to `load_balancing` (present in `metadata.yaml` by v0.158), so a newer build will
+> want the underscore. The collector names the key it rejected at startup:
 >
 > ```
-> error decoding 'exporters': unknown type: "load_balancing" for id: "load_balancing"
+> 'exporters' unknown type: "load_balancing" for id: "load_balancing"
+>     (valid values: [awsemf loadbalancing file debug otlp otlp_http otlphttp
+>      prometheusremotewrite kafka awsxray googlecloud otlp_grpc prometheus awscloudwatchlogs])
 > ```
 >
-> Swap the key and re-apply. Same class of version-dependent detail as
-> `otel_kafka_topic_style` and `otel_kafka_auth_style`.
+> **Note what that error does: it lists every valid type for your build.** Deliberately configuring
+> a bogus component name is the fastest way to enumerate what a collector actually ships — it works
+> for receivers and processors too, and beats guessing from documentation that may lead or lag the
+> binary. Same class of version-dependent detail as `otel_kafka_topic_style` and
+> `otel_kafka_auth_style`.
 
 The gateway stops producing traces to Kafka; the shards do it instead. Federated metrics stay on the
 gateway, because a `/federate` scrape has nothing to shard.
 
 A `deployment` is used as the tier in front here because this document already runs one and it is
-the right default — but a `daemonset` or `sidecar` can host `load_balancing` just as well. See
+the right default — but a `daemonset` or `sidecar` can host `loadbalancing` just as well. See
 [Choosing the tier in front of the shards](#choosing-the-tier-in-front-of-the-shards) if you are
 picking rather than following.
 
 ```
-apps ──OTLP──▶ otel (deployment)  ──load_balancing──┬──▶ otel-shard-0 ──┬─ kafka/traces
+apps ──OTLP──▶ otel (deployment)  ──loadbalancing──┬──▶ otel-shard-0 ──┬─ kafka/traces
                     │  routing_key: service         ├──▶ otel-shard-1 ──┤  spanmetrics
                     │                               └──▶ otel-shard-2 ──┴─ kafka/spanmetrics
                     └── prometheus/federate ─────────────────────────────── kafka/metrics
@@ -2022,7 +2028,7 @@ oc get endpointslice -n $OTEL_NAMESPACE -l kubernetes.io/service-name=otel-shard
 
 > **Why the headless Service and not per-pod DNS.** The operator does not set the StatefulSet's
 > `serviceName`, so `otel-shard-collector-0.otel-shard-collector-headless…` may not resolve. It does
-> not need to: the `load_balancing` exporter's DNS resolver reads the **A records of the headless
+> not need to: the `loadbalancing` exporter's DNS resolver reads the **A records of the headless
 > Service**, which list every ready pod IP, and a headless Service always publishes those. Stable
 > *identity* is what StatefulSet gives us here — stable per-pod *DNS* is not required.
 
@@ -2030,12 +2036,12 @@ oc get endpointslice -n $OTEL_NAMESPACE -l kubernetes.io/service-name=otel-shard
 
 Re-apply the collector from [Create the OpenTelemetryCollector](#create-the-opentelemetrycollector)
 with three changes: drop the `spanmetrics` connector, replace the `kafka/traces` and
-`kafka/spanmetrics` exporters with `load_balancing`, and point the `traces` pipeline at it. Leave the
+`kafka/spanmetrics` exporters with `loadbalancing`, and point the `traces` pipeline at it. Leave the
 `prometheus/federate` receiver and `kafka/metrics` exporter exactly as they are.
 
 ```yaml
     exporters:
-      load_balancing:
+      loadbalancing:
         routing_key: service
         protocol:
           otlp:
@@ -2053,7 +2059,7 @@ with three changes: drop the `spanmetrics` connector, replace the `kafka/traces`
         traces:
           receivers: [otlp]
           processors: [memory_limiter, k8sattributes, batch]
-          exporters: [load_balancing]
+          exporters: [loadbalancing]
         metrics/federated:
           receivers: [prometheus/federate]
           processors: [memory_limiter, batch]
@@ -2100,7 +2106,7 @@ oc rollout status deploy/otel-collector -n $OTEL_NAMESPACE --timeout=300s
 
 **The proportions should come back the same.** Consistent hashing puts each service on the same
 shard across gateway restarts; round-robin would reshuffle them. If the split changes materially,
-`routing_key` is not being applied — check the gateway's log for `load_balancing` resolver errors,
+`routing_key` is not being applied — check the gateway's log for `loadbalancing` resolver errors,
 and confirm the resolver hostname resolves from inside the gateway pod.
 
 #### 5. Confirm Kafka is still receiving
@@ -2128,7 +2134,7 @@ no backends.
 
 #### If Technology Preview is a blocker
 
-If a customer cannot take a Technology Preview dependency, `load_balancing` is off the table and so
+If a customer cannot take a Technology Preview dependency, `loadbalancing` is off the table and so
 is sharded tail sampling. Three fallbacks, worst to best:
 
 1. **Single-replica sampling collector.** `tail_sampling` on a `deployment` with `replicas: 1` is
