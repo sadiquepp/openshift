@@ -8,3 +8,5 @@ kafka-credentials.yml
 kafka-credentials.yml.vault
 *.pem
 ca.crt
+__pycache__/
+*.pyc
