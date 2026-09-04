@@ -184,7 +184,10 @@ timeout, giving fewer and larger Kafka records.
 | `daemonset` | yes, always | usually — an app pod sits on one node, so its spans consistently reach one collector | no |
 | `deployment` | yes, always | usually — OTLP/gRPC pins a client to one replica, but a reconnect or an HPA scale moves it | no, above 1 replica |
 | `sidecar` | yes, always | one series set per pod | no |
-| `statefulset` + `load_balancing` | yes, always | **deterministic** with `routing_key: service` | yes, with `routing_key: traceID` |
+| `statefulset` + `load_balancing` † | yes, always | **deterministic** with `routing_key: service` | yes, with `routing_key: traceID` |
+
+† `load_balancing` is **Technology Preview** in the Red Hat build — functional, but outside
+production SLAs. See [Topology B](#topology-b-shard-traces-across-a-statefulset).
 
 **Traces are correct in every mode.** A span is a self-contained record carrying its own `trace_id`
 and `parent_span_id`; the backend reassembles the tree no matter which collector produced it. That is
@@ -1860,6 +1863,30 @@ Instrumented workloads should send OTLP to:
 the gateway and onto a StatefulSet tier, with the gateway routing each service's spans to a fixed
 shard. Do it to test the sharded shape, or as the prerequisite for adding `tail_sampling` later.
 
+> **The Load Balancing Exporter is Technology Preview in the Red Hat build of OpenTelemetry.**
+> Red Hat's own documentation states it is *"not supported with Red Hat production service level
+> agreements"* and that Red Hat *"does not recommend using them in production"* — see
+> [Technology Preview Features Support Scope](https://access.redhat.com/support/offerings/techpreview/).
+>
+> That is a support judgement, not a functional one: the exporter is compiled into the distribution
+> and works. But it means **this topology cannot currently be recommended for a production customer
+> on RHOSDT**, and the tail-sampling design that depends on it inherits the same status. Check the
+> [Exporters](https://docs.redhat.com/en/documentation/red_hat_build_of_opentelemetry/3.10/html/configuring_the_collector/otel-collector-exporters#otel-exporters-load-balancing-exporter_otel-collector-exporters)
+> page for your version before committing to it, and see
+> [what to do if Technology Preview is a blocker](#if-technology-preview-is-a-blocker) below.
+
+> **The exporter's config key differs between versions — check yours before debugging anything
+> else.** Upstream `metadata.yaml` currently declares `type: "load_balancing"`, while Red Hat's 3.10
+> documentation shows `loadbalancing:`. This document uses `load_balancing`; if your build wants the
+> other, the collector fails at startup naming it:
+>
+> ```
+> error decoding 'exporters': unknown type: "load_balancing" for id: "load_balancing"
+> ```
+>
+> Swap the key and re-apply. Same class of version-dependent detail as
+> `otel_kafka_topic_style` and `otel_kafka_auth_style`.
+
 The gateway stops producing traces to Kafka; the shards do it instead. Federated metrics stay on the
 gateway, because a `/federate` scrape has nothing to shard.
 
@@ -2098,6 +2125,27 @@ then re-apply the original gateway from
 [Create the OpenTelemetryCollector](#create-the-opentelemetrycollector). Delete the shards **after**
 restoring the gateway, or the gateway spends the gap logging export failures against a resolver with
 no backends.
+
+#### If Technology Preview is a blocker
+
+If a customer cannot take a Technology Preview dependency, `load_balancing` is off the table and so
+is sharded tail sampling. Three fallbacks, worst to best:
+
+1. **Single-replica sampling collector.** `tail_sampling` on a `deployment` with `replicas: 1` is
+   correct — one instance sees every span, so no routing is needed. It works and needs no TP
+   component, but throughput is capped by one pod and it is a single point of failure. Viable for
+   modest trace volume; check whether `tail_sampling` itself is GA in your version, since it is a
+   contrib processor too.
+2. **Sample in the Kafka consumer.** Ship 100% of traces to the topic and let the backend or a
+   stream processor decide. Keeps every error by construction, and Kafka is already the durable
+   buffer — but you pay full trace volume through the broker, which forfeits the storage saving that
+   motivates sampling.
+3. **Head sampling in the SDK.** Supported everywhere and costs nothing downstream, but it decides
+   at the root span before anyone knows the trace will fail — so it **cannot** express "keep all
+   errors". Only appropriate if uniform reduction is acceptable.
+
+Option 2 is the one that preserves the actual requirement, and it fits this architecture: the topic
+already exists and already holds everything.
 
 #### What it costs
 
