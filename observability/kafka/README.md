@@ -15,15 +15,20 @@ follow start to finish without it.
 - [What is deliberately missing](#what-is-deliberately-missing)
 - [Collector topology](#collector-topology)
   - [The four modes](#the-four-modes)
+  - [How many Kafka producers each shape gives you](#how-many-kafka-producers-each-shape-gives-you)
+  - [Reaching an external broker from a stable address](#reaching-an-external-broker-from-a-stable-address)
   - [What is correct in which mode](#what-is-correct-in-which-mode)
+  - [Why the collector does not assemble traces](#why-the-collector-does-not-assemble-traces)
   - [The StatefulSet is not self-sufficient](#the-statefulset-is-not-self-sufficient)
   - [Choosing the tier in front of the shards](#choosing-the-tier-in-front-of-the-shards)
+  - [The two topologies in this document](#the-two-topologies-in-this-document)
 - [Pre-requisites](#pre-requisites)
   - [Variables](#variables)
 - [Install the Streams for Apache Kafka operator](#install-the-streams-for-apache-kafka-operator)
 - [Create the topics](#create-the-topics)
   - [Path A: an external Kafka cluster](#path-a-an-external-kafka-cluster)
   - [Path B: a lab broker on the cluster](#path-b-a-lab-broker-on-the-cluster)
+  - [What the partition count means downstream](#what-the-partition-count-means-downstream)
 - [Create the producer namespaces](#create-the-producer-namespaces)
 - [Create the client Secrets](#create-the-client-secrets)
 - [Logs](#logs)
@@ -177,6 +182,62 @@ mounted. On a 100-node cluster running 200 instrumented pods against 3 brokers:
 A gateway also batches better: it sees all the traffic, so batches fill on size rather than on the
 timeout, giving fewer and larger Kafka records.
 
+### Reaching an external broker from a stable address
+
+On Path A the broker is off-cluster, and whoever operates it will usually want a source allow-list.
+By default a pod's outbound traffic is SNAT'd to **the address of whatever node it happens to be
+running on**, so what the broker has to allow is not "the collector" — it is *every node that could
+ever schedule a producer*. That list is the whole cluster in practice, and it rots silently the next
+time a machine set scales or a node is replaced.
+
+**`EgressIP` fixes the source address instead of chasing the schedule.** It pins a stable address to
+a namespace, so everything leaving that namespace reaches the broker as one address whichever node
+the pod lands on. The five producers live in three namespaces, so the selector has to cover all
+three — a sketch, since Path B needs none of it:
+
+```yaml
+apiVersion: k8s.ovn.org/v1
+kind: EgressIP
+metadata:
+  name: observability-to-kafka
+spec:
+  egressIPs:
+  - 10.0.128.50
+  namespaceSelector:
+    matchExpressions:
+    - key: kubernetes.io/metadata.name
+      operator: In
+      values: [openshift-logging, netobserv, otel-collector]
+```
+
+The address must be assignable — free on the nodes' subnet, and on a node labelled
+`k8s.ovn.org/egress-assignable=""`. List two addresses and OVN spreads them over two nodes, which is
+worth doing: the broker then allow-lists two entries and survives losing one.
+
+**The cost is concentration, and it is the second reason to prefer few producers.** Every packet
+matching the selector leaves through the single node currently holding the address — its bandwidth,
+its conntrack table, and a reconnect for every producer when the address moves. The connection
+counts [above](#how-many-kafka-producers-each-shape-gives-you) stop being an abstraction there:
+
+| Mode | Connections funnelled through the egress node | On failover |
+|---|---|---|
+| `deployment` (2 replicas) | 6 | 6 producers reconnect |
+| `statefulset` (3, behind a gateway) | 9 | 9 |
+| `daemonset` | 300 | 300, at once |
+| `sidecar` | 600 | 600, at once |
+
+A gateway is not just tidier here; it is the difference between an egress node carrying six
+long-lived connections and one carrying six hundred that all re-establish together.
+
+Two things `EgressIP` is not:
+
+- **Not a NetworkPolicy.** It decides what the source address *looks like*; a policy decides whether
+  the packet is allowed out at all. Both have to be right, and they fail differently — see
+  [Let the flow processor out to the broker](#let-the-flow-processor-out-to-the-broker) for what the
+  policy failure looks like.
+- **Not relevant on Path B.** Traffic to an in-cluster broker never leaves the cluster network, so
+  it is never SNAT'd and no `EgressIP` applies to it.
+
 ### What is correct in which mode
 
 | | Traces | Span metrics | Tail sampling |
@@ -200,6 +261,49 @@ resources into a service-level series, or when one pod's stream is split mid-fli
 
 **Tail sampling is the hard requirement.** A sampling decision needs the whole trace, which only
 `traceID` routing to a stable backend can guarantee. Nothing here uses it today.
+
+### Why the collector does not assemble traces
+
+A recurring expectation, and getting it wrong moves work onto the wrong side of the topic. **No mode
+in the table above emits whole traces, and none of them can.**
+
+A collector pipeline is a stream of batches, not a store of traces. The `batch` processor fills on
+size or on a timeout and flushes whatever it is holding, and what it is holding is "the spans that
+arrived recently" — from every service that happened to send in that window. So a Kafka record is an
+arbitrary slice of the span stream, and the spans of one request are spread over several records,
+usually from several *producers*, because each service's spans arrive as that service finishes its
+part of the work.
+
+**There is no completion signal in OTLP.** A span is exported when it ends; nothing ever announces
+that a trace has no more spans coming. Anything wanting a whole trace therefore has to *guess* —
+hold spans keyed by `trace_id` and decide, after a timer, that the trace is probably finished. That
+timer is exactly what `tail_sampling`'s `decision_wait` is, and it buys three costs:
+
+| Cost | |
+|---|---|
+| Memory | every in-flight trace held for the whole wait, at full span fidelity |
+| Latency | nothing leaves for `decision_wait` after the trace's *first* span, not its last |
+| Placement | it works only if **every** span of a trace reaches the same instance — the `loadbalancing` requirement [above](#what-is-correct-in-which-mode) |
+
+And it is still an approximation: a span arriving after the timer fired is a late span, and the
+decision was taken without it.
+
+So the shape this document deploys is the honest one — **the collector forwards, the consumer
+joins.** Reassembly by `trace_id` is what a tracing backend does, and
+[`otlp-peek.py --group`](#decoding-the-protobuf-topics) does it from the topic alone to prove the
+export is intact. Three consequences for whoever writes the consumer:
+
+- A record is not a trace, and a *partition* is not a trace either — see
+  [What the partition count means downstream](#what-the-partition-count-means-downstream).
+- Joining needs a window, not a batch. Spans of one trace arrive seconds apart and out of order.
+- A trace read too early looks broken in a specific, recognisable way: several root spans naming
+  parents you have not read yet. That is the first row of the warning table under
+  [Decoding the protobuf topics](#decoding-the-protobuf-topics), and it is a reading artefact, not a
+  data loss.
+
+[Topology B](#topology-b-shard-traces-across-a-statefulset) is the one thing that changes this, and
+only on the cluster: sampling *requires* holding traces, which is why it needs shards and
+deterministic routing rather than simply more replicas.
 
 ### The StatefulSet is not self-sufficient
 
@@ -704,6 +808,54 @@ oc create secret generic kafka-admin-config -n $KAFKA_NAMESPACE \
 ```bash
 rm -f client.properties
 ```
+
+### What the partition count means downstream
+
+The `3` and `6` above are not only sizing. A partition is Kafka's unit of ordering **and** of
+consumer parallelism, and both are settled here, before a single record is written.
+
+**Ordering is per partition and nowhere else.** None of the five producers set a message key, so
+records are spread across partitions round-robin — which is what the flat per-partition rates in
+[Is it still flowing?](#is-it-still-flowing) confirm. Two log lines from one pod, a millisecond
+apart, routinely land on different partitions, and a consumer reading six partitions in parallel
+will see them in either order. A consumer that needs order has to sort on read, on the timestamp the
+record already carries:
+
+| Topic | Sort on |
+|---|---|
+| `cluster-logs` | `@timestamp` |
+| `network-flows` | `TimeFlowStartMs` |
+| `otlp-traces` | `startTimeUnixNano`, per span |
+| `otlp-spanmetrics`, `federated-metrics` | the data point's own timestamp |
+
+That is not a defect being tolerated. Total order across a topic means one partition, which means
+one consumer, one broker's disk and no parallelism at all — and for telemetry, where every record is
+timestamped at the source by thousands of pods on unsynchronised clocks, order of *arrival* was
+never the order you wanted.
+
+**Partition count is the ceiling on consumers.** Within one consumer group a partition is assigned
+to exactly one member, so six partitions on `cluster-logs` means at most six useful consumers;
+members beyond that are assigned nothing and idle. Three on the OTLP topics is sized for batches,
+which are far fewer and far larger records — see
+[What the numbers mean](#what-the-numbers-mean). Partitions can be added later — `kafka-topics.sh --alter --partitions` on Path A, raising
+`spec.partitions` on the `KafkaTopic` on Path B — but never removed, so the number to pick is the
+widest consumer you expect rather than the one you have.
+
+**Keying is the deliberate opt-out, and it costs the balance.** A message key sends every record
+carrying it to the same partition: per-key ordering, and locality for a consumer that has to see all
+of something at once. The OpenTelemetry `kafka` exporter can key traces on their `trace_id`, which
+puts a whole trace on one partition; whether your build has the setting is worth establishing with
+the same trick as the [`invalid keys` errors](#troubleshooting) — put a bogus key under the exporter
+and the collector's error names every valid one. The `ClusterLogForwarder` and `FlowCollector`
+outputs expose no key setting at all, so those two topics are round-robin whatever you decide.
+
+This deployment keys nothing, on purpose. A key is only as balanced as its distribution, and the
+obvious candidates are not: one chatty namespace becomes one partition carrying the whole topic's
+throughput, while the others idle. Traces are joined by `trace_id` at the consumer regardless
+([why](#why-the-collector-does-not-assemble-traces)), so keying them buys locality for a *stateful*
+consumer — a sampler, a correlator — and nothing at all for a backend that indexes what it is given.
+Key when a consumer genuinely needs everything about one trace or one pod on one member, and accept
+the skew that comes with it.
 
 ## Create the producer namespaces
 
@@ -2745,7 +2897,8 @@ excluded by default; `--exclude ''` keeps them.
 
 **To see a whole distributed trace, use `--group`.** Spans from one request are spread across
 several records — each service's collector batches and flushes independently — so a single record
-almost never holds a complete trace. `--group` reads many records, stitches spans back together by
+almost never holds a complete trace, and
+[never will by design](#why-the-collector-does-not-assemble-traces). `--group` reads many records, stitches spans back together by
 `trace_id`, and prints the largest traces first:
 
 ```bash
