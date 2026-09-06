@@ -2017,6 +2017,12 @@ the gateway and onto a StatefulSet tier, with the gateway routing each service's
 shard. Do it to test the sharded shape, or as the prerequisite for
 [tail sampling](#optional-tail-sampling-on-the-shards), which is built on top of it below.
 
+**Not doing this? Skip the whole section and jump to [Test workload](#test-workload).** Topology A
+is complete as it stands — the collector you just applied is already producing to all three topics,
+and everything from the test workload onwards (verification, reading records off the topics,
+troubleshooting, clean-up) is identical under either topology. Nothing below is a prerequisite for
+any of it.
+
 > **The Load Balancing Exporter is Technology Preview in the Red Hat build of OpenTelemetry.**
 > Red Hat's own documentation states it is *"not supported with Red Hat production service level
 > agreements"* and that Red Hat *"does not recommend using them in production"* — see
