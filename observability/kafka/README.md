@@ -3693,10 +3693,49 @@ and both metrics pipelines:
 > dangerous. Aggregate before you sample; sample only what you store.
 
 **3. The shards become samplers.** They keep the `otlp` receiver and the `kafka/traces` exporter
-from step 1 and drop the `spanmetrics` connector, the `kafka/spanmetrics` exporter and the
-`metrics/spanmetrics` pipeline with it. What replaces them:
+from [step 1](#1-create-the-shard-tier), and drop the `spanmetrics` connector, the
+`kafka/spanmetrics` exporter and the `metrics/spanmetrics` pipeline with it.
 
-```yaml
+**This is the whole file, not a patch.** Overwrite `otel-shard.yaml` with the block matching your
+path rather than editing the one from step 1. Deleting a pipeline by hand and leaving the components
+it referenced behind is the easy mistake here, and `spanmetrics` is the one that bites: a connector
+has to be used as an exporter on one pipeline *and* a receiver on another, so a half-removed one is
+a config the collector rejects at startup rather than quietly ignores.
+
+- **Path A** — an authenticated broker.
+
+```bash
+cat <<EOF > otel-shard.yaml
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: otel-shard
+  namespace: $OTEL_NAMESPACE
+spec:
+  mode: statefulset
+  replicas: 3
+  serviceAccount: otel-collector
+  env:
+  - name: KAFKA_USERNAME
+    valueFrom:
+      secretKeyRef: { name: kafka-sasl, key: username }
+  - name: KAFKA_PASSWORD
+    valueFrom:
+      secretKeyRef: { name: kafka-sasl, key: password }
+  volumes:
+  - name: kafka-ca
+    secret:
+      secretName: kafka-ca
+  volumeMounts:
+  - name: kafka-ca
+    mountPath: /etc/kafka-ca
+    readOnly: true
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
     processors:
       memory_limiter:
         check_interval: 1s
@@ -3732,17 +3771,109 @@ from step 1 and drop the `spanmetrics` connector, the `kafka/spanmetrics` export
           type: probabilistic
           probabilistic:
             sampling_percentage: 5
+    exporters:
+      kafka/traces:
+        brokers: ["$KAFKA_BOOTSTRAP"]
+        traces:
+          topic: $TOPIC_TRACES
+          encoding: otlp_proto
+        protocol_version: "3.5.0"
+        sending_queue: { enabled: true, num_consumers: 4, queue_size: 1000 }
+        auth:
+          tls:
+            ca_file: /etc/kafka-ca/ca.crt
+          sasl:
+            mechanism: $KAFKA_SASL_MECHANISM
+            username: \${env:KAFKA_USERNAME}
+            password: \${env:KAFKA_PASSWORD}
     service:
       pipelines:
         traces:
           receivers: [otlp]
           processors: [memory_limiter, tail_sampling, batch]
           exporters: [kafka/traces]
+EOF
+```
+
+- **Path B** — the plaintext lab broker. No `env`, no `volumes`, no `volumeMounts` and no `auth` on
+  the exporter; the processors, the policies and the pipeline are identical.
+
+```bash
+cat <<EOF > otel-shard.yaml
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: otel-shard
+  namespace: $OTEL_NAMESPACE
+spec:
+  mode: statefulset
+  replicas: 3
+  serviceAccount: otel-collector
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+    processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_percentage: 75          # was 50 - the sampler's working set is the point
+        spike_limit_percentage: 15
+      batch:
+        send_batch_size: 8192
+        send_batch_max_size: 16384
+        timeout: 5s
+      # Tail-based sampling - keep errors, slow requests, and baseline
+      tail_sampling:
+        decision_wait: 30s
+        num_traces: 100000
+        policies:
+        # 1. Always keep errors
+        - name: errors
+          type: status_code
+          status_code:
+            status_codes: [ERROR]
+        # 2. Always keep slow traces (> 50ms)
+        - name: slow-traces
+          type: latency
+          latency:
+            threshold_ms: 50
+        # 3. Keep traces from critical services at 100%
+        - name: critical-services
+          type: string_attribute
+          string_attribute:
+            key: service.name
+            values: [paymentservice, checkoutservice, emailservice]
+        # 4. Baseline: keep 5% of everything else
+        - name: baseline
+          type: probabilistic
+          probabilistic:
+            sampling_percentage: 5
+    exporters:
+      kafka/traces:
+        brokers: ["$KAFKA_BOOTSTRAP"]
+        traces:
+          topic: $TOPIC_TRACES
+          encoding: otlp_proto
+        protocol_version: "3.5.0"
+        sending_queue: { enabled: true, num_consumers: 4, queue_size: 1000 }
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, tail_sampling, batch]
+          exporters: [kafka/traces]
+EOF
 ```
 
 `memory_limiter` first and `batch` last, as always; `tail_sampling` goes between them. Batching
 before the sampler is work thrown away on traces about to be dropped, and batching after it keeps
 the Kafka records the same size they were.
+
+- Apply whichever you wrote. The operator rolls the StatefulSet one pod at a time, so the tier keeps
+  taking traffic throughout — the in-flight traces on a restarting shard are lost, which at
+  `decision_wait: 30s` is up to half a minute of undecided traces per pod.
 
 ```bash
 oc apply -f otel-shard.yaml
