@@ -3649,16 +3649,12 @@ was built for, and it is optional in the same way Topology B is.
 > support. If either tier is a blocker, [sampling in the Kafka consumer](#if-technology-preview-is-a-blocker)
 > gets you the same result with no preview component at all.
 
-**Three changes to the topology you just built.**
+**Three changes to the topology you just built.** The first two are both on the gateway and land in
+one file; the third replaces the shard tier.
 
 **1. The routing key changes to `traceID`.** In step 3 the gateway hashes on `service`, so a
 service's spans always reach one shard. A sampler needs the opposite: every span of *one trace* on
 one shard, whatever service produced it.
-
-```yaml
-      loadbalancing:
-        routing_key: traceID          # was: service
-```
 
 Everything a policy can express depends on this. `errors` matching "any span in the trace has status
 Error" is only true if the shard holds the whole trace — otherwise a shard judges a fragment,
@@ -3666,12 +3662,168 @@ decides it looks healthy, and drops the half of the trace where the failure was.
 threshold, which is measured across the trace, and for `critical-services`, which keeps a *trace*
 because one of its services is on the list.
 
-**2. `spanmetrics` moves back to the gateway**, ahead of the sampler. Relative to
-[Topology A](#create-the-opentelemetrycollector) the gateway then changes in exactly one way —
-`kafka/traces` becomes `loadbalancing` — and keeps its connector, its `kafka/spanmetrics` exporter
-and both metrics pipelines:
+**2. `spanmetrics` moves back to the gateway**, ahead of the sampler, and takes its
+`kafka/spanmetrics` exporter and `metrics/spanmetrics` pipeline back with it.
 
-```yaml
+> **RED metrics computed after a sampler describe the sample, not the service.** Leave `spanmetrics`
+> on the shards and it sees only what survived — a stream deliberately enriched with every error and
+> every slow request — so the error rate it publishes converges on something near 100% and the
+> latency histogram is weighted towards the tail. The numbers stay plausible, which is what makes it
+> dangerous. Aggregate before you sample; sample only what you store.
+
+**Both changes in one file.** Relative to [Topology A](#create-the-opentelemetrycollector) this
+gateway differs in exactly one way — `kafka/traces` has become `loadbalancing` — so the connector,
+the `kafka/spanmetrics` exporter and both metrics pipelines are back exactly as they were there.
+Relative to [step 3](#3-repoint-the-gateway) it re-adds all three and switches the routing key. As
+with the shards, take the whole block rather than editing the running config: it overwrites the
+`otel-collector-sharded.yaml` written in step 3 and leaves the Topology A `otel-collector.yaml`
+untouched, which is what [reverting](#reverting-the-shard-tier) restores.
+
+- **Path A** — an authenticated broker.
+
+```bash
+cat <<EOF > otel-collector-sharded.yaml
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: otel
+  namespace: $OTEL_NAMESPACE
+spec:
+  mode: deployment
+  replicas: 2
+  serviceAccount: otel-collector
+  env:
+  - name: KAFKA_USERNAME
+    valueFrom:
+      secretKeyRef: { name: kafka-sasl, key: username }
+  - name: KAFKA_PASSWORD
+    valueFrom:
+      secretKeyRef: { name: kafka-sasl, key: password }
+  volumes:
+  - name: kafka-ca
+    secret:
+      secretName: kafka-ca
+  volumeMounts:
+  - name: kafka-ca
+    mountPath: /etc/kafka-ca
+    readOnly: true
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+      prometheus/federate:
+        config:
+          scrape_configs:
+          - job_name: openshift-platform
+            scrape_interval: 30s
+            metrics_path: /federate
+            honor_labels: true
+            scheme: https
+            tls_config:
+              ca_file: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt
+              server_name: prometheus-k8s.openshift-monitoring.svc
+            authorization:
+              type: Bearer
+              credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+            params:
+              'match[]':
+              - '{__name__=~"cluster:.+"}'
+              - '{job="node-exporter",__name__=~"node_(cpu|memory|filesystem|network)_.+"}'
+              - '{job="kube-state-metrics",__name__=~"kube_(pod|deployment|node|namespace)_.+"}'
+              - '{job="etcd"}'
+              - '{__name__=~"apiserver_request_(total|duration_seconds_bucket)"}'
+            static_configs:
+            - targets: ['prometheus-k8s.openshift-monitoring.svc:9091']
+          - job_name: openshift-user-workload
+            scrape_interval: 30s
+            metrics_path: /federate
+            honor_labels: true
+            scheme: https
+            tls_config:
+              ca_file: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt
+              server_name: prometheus-user-workload.openshift-user-workload-monitoring.svc
+            authorization:
+              type: Bearer
+              credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+            params:
+              'match[]':
+              - '{namespace="$APP_NAMESPACE"}'
+            static_configs:
+            - targets: ['prometheus-user-workload.openshift-user-workload-monitoring.svc:9091']
+    processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_percentage: 50
+        spike_limit_percentage: 30
+      k8sattributes:
+        auth_type: serviceAccount
+        passthrough: false
+        extract:
+          metadata:
+          - k8s.namespace.name
+          - k8s.pod.name
+          - k8s.pod.uid
+          - k8s.node.name
+          - k8s.deployment.name
+      batch:
+        send_batch_size: 8192
+        send_batch_max_size: 16384
+        timeout: 5s
+    connectors:
+      spanmetrics:
+        metrics_flush_interval: 15s
+        histogram:
+          explicit:
+            buckets: [10ms, 50ms, 100ms, 250ms, 500ms, 1s, 5s]
+        dimensions:
+        - name: http.method
+        - name: http.status_code
+    exporters:
+      loadbalancing:
+        routing_key: traceID
+        protocol:
+          otlp:
+            tls:
+              insecure: true
+        resolver:
+          dns:
+            hostname: otel-shard-collector-headless.$OTEL_NAMESPACE.svc.cluster.local
+            port: 4317
+            interval: 5s
+      kafka/spanmetrics:
+        brokers: ["$KAFKA_BOOTSTRAP"]
+        metrics:
+          topic: $TOPIC_SPANMETRICS
+          encoding: otlp_proto
+        protocol_version: "3.5.0"
+        sending_queue: { enabled: true, num_consumers: 4, queue_size: 1000 }
+        retry_on_failure: { enabled: true, initial_interval: 5s, max_interval: 30s, max_elapsed_time: 300s }
+        auth:
+          tls:
+            ca_file: /etc/kafka-ca/ca.crt
+          sasl:
+            mechanism: $KAFKA_SASL_MECHANISM
+            username: \${env:KAFKA_USERNAME}
+            password: \${env:KAFKA_PASSWORD}
+      kafka/metrics:
+        brokers: ["$KAFKA_BOOTSTRAP"]
+        metrics:
+          topic: $TOPIC_METRICS
+          encoding: otlp_proto
+        protocol_version: "3.5.0"
+        sending_queue: { enabled: true, num_consumers: 4, queue_size: 1000 }
+        retry_on_failure: { enabled: true, initial_interval: 5s, max_interval: 30s, max_elapsed_time: 300s }
+        auth:
+          tls:
+            ca_file: /etc/kafka-ca/ca.crt
+          sasl:
+            mechanism: $KAFKA_SASL_MECHANISM
+            username: \${env:KAFKA_USERNAME}
+            password: \${env:KAFKA_PASSWORD}
     service:
       pipelines:
         traces:
@@ -3683,14 +3835,160 @@ and both metrics pipelines:
           processors: [memory_limiter, batch]
           exporters: [kafka/spanmetrics]
         metrics/federated:
-          # unchanged
+          receivers: [prometheus/federate]
+          processors: [memory_limiter, batch]
+          exporters: [kafka/metrics]
+EOF
 ```
 
-> **RED metrics computed after a sampler describe the sample, not the service.** Leave `spanmetrics`
-> on the shards and it sees only what survived — a stream deliberately enriched with every error and
-> every slow request — so the error rate it publishes converges on something near 100% and the
-> latency histogram is weighted towards the tail. The numbers stay plausible, which is what makes it
-> dangerous. Aggregate before you sample; sample only what you store.
+- **Path B** — the plaintext lab broker. No `env`, no `volumes`, no `volumeMounts`, and no `auth`
+  on either Kafka exporter. `loadbalancing` is identical on both paths — it addresses the shards,
+  not the broker.
+
+```bash
+cat <<EOF > otel-collector-sharded.yaml
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: otel
+  namespace: $OTEL_NAMESPACE
+spec:
+  mode: deployment
+  replicas: 2
+  serviceAccount: otel-collector
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+      prometheus/federate:
+        config:
+          scrape_configs:
+          - job_name: openshift-platform
+            scrape_interval: 30s
+            metrics_path: /federate
+            honor_labels: true
+            scheme: https
+            tls_config:
+              ca_file: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt
+              server_name: prometheus-k8s.openshift-monitoring.svc
+            authorization:
+              type: Bearer
+              credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+            params:
+              'match[]':
+              - '{__name__=~"cluster:.+"}'
+              - '{job="node-exporter",__name__=~"node_(cpu|memory|filesystem|network)_.+"}'
+              - '{job="kube-state-metrics",__name__=~"kube_(pod|deployment|node|namespace)_.+"}'
+              - '{job="etcd"}'
+              - '{__name__=~"apiserver_request_(total|duration_seconds_bucket)"}'
+            static_configs:
+            - targets: ['prometheus-k8s.openshift-monitoring.svc:9091']
+          - job_name: openshift-user-workload
+            scrape_interval: 30s
+            metrics_path: /federate
+            honor_labels: true
+            scheme: https
+            tls_config:
+              ca_file: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt
+              server_name: prometheus-user-workload.openshift-user-workload-monitoring.svc
+            authorization:
+              type: Bearer
+              credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+            params:
+              'match[]':
+              - '{namespace="$APP_NAMESPACE"}'
+            static_configs:
+            - targets: ['prometheus-user-workload.openshift-user-workload-monitoring.svc:9091']
+    processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_percentage: 50
+        spike_limit_percentage: 30
+      k8sattributes:
+        auth_type: serviceAccount
+        passthrough: false
+        extract:
+          metadata:
+          - k8s.namespace.name
+          - k8s.pod.name
+          - k8s.pod.uid
+          - k8s.node.name
+          - k8s.deployment.name
+      batch:
+        send_batch_size: 8192
+        send_batch_max_size: 16384
+        timeout: 5s
+    connectors:
+      spanmetrics:
+        metrics_flush_interval: 15s
+        histogram:
+          explicit:
+            buckets: [10ms, 50ms, 100ms, 250ms, 500ms, 1s, 5s]
+        dimensions:
+        - name: http.method
+        - name: http.status_code
+    exporters:
+      loadbalancing:
+        routing_key: traceID
+        protocol:
+          otlp:
+            tls:
+              insecure: true
+        resolver:
+          dns:
+            hostname: otel-shard-collector-headless.$OTEL_NAMESPACE.svc.cluster.local
+            port: 4317
+            interval: 5s
+      kafka/spanmetrics:
+        brokers: ["$KAFKA_BOOTSTRAP"]
+        metrics:
+          topic: $TOPIC_SPANMETRICS
+          encoding: otlp_proto
+        protocol_version: "3.5.0"
+        sending_queue: { enabled: true, num_consumers: 4, queue_size: 1000 }
+        retry_on_failure: { enabled: true, initial_interval: 5s, max_interval: 30s, max_elapsed_time: 300s }
+      kafka/metrics:
+        brokers: ["$KAFKA_BOOTSTRAP"]
+        metrics:
+          topic: $TOPIC_METRICS
+          encoding: otlp_proto
+        protocol_version: "3.5.0"
+        sending_queue: { enabled: true, num_consumers: 4, queue_size: 1000 }
+        retry_on_failure: { enabled: true, initial_interval: 5s, max_interval: 30s, max_elapsed_time: 300s }
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, k8sattributes, batch]
+          exporters: [loadbalancing, spanmetrics]
+        metrics/spanmetrics:
+          receivers: [spanmetrics]
+          processors: [memory_limiter, batch]
+          exporters: [kafka/spanmetrics]
+        metrics/federated:
+          receivers: [prometheus/federate]
+          processors: [memory_limiter, batch]
+          exporters: [kafka/metrics]
+EOF
+```
+
+- Apply whichever you wrote.
+
+```bash
+oc apply -f otel-collector-sharded.yaml
+oc rollout status deploy/otel-collector -n $OTEL_NAMESPACE --timeout=300s
+```
+
+**Apply this before step 3, not after.** Until the shards become samplers nothing is being dropped,
+so the gap between the two applies costs you only a minute of span metrics computed on the shards
+from `traceID`-routed spans — a service's spans now land on all three, so each publishes a partial
+series for it. Those are wrong and self-correct the moment step 3 removes the connector from the
+shards. Applying step 3 first inverts the trade: the shards would sample `service`-routed traces,
+judging fragments and dropping the halves that carried the failures, which does not self-correct.
 
 **3. The shards become samplers.** They keep the `otlp` receiver and the `kafka/traces` exporter
 from [step 1](#1-create-the-shard-tier), and drop the `spanmetrics` connector, the
