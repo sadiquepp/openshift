@@ -2097,6 +2097,10 @@ apps ──OTLP──▶ otel (deployment)  ──loadbalancing──┬──�
 Same Kafka exporters as the gateway had, plus the `spanmetrics` connector. **No `k8sattributes`** —
 the gateway already stamped those attributes onto the resource and they travel with the spans.
 
+Take the block that matches the path you followed.
+
+- **Path A** — an authenticated broker.
+
 ```bash
 cat <<EOF > otel-shard.yaml
 apiVersion: opentelemetry.io/v1beta1
@@ -2189,13 +2193,85 @@ spec:
 EOF
 ```
 
+- **Path B** — the plaintext lab broker. The shards produce to the same two topics the gateway did,
+  so the same removals apply: no `env`, no `volumes`, no `volumeMounts`, and no `auth` block on
+  either exporter. The receivers, processors, connector and both pipelines are unchanged.
+
+```bash
+cat <<EOF > otel-shard.yaml
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: otel-shard
+  namespace: $OTEL_NAMESPACE
+spec:
+  mode: statefulset
+  replicas: 3
+  serviceAccount: otel-collector
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+    processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_percentage: 50
+        spike_limit_percentage: 30
+      batch:
+        send_batch_size: 8192
+        send_batch_max_size: 16384
+        timeout: 5s
+    connectors:
+      spanmetrics:
+        metrics_flush_interval: 15s
+        histogram:
+          explicit:
+            buckets: [10ms, 50ms, 100ms, 250ms, 500ms, 1s, 5s]
+        dimensions:
+        - name: http.method
+        - name: http.status_code
+    exporters:
+      kafka/traces:
+        brokers: ["$KAFKA_BOOTSTRAP"]
+        traces:
+          topic: $TOPIC_TRACES
+          encoding: otlp_proto
+        protocol_version: "3.5.0"
+        sending_queue: { enabled: true, num_consumers: 4, queue_size: 1000 }
+      kafka/spanmetrics:
+        brokers: ["$KAFKA_BOOTSTRAP"]
+        metrics:
+          topic: $TOPIC_SPANMETRICS
+          encoding: otlp_proto
+        protocol_version: "3.5.0"
+        sending_queue: { enabled: true, num_consumers: 4, queue_size: 1000 }
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [kafka/traces, spanmetrics]
+        metrics/spanmetrics:
+          receivers: [spanmetrics]
+          processors: [memory_limiter, batch]
+          exporters: [kafka/spanmetrics]
+EOF
+```
+
+- Apply whichever you wrote.
+
 ```bash
 oc apply -f otel-shard.yaml
 oc rollout status statefulset/otel-shard-collector -n $OTEL_NAMESPACE --timeout=300s
 ```
 
-On Path B drop the `env`, `volumes`, `volumeMounts` and both `auth` blocks, exactly as in the
-gateway.
+The shards receive **gRPC only**. There is no `http` protocol block and no `prometheus/federate`
+receiver, because the only thing that ever connects to this tier is the gateway's `loadbalancing`
+exporter, which speaks OTLP/gRPC. Nothing else should reach it — pointing an application at the
+shards directly bypasses the hashing and hands you round-robin, which is
+[the failure mode that looks like success](#the-statefulset-is-not-self-sufficient).
 
 #### 2. Find the headless Service — do not assume its name
 
@@ -2218,12 +2294,137 @@ oc get endpointslice -n $OTEL_NAMESPACE -l kubernetes.io/service-name=otel-shard
 
 #### 3. Repoint the gateway
 
-Re-apply the collector from [Create the OpenTelemetryCollector](#create-the-opentelemetrycollector)
-with three changes: drop the `spanmetrics` connector, replace the `kafka/traces` and
-`kafka/spanmetrics` exporters with `loadbalancing`, and point the `traces` pipeline at it. Leave the
-`prometheus/federate` receiver and `kafka/metrics` exporter exactly as they are.
+Three changes to the collector from
+[Create the OpenTelemetryCollector](#create-the-opentelemetrycollector): drop the `spanmetrics`
+connector, replace the `kafka/traces` and `kafka/spanmetrics` exporters with a single
+`loadbalancing` exporter, and point the `traces` pipeline at it. The `prometheus/federate` receiver
+and the `kafka/metrics` exporter stay exactly as they are.
 
-```yaml
+**Do this only once the shards are Ready.** Between the gateway restarting and the shards accepting
+connections, the `loadbalancing` resolver has no backends and the gateway logs export failures for
+every batch.
+
+> **What this does to the gateway's Kafka connection — and what it does not.** The gateway held
+> three Kafka producers (`kafka/traces`, `kafka/spanmetrics`, `kafka/metrics`). After this step it
+> holds **one**. Spans leave the gateway as OTLP/gRPC to the shards, and the shards — not the
+> gateway — are what write `$TOPIC_TRACES` and `$TOPIC_SPANMETRICS`. Three consequences:
+>
+> - **The gateway is still a Kafka client, so keep its credentials.** `kafka/metrics` carries the
+>   `/federate` scrape, which has nothing to shard and never moves. On Path A that means the `env`,
+>   `volumes` and `volumeMounts` blocks and the `kafka-sasl` / `kafka-ca` Secrets all stay — do not
+>   strip them along with the trace exporters. This is the one thing people get wrong here: "the
+>   gateway stops producing to Kafka" is true of traces and span metrics only.
+> - **The gateway now has no direct path to the trace topics.** If every shard is unavailable, the
+>   `loadbalancing` sending queue is the only buffer in front of the applications; past it, spans
+>   are dropped and counted exactly as they would have been against an unreachable broker. There is
+>   no fallback to writing Kafka itself. Federated metrics are unaffected — that pipeline never
+>   touches the shards.
+> - **Ownership of the topic data moves.** The records on `$TOPIC_TRACES` are produced by three
+>   StatefulSet pods from here on, which is what
+>   [step 5](#5-confirm-kafka-is-still-receiving) re-checks.
+
+Two ways to make the change. **Option 1** if you kept `otel-collector.yaml` and want the file on
+disk to stay the source of truth; **Option 2** for a cluster you did not deploy from that file, or
+when you want the smallest possible diff against what is running. Both end at the same object.
+
+**Option 1 — re-apply the full resource.** Written to a new filename so the original
+`otel-collector.yaml` survives for [Reverting](#reverting).
+
+- **Path A** — an authenticated broker. Note the credential plumbing is still present, for
+  `kafka/metrics`.
+
+```bash
+cat <<EOF > otel-collector-sharded.yaml
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: otel
+  namespace: $OTEL_NAMESPACE
+spec:
+  mode: deployment
+  replicas: 2
+  serviceAccount: otel-collector
+  env:
+  - name: KAFKA_USERNAME
+    valueFrom:
+      secretKeyRef: { name: kafka-sasl, key: username }
+  - name: KAFKA_PASSWORD
+    valueFrom:
+      secretKeyRef: { name: kafka-sasl, key: password }
+  volumes:
+  - name: kafka-ca
+    secret:
+      secretName: kafka-ca
+  volumeMounts:
+  - name: kafka-ca
+    mountPath: /etc/kafka-ca
+    readOnly: true
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+      prometheus/federate:
+        config:
+          scrape_configs:
+          - job_name: openshift-platform
+            scrape_interval: 30s
+            metrics_path: /federate
+            honor_labels: true
+            scheme: https
+            tls_config:
+              ca_file: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt
+              server_name: prometheus-k8s.openshift-monitoring.svc
+            authorization:
+              type: Bearer
+              credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+            params:
+              'match[]':
+              - '{__name__=~"cluster:.+"}'
+              - '{job="node-exporter",__name__=~"node_(cpu|memory|filesystem|network)_.+"}'
+              - '{job="kube-state-metrics",__name__=~"kube_(pod|deployment|node|namespace)_.+"}'
+              - '{job="etcd"}'
+              - '{__name__=~"apiserver_request_(total|duration_seconds_bucket)"}'
+            static_configs:
+            - targets: ['prometheus-k8s.openshift-monitoring.svc:9091']
+          - job_name: openshift-user-workload
+            scrape_interval: 30s
+            metrics_path: /federate
+            honor_labels: true
+            scheme: https
+            tls_config:
+              ca_file: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt
+              server_name: prometheus-user-workload.openshift-user-workload-monitoring.svc
+            authorization:
+              type: Bearer
+              credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+            params:
+              'match[]':
+              - '{namespace="$APP_NAMESPACE"}'
+            static_configs:
+            - targets: ['prometheus-user-workload.openshift-user-workload-monitoring.svc:9091']
+    processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_percentage: 50
+        spike_limit_percentage: 30
+      k8sattributes:
+        auth_type: serviceAccount
+        passthrough: false
+        extract:
+          metadata:
+          - k8s.namespace.name
+          - k8s.pod.name
+          - k8s.pod.uid
+          - k8s.node.name
+          - k8s.deployment.name
+      batch:
+        send_batch_size: 8192
+        send_batch_max_size: 16384
+        timeout: 5s
     exporters:
       loadbalancing:
         routing_key: service
@@ -2237,7 +2438,20 @@ with three changes: drop the `spanmetrics` connector, replace the `kafka/traces`
             port: 4317
             interval: 5s
       kafka/metrics:
-        # unchanged
+        brokers: ["$KAFKA_BOOTSTRAP"]
+        metrics:
+          topic: $TOPIC_METRICS
+          encoding: otlp_proto
+        protocol_version: "3.5.0"
+        sending_queue: { enabled: true, num_consumers: 4, queue_size: 1000 }
+        retry_on_failure: { enabled: true, initial_interval: 5s, max_interval: 30s, max_elapsed_time: 300s }
+        auth:
+          tls:
+            ca_file: /etc/kafka-ca/ca.crt
+          sasl:
+            mechanism: $KAFKA_SASL_MECHANISM
+            username: \${env:KAFKA_USERNAME}
+            password: \${env:KAFKA_PASSWORD}
     service:
       pipelines:
         traces:
@@ -2248,11 +2462,230 @@ with three changes: drop the `spanmetrics` connector, replace the `kafka/traces`
           receivers: [prometheus/federate]
           processors: [memory_limiter, batch]
           exporters: [kafka/metrics]
+EOF
+```
+
+- **Path B** — the plaintext lab broker. Same resource with the `env`, `volumes`, `volumeMounts` and
+  the `auth` block on `kafka/metrics` removed. The `loadbalancing` exporter is identical on both
+  paths: it talks to the shards, not to the broker, so broker authentication never enters into it.
+
+```bash
+cat <<EOF > otel-collector-sharded.yaml
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: otel
+  namespace: $OTEL_NAMESPACE
+spec:
+  mode: deployment
+  replicas: 2
+  serviceAccount: otel-collector
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+      prometheus/federate:
+        config:
+          scrape_configs:
+          - job_name: openshift-platform
+            scrape_interval: 30s
+            metrics_path: /federate
+            honor_labels: true
+            scheme: https
+            tls_config:
+              ca_file: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt
+              server_name: prometheus-k8s.openshift-monitoring.svc
+            authorization:
+              type: Bearer
+              credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+            params:
+              'match[]':
+              - '{__name__=~"cluster:.+"}'
+              - '{job="node-exporter",__name__=~"node_(cpu|memory|filesystem|network)_.+"}'
+              - '{job="kube-state-metrics",__name__=~"kube_(pod|deployment|node|namespace)_.+"}'
+              - '{job="etcd"}'
+              - '{__name__=~"apiserver_request_(total|duration_seconds_bucket)"}'
+            static_configs:
+            - targets: ['prometheus-k8s.openshift-monitoring.svc:9091']
+          - job_name: openshift-user-workload
+            scrape_interval: 30s
+            metrics_path: /federate
+            honor_labels: true
+            scheme: https
+            tls_config:
+              ca_file: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt
+              server_name: prometheus-user-workload.openshift-user-workload-monitoring.svc
+            authorization:
+              type: Bearer
+              credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+            params:
+              'match[]':
+              - '{namespace="$APP_NAMESPACE"}'
+            static_configs:
+            - targets: ['prometheus-user-workload.openshift-user-workload-monitoring.svc:9091']
+    processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_percentage: 50
+        spike_limit_percentage: 30
+      k8sattributes:
+        auth_type: serviceAccount
+        passthrough: false
+        extract:
+          metadata:
+          - k8s.namespace.name
+          - k8s.pod.name
+          - k8s.pod.uid
+          - k8s.node.name
+          - k8s.deployment.name
+      batch:
+        send_batch_size: 8192
+        send_batch_max_size: 16384
+        timeout: 5s
+    exporters:
+      loadbalancing:
+        routing_key: service
+        protocol:
+          otlp:
+            tls:
+              insecure: true
+        resolver:
+          dns:
+            hostname: otel-shard-collector-headless.$OTEL_NAMESPACE.svc.cluster.local
+            port: 4317
+            interval: 5s
+      kafka/metrics:
+        brokers: ["$KAFKA_BOOTSTRAP"]
+        metrics:
+          topic: $TOPIC_METRICS
+          encoding: otlp_proto
+        protocol_version: "3.5.0"
+        sending_queue: { enabled: true, num_consumers: 4, queue_size: 1000 }
+        retry_on_failure: { enabled: true, initial_interval: 5s, max_interval: 30s, max_elapsed_time: 300s }
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, k8sattributes, batch]
+          exporters: [loadbalancing]
+        metrics/federated:
+          receivers: [prometheus/federate]
+          processors: [memory_limiter, batch]
+          exporters: [kafka/metrics]
+EOF
+```
+
+- Apply whichever you wrote.
+
+```bash
+oc apply -f otel-collector-sharded.yaml
+oc rollout status deploy/otel-collector -n $OTEL_NAMESPACE --timeout=300s
+```
+
+**Option 2 — patch the running gateway.** A JSON merge patch that removes the two trace exporters
+and the connector, adds `loadbalancing`, and rewrites the two pipelines it touches. It is
+path-agnostic: it names nothing that differs between Path A and Path B, so the same patch applies
+to either, and the credential blocks it does not mention are left alone.
+
+```bash
+cat <<EOF > gateway-sharded.patch.json
+{
+  "spec": {
+    "config": {
+      "connectors": null,
+      "exporters": {
+        "kafka/traces": null,
+        "kafka/spanmetrics": null,
+        "loadbalancing": {
+          "routing_key": "service",
+          "protocol": { "otlp": { "tls": { "insecure": true } } },
+          "resolver": {
+            "dns": {
+              "hostname": "otel-shard-collector-headless.$OTEL_NAMESPACE.svc.cluster.local",
+              "port": 4317,
+              "interval": "5s"
+            }
+          }
+        }
+      },
+      "service": {
+        "pipelines": {
+          "traces": {
+            "receivers": ["otlp"],
+            "processors": ["memory_limiter", "k8sattributes", "batch"],
+            "exporters": ["loadbalancing"]
+          },
+          "metrics/spanmetrics": null
+        }
+      }
+    }
+  }
+}
+EOF
 ```
 
 ```bash
+oc patch opentelemetrycollector otel -n $OTEL_NAMESPACE \
+  --type=merge -p "$(cat gateway-sharded.patch.json)"
 oc rollout status deploy/otel-collector -n $OTEL_NAMESPACE --timeout=300s
 ```
+
+Three things about that patch are worth understanding rather than copying:
+
+- **`null` is how a merge patch deletes a key.** `"kafka/traces": null` removes the exporter;
+  omitting it would leave it in place. `"connectors": null` drops the whole block, which is correct
+  here because `spanmetrics` was the only entry — `{"spanmetrics": null}` would work too and leave
+  an empty map behind. Same for the `metrics/spanmetrics` pipeline, which has nothing left to
+  receive from.
+- **A merge patch replaces arrays wholesale**, which is why the `traces` pipeline restates all
+  three processors instead of just the exporter list. Leave `processors` out and you would delete
+  `k8sattributes` — the one processor that
+  [must stay on the gateway](#choosing-the-tier-in-front-of-the-shards).
+- **This works because `spec.config` is structured in `v1beta1`.** On the older `v1alpha1` CRD
+  `config` is a single YAML *string*, and no merge patch can reach inside it; there, Option 1 is the
+  only route.
+
+Either way, confirm the object landed the way you meant before trusting the rollout. All three
+changes are visible in one read — two exporters left, no connectors, two pipelines:
+
+```bash
+oc get opentelemetrycollector otel -n $OTEL_NAMESPACE -o json | jq '{
+  exporters:  (.spec.config.exporters | keys),
+  connectors: (.spec.config.connectors // {} | keys),
+  pipelines:  (.spec.config.service.pipelines | keys)
+}'
+```
+
+```json
+{
+  "exporters": [
+    "kafka/metrics",
+    "loadbalancing"
+  ],
+  "connectors": [],
+  "pipelines": [
+    "metrics/federated",
+    "traces"
+  ]
+}
+```
+
+**`kafka/metrics` alone in `exporters` is the check that matters** — one Kafka producer where there
+were three, and `kafka/traces` gone means nothing on this pod writes the trace topic any more.
+
+Then read the log once. A `loadbalancing` exporter that cannot resolve its backends says so on
+startup, and this is the cheapest place to catch a wrong headless Service name from
+[step 2](#2-find-the-headless-service--do-not-assume-its-name):
+
+```bash
+oc logs -n $OTEL_NAMESPACE deploy/otel-collector --tail=40
+```
+
+Two settings in there decide the behaviour:
 
 - **`routing_key: service`** is the one that matters here — it hashes on the `service.name` resource
   attribute, so every span from `checkoutservice` reaches the same shard and that shard computes the
