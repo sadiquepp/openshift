@@ -56,13 +56,14 @@ follow start to finish without it.
 - [What verification does and does not establish](#what-verification-does-and-does-not-establish)
 - [What is on each topic](#what-is-on-each-topic)
 - [Troubleshooting](#troubleshooting)
-- [Topology B: shard traces across a StatefulSet](#topology-b-shard-traces-across-a-statefulset)
+- [Topology B: tail-sampled traces on a StatefulSet shard tier](#topology-b-tail-sampled-traces-on-a-statefulset-shard-tier)
   - [1. Create the shard tier](#1-create-the-shard-tier)
   - [2. Find the headless Service](#2-find-the-headless-service--do-not-assume-its-name)
   - [3. Repoint the gateway](#3-repoint-the-gateway)
-  - [4. Prove the routing is sticky](#4-prove-the-routing-is-sticky)
-  - [Optional: tail sampling on the shards](#optional-tail-sampling-on-the-shards)
-  - [Reverting the shard tier](#reverting-the-shard-tier)
+  - [4. Prove whole traces reach one shard](#4-prove-whole-traces-reach-one-shard)
+  - [5. Prove the sampler is deciding](#5-prove-the-sampler-is-deciding)
+  - [6. Confirm on Kafka](#6-confirm-on-kafka)
+  - [Reverting](#reverting)
 - [Clean up](#clean-up)
 
 > **Automated version.** Everything in this document is automated in
@@ -254,7 +255,7 @@ Two things `EgressIP` is not:
 | `statefulset` + `loadbalancing` † | yes, always | **deterministic** with `routing_key: service` | yes, with `routing_key: traceID` |
 
 † `loadbalancing` is **Technology Preview** in the Red Hat build — functional, but outside
-production SLAs. See [Topology B](#topology-b-shard-traces-across-a-statefulset).
+production SLAs. See [Topology B](#topology-b-tail-sampled-traces-on-a-statefulset-shard-tier).
 
 **Traces are correct in every mode.** A span is a self-contained record carrying its own `trace_id`
 and `parent_span_id`; the backend reassembles the tree no matter which collector produced it. That is
@@ -267,7 +268,7 @@ resources into a service-level series, or when one pod's stream is split mid-fli
 
 **Tail sampling is the hard requirement.** A sampling decision needs the whole trace, which only
 `traceID` routing to a stable backend can guarantee. Topology A cannot do it;
-[Topology B's optional sampler](#optional-tail-sampling-on-the-shards) is where it becomes possible.
+[Topology B](#topology-b-tail-sampled-traces-on-a-statefulset-shard-tier) is where it becomes possible.
 
 ### Why the collector does not assemble traces
 
@@ -308,7 +309,7 @@ export is intact. Three consequences for whoever writes the consumer:
   [Decoding the protobuf topics](#decoding-the-protobuf-topics), and it is a reading artefact, not a
   data loss.
 
-[Topology B](#topology-b-shard-traces-across-a-statefulset) is the one thing that changes this, and
+[Topology B](#topology-b-tail-sampled-traces-on-a-statefulset-shard-tier) is the one thing that changes this, and
 only on the cluster: sampling *requires* holding traces, which is why it needs shards and
 deterministic routing rather than simply more replicas.
 
@@ -367,7 +368,7 @@ Any of the other three modes can host the `loadbalancing` exporter. On the same 
 > attributed to the gateway's own pod — plausible-looking output, entirely wrong.
 >
 > So `k8sattributes` belongs on whatever the app connects to first, which is why
-> [Topology B](#topology-b-shard-traces-across-a-statefulset) keeps it on the gateway and the shard
+> [Topology B](#topology-b-tail-sampled-traces-on-a-statefulset-shard-tier) keeps it on the gateway and the shard
 > config has none. On a `sidecar` the source is `localhost` and IP resolution tells you nothing —
 > use the downward API there instead.
 
@@ -379,12 +380,12 @@ Any of the other three modes can host the `loadbalancing` exporter. On the same 
 | Where `spanmetrics` runs | on the gateway | on the shards, deterministically routed |
 | Pods | 2 | 2 + 3 |
 | Kafka producers | 2 | 3 (the gateway stops producing traces) |
-| Tail sampling possible | no | [yes](#optional-tail-sampling-on-the-shards) |
-| Section | [Create the OpenTelemetryCollector](#create-the-opentelemetrycollector) | [Topology B](#topology-b-shard-traces-across-a-statefulset) |
+| Tail sampling | no | **the reason it exists** |
+| Section | [Create the OpenTelemetryCollector](#create-the-opentelemetrycollector) | [Topology B](#topology-b-tail-sampled-traces-on-a-statefulset-shard-tier) |
 
 **Topology A is the default and the rest of this document assumes it.** Topology B is a bolt-on you
 can apply afterwards and revert, so it is the
-[last chapter](#topology-b-shard-traces-across-a-statefulset) — deploy the gateway, put traffic
+[last chapter](#topology-b-tail-sampled-traces-on-a-statefulset-shard-tier) — deploy the gateway, put traffic
 through it and verify the topics first, then change the shape of the trace path on a pipeline you
 already know works.
 
@@ -2022,7 +2023,7 @@ Instrumented workloads should send OTLP to:
 **That is the last producer**, and Topology A is complete: logs, flows, traces, span metrics and
 federated metrics all have something writing them. Continue to [Test workload](#test-workload) to
 give them traffic, then to [Verify](#verify). Sharding the trace path across a StatefulSet is
-[the last chapter](#topology-b-shard-traces-across-a-statefulset) of this document, deliberately
+[the last chapter](#topology-b-tail-sampled-traces-on-a-statefulset-shard-tier) of this document, deliberately
 after that verification.
 
 ## Test workload
@@ -2881,12 +2882,31 @@ directly. The two JSON topics are the ones a SIEM or an archival pipeline consum
 | Vector: `too old resource version ... reason: Expired, code: 410` | **Benign.** A Kubernetes watch fell behind and the reflector is re-listing; it retries and recovers on its own. It says nothing about whether logs are reaching the topic — check the `cluster-logs` offsets for that. |
 | `Observe → Network Traffic` shows no "Traffic flows" table | Expected. That table reads from Loki, and there is none. Overview and Topology still work. |
 
-## Topology B: shard traces across a StatefulSet
+## Topology B: tail-sampled traces on a StatefulSet shard tier
 
-**Optional, and applied on top of a working Topology A — the one you have just verified.** It moves
-the `spanmetrics` connector off the gateway and onto a StatefulSet tier, with the gateway routing
-each service's spans to a fixed shard. Do it to test the sharded shape, or as the prerequisite for
-[tail sampling](#optional-tail-sampling-on-the-shards), which is built on top of it below.
+**Optional, and applied on top of a working Topology A — the one you have just verified.** It adds a
+StatefulSet tier that holds each trace until it can see the whole thing, judges it against a policy
+set, and writes only what survives to `$TOPIC_TRACES`. The gateway keeps everything else it does.
+
+Topology A puts **100%** of traces on `otlp-traces`. That is the right default while you are proving
+the pipeline and the wrong one at volume — one page render of the [test workload](#test-workload) is
+two dozen spans, and the topic grows with request rate rather than with anything you will ever look
+at. The question is which traces you keep, and — the part that decides the whole architecture —
+**when you decide**.
+
+| | Head sampling (in the SDK) | Tail sampling (here) |
+|---|---|---|
+| Decides | at the root span, before the work happens | after the trace is complete |
+| Knows | the trace ID | every span, every status, the whole duration |
+| Can keep all errors | **no** — nothing has failed yet | yes |
+| Costs | nothing; the spans are never created | every span is created, sent, and buffered |
+| Saves | SDK CPU, network, broker and storage | **broker and storage only** |
+
+Head sampling at 5% throws away 95% of exactly the traces the stack exists to show. Tail sampling
+keeps them, and pays for it by moving the decision into a **stateful** component — one that has to
+hold every span of a trace before it can judge any of it. That is the whole reason for the shard
+tier: a gateway that merely forwarded to a StatefulSet would be Topology A with extra pods and a
+longer network path.
 
 **This chapter is last on purpose.** Everything above it — the topics, the three producers, the
 [test workload](#test-workload) and a [verification](#verify) that shows records landing on all five
@@ -2896,7 +2916,17 @@ chapter, that ordering is what tells you the sharding caused it rather than some
 working in the first place.
 
 Nothing earlier in the document depends on this chapter, and it is fully
-[revertible](#reverting-the-shard-tier).
+[revertible](#reverting).
+
+> **Two Technology Preview dependencies, not one.** `loadbalancing` is Technology Preview in the
+> Red Hat build — the note below; `tail_sampling` is a contrib processor whose own tier you should
+> check on the
+> [Processors](https://docs.redhat.com/en/documentation/red_hat_build_of_opentelemetry/3.10/html/configuring_the_collector/otel-collector-processors)
+> page for your version. It is *registered* on 0.152.1 — see
+> [What RHOSDT actually registers](#what-rhosdt-actually-registers) — which is availability, not
+> support. If either tier is a blocker,
+> [sampling in the Kafka consumer](#if-technology-preview-is-a-blocker) gets you the same result
+> with no preview component at all.
 
 > **The Load Balancing Exporter is Technology Preview in the Red Hat build of OpenTelemetry.**
 > Red Hat's own documentation states it is *"not supported with Red Hat production service level
@@ -2958,27 +2988,58 @@ One caution the same exercise exposed: the upstream distribution manifest on `ma
 `redaction` processor that this 0.152.1 build does **not** register. Reading component availability
 off a repository manifest tells you about `main`, not about what you are running.
 
-The gateway stops producing traces to Kafka; the shards do it instead. Federated metrics stay on the
-gateway, because a `/federate` scrape has nothing to shard.
+### What moves, and what deliberately does not
+
+Relative to [Topology A](#create-the-opentelemetrycollector) the gateway changes in **exactly one
+way** — its `kafka/traces` exporter becomes `loadbalancing` — and the shards take over producing
+traces. Everything else stays where it is, and each of those is a decision rather than an omission:
+
+| | Runs on | Why there |
+|---|---|---|
+| `k8sattributes` | the gateway | It resolves the **source IP of the incoming connection** to a pod. On the shards that IP is the gateway, so every span would be attributed to the gateway's own pod — plausible output, entirely wrong. |
+| `spanmetrics` → `kafka/spanmetrics` | the gateway | **Upstream of the sampler**, so RED metrics are computed on 100% of spans. |
+| `prometheus/federate` → `kafka/metrics` | the gateway | A `/federate` scrape has nothing to shard. |
+| `tail_sampling` → `kafka/traces` | the shards | The only stateful part, and the reason the tier exists. |
+
+> **RED metrics computed after a sampler describe the sample, not the service.** Move `spanmetrics`
+> onto the shards and it sees only what survived — a stream deliberately enriched with every error
+> and every slow request — so the error rate it publishes converges on something near 100% and the
+> latency histogram is weighted towards the tail. The numbers stay plausible, which is what makes it
+> dangerous. Aggregate before you sample; sample only what you store.
+
+```
+apps ──OTLP──▶ otel (deployment)  ──loadbalancing──┬──▶ otel-shard-0 ──┐
+                    │  routing_key: traceID         ├──▶ otel-shard-1 ──┼─ tail_sampling ──▶ kafka/traces
+                    │                               └──▶ otel-shard-2 ──┘
+                    ├── spanmetrics ─────────────────────────────────────────── kafka/spanmetrics
+                    └── prometheus/federate ────────────────────────────────────  kafka/metrics
+```
+
+**`routing_key: traceID` is what makes any of it correct.** Every policy below judges a *trace*, so
+a shard holding a fragment decides a fragment: an error in the half it did not see is dropped as
+healthy. Hashing on the trace ID is what guarantees each shard sees whole traces — and it is also
+why `spanmetrics` cannot live there, since that connector wants a *service*'s spans together
+instead. You cannot have both on one tier, which is the trade this topology makes: deterministic
+sampling on the shards, aggregation left upstream.
 
 A `deployment` is used as the tier in front here because this document already runs one and it is
 the right default — but a `daemonset` or `sidecar` can host `loadbalancing` just as well. See
 [Choosing the tier in front of the shards](#choosing-the-tier-in-front-of-the-shards) if you are
 picking rather than following.
 
-```
-apps ──OTLP──▶ otel (deployment)  ──loadbalancing──┬──▶ otel-shard-0 ──┬─ kafka/traces
-                    │  routing_key: service         ├──▶ otel-shard-1 ──┤  spanmetrics
-                    │                               └──▶ otel-shard-2 ──┴─ kafka/spanmetrics
-                    └── prometheus/federate ─────────────────────────────── kafka/metrics
-```
-
 ### 1. Create the shard tier
 
-Same Kafka exporters as the gateway had, plus the `spanmetrics` connector. **No `k8sattributes`** —
-the gateway already stamped those attributes onto the resource and they travel with the spans.
+The sampler. It takes the Kafka credentials and the `kafka/traces` exporter the gateway had, and
+adds nothing else: no `spanmetrics` connector, and **no `k8sattributes`** — the gateway already
+stamped those attributes onto the resource and they travel with the spans.
 
-Take the block that matches the path you followed.
+`memory_limiter` first and `batch` last, as always; `tail_sampling` goes between them. Batching
+before the sampler is work thrown away on traces about to be dropped, and batching after it keeps
+the Kafka records the same size they were. `limit_percentage` is 75 rather than the gateway's 50
+because the sampler's working set *is* the point — a 50% ceiling would refuse data during normal
+operation — and the explicit `resources.limits.memory` is what that percentage is a percentage
+**of**: with no limit on the container, the collector reads the node's memory instead and a shard
+can grow until the node evicts it.
 
 - **Path A** — an authenticated broker.
 
@@ -2993,6 +3054,13 @@ spec:
   mode: statefulset
   replicas: 3
   serviceAccount: otel-collector
+  resources:
+    requests:
+      cpu: 200m
+      memory: 1Gi
+    limits:
+      cpu: "1"
+      memory: 4Gi
   env:
   - name: KAFKA_USERNAME
     valueFrom:
@@ -3017,21 +3085,38 @@ spec:
     processors:
       memory_limiter:
         check_interval: 1s
-        limit_percentage: 50
-        spike_limit_percentage: 30
+        limit_percentage: 75          # was 50 - the sampler's working set is the point
+        spike_limit_percentage: 15
       batch:
         send_batch_size: 8192
         send_batch_max_size: 16384
         timeout: 5s
-    connectors:
-      spanmetrics:
-        metrics_flush_interval: 15s
-        histogram:
-          explicit:
-            buckets: [10ms, 50ms, 100ms, 250ms, 500ms, 1s, 5s]
-        dimensions:
-        - name: http.method
-        - name: http.status_code
+      # Tail-based sampling - keep errors, slow requests, and baseline
+      tail_sampling:
+        decision_wait: 30s
+        num_traces: 100000
+        policies:
+        # 1. Always keep errors
+        - name: errors
+          type: status_code
+          status_code:
+            status_codes: [ERROR]
+        # 2. Always keep slow traces (> 50ms)
+        - name: slow-traces
+          type: latency
+          latency:
+            threshold_ms: 50
+        # 3. Keep traces from critical services at 100%
+        - name: critical-services
+          type: string_attribute
+          string_attribute:
+            key: service.name
+            values: [paymentservice, checkoutservice, emailservice]
+        # 4. Baseline: keep 5% of everything else
+        - name: baseline
+          type: probabilistic
+          probabilistic:
+            sampling_percentage: 5
     exporters:
       kafka/traces:
         brokers: ["$KAFKA_BOOTSTRAP"]
@@ -3047,36 +3132,17 @@ spec:
             mechanism: $KAFKA_SASL_MECHANISM
             username: \${env:KAFKA_USERNAME}
             password: \${env:KAFKA_PASSWORD}
-      kafka/spanmetrics:
-        brokers: ["$KAFKA_BOOTSTRAP"]
-        metrics:
-          topic: $TOPIC_SPANMETRICS
-          encoding: otlp_proto
-        protocol_version: "3.5.0"
-        sending_queue: { enabled: true, num_consumers: 4, queue_size: 1000 }
-        auth:
-          tls:
-            ca_file: /etc/kafka-ca/ca.crt
-          sasl:
-            mechanism: $KAFKA_SASL_MECHANISM
-            username: \${env:KAFKA_USERNAME}
-            password: \${env:KAFKA_PASSWORD}
     service:
       pipelines:
         traces:
           receivers: [otlp]
-          processors: [memory_limiter, batch]
-          exporters: [kafka/traces, spanmetrics]
-        metrics/spanmetrics:
-          receivers: [spanmetrics]
-          processors: [memory_limiter, batch]
-          exporters: [kafka/spanmetrics]
+          processors: [memory_limiter, tail_sampling, batch]
+          exporters: [kafka/traces]
 EOF
 ```
 
-- **Path B** — the plaintext lab broker. The shards produce to the same two topics the gateway did,
-  so the same removals apply: no `env`, no `volumes`, no `volumeMounts`, and no `auth` block on
-  either exporter. The receivers, processors, connector and both pipelines are unchanged.
+- **Path B** — the plaintext lab broker. No `env`, no `volumes`, no `volumeMounts` and no `auth` on
+  the exporter; the processors, the policies and the pipeline are identical.
 
 ```bash
 cat <<EOF > otel-shard.yaml
@@ -3089,6 +3155,13 @@ spec:
   mode: statefulset
   replicas: 3
   serviceAccount: otel-collector
+  resources:
+    requests:
+      cpu: 200m
+      memory: 1Gi
+    limits:
+      cpu: "1"
+      memory: 4Gi
   config:
     receivers:
       otlp:
@@ -3098,21 +3171,38 @@ spec:
     processors:
       memory_limiter:
         check_interval: 1s
-        limit_percentage: 50
-        spike_limit_percentage: 30
+        limit_percentage: 75          # was 50 - the sampler's working set is the point
+        spike_limit_percentage: 15
       batch:
         send_batch_size: 8192
         send_batch_max_size: 16384
         timeout: 5s
-    connectors:
-      spanmetrics:
-        metrics_flush_interval: 15s
-        histogram:
-          explicit:
-            buckets: [10ms, 50ms, 100ms, 250ms, 500ms, 1s, 5s]
-        dimensions:
-        - name: http.method
-        - name: http.status_code
+      # Tail-based sampling - keep errors, slow requests, and baseline
+      tail_sampling:
+        decision_wait: 30s
+        num_traces: 100000
+        policies:
+        # 1. Always keep errors
+        - name: errors
+          type: status_code
+          status_code:
+            status_codes: [ERROR]
+        # 2. Always keep slow traces (> 50ms)
+        - name: slow-traces
+          type: latency
+          latency:
+            threshold_ms: 50
+        # 3. Keep traces from critical services at 100%
+        - name: critical-services
+          type: string_attribute
+          string_attribute:
+            key: service.name
+            values: [paymentservice, checkoutservice, emailservice]
+        # 4. Baseline: keep 5% of everything else
+        - name: baseline
+          type: probabilistic
+          probabilistic:
+            sampling_percentage: 5
     exporters:
       kafka/traces:
         brokers: ["$KAFKA_BOOTSTRAP"]
@@ -3121,38 +3211,67 @@ spec:
           encoding: otlp_proto
         protocol_version: "3.5.0"
         sending_queue: { enabled: true, num_consumers: 4, queue_size: 1000 }
-      kafka/spanmetrics:
-        brokers: ["$KAFKA_BOOTSTRAP"]
-        metrics:
-          topic: $TOPIC_SPANMETRICS
-          encoding: otlp_proto
-        protocol_version: "3.5.0"
-        sending_queue: { enabled: true, num_consumers: 4, queue_size: 1000 }
     service:
       pipelines:
         traces:
           receivers: [otlp]
-          processors: [memory_limiter, batch]
-          exporters: [kafka/traces, spanmetrics]
-        metrics/spanmetrics:
-          receivers: [spanmetrics]
-          processors: [memory_limiter, batch]
-          exporters: [kafka/spanmetrics]
+          processors: [memory_limiter, tail_sampling, batch]
+          exporters: [kafka/traces]
 EOF
 ```
 
-- Apply whichever you wrote.
+`memory_limiter` first and `batch` last, as always; `tail_sampling` goes between them. Batching
+before the sampler is work thrown away on traces about to be dropped, and batching after it keeps
+the Kafka records the same size they were.
+
+- Apply whichever you wrote. The operator rolls the StatefulSet one pod at a time, so the tier keeps
+  taking traffic throughout — the in-flight traces on a restarting shard are lost, which at
+  `decision_wait: 30s` is up to half a minute of undecided traces per pod.
 
 ```bash
 oc apply -f otel-shard.yaml
 oc rollout status statefulset/otel-shard-collector -n $OTEL_NAMESPACE --timeout=300s
 ```
 
-The shards receive **gRPC only**. There is no `http` protocol block and no `prometheus/federate`
-receiver, because the only thing that ever connects to this tier is the gateway's `loadbalancing`
-exporter, which speaks OTLP/gRPC. Nothing else should reach it — pointing an application at the
-shards directly bypasses the hashing and hands you round-robin, which is
-[the failure mode that looks like success](#the-statefulset-is-not-self-sufficient).
+**Policies are OR'd, never AND'd.** A trace is kept if *any* policy votes for it, and that is the
+whole trick behind "everything interesting plus 5% of the rest": `baseline` is evaluated against
+every trace, errors included, but an error trace has already been claimed by `errors`, so the 5%
+only ever decides the fate of the ordinary ones. Expressing this with nested `and` / `not`
+sub-policies is the standard way to get it wrong and silently drop errors.
+
+| Policy | Fires when | Worth knowing |
+|---|---|---|
+| `errors` | any span in the trace has status `ERROR` | Span *status*, set by the instrumentation — `otelhttp` and `otelgrpc` mark a span Error on a 5xx or a non-OK gRPC code. A handled exception recorded as a span event without a status change is invisible to it; add an `ottl_condition` policy on `name == "exception"` if your services do that. |
+| `slow-traces` | the trace spans more than 50ms, earliest start to latest end | Not the root span's own duration. **50ms is tuned to this workload** — Online Boutique renders a page in tens of milliseconds, so the threshold has to sit inside that range to claim a tail rather than nothing. It is the wrong number for a real service by an order of magnitude: start from your own p95 and raise it until the policy stops claiming most of your traffic. |
+| `critical-services` | any span carries `service.name` in the list | The policy matches resource attributes as well as span attributes, which is what makes `service.name` — a resource attribute — usable here. These three are the [test workload](#test-workload)'s own names, exactly as its `OTEL_SERVICE_NAME` values set them, and together they are the checkout path: every trace that touches money is kept whole. Matching is exact, so a typo shows up as a policy whose counter never leaves zero. |
+| `baseline` | 5% of everything, by hash of the trace ID | Deterministic on the trace ID, so it is 5% of *traces* rather than 5% of spans — every span of a kept trace is kept, which is the only useful meaning of the number. |
+
+> **Do not put `frontend` on that list.** It is on the entry path of essentially every request, so a
+> policy naming it keeps 100% of traces and turns the sampler off without appearing to. A
+> critical-services policy is only worth anything for services that appear on *some* traces — which
+> is why the three above are the checkout path and not the front door.
+
+
+**`decision_wait` and `num_traces` are the whole memory model.** The sampler has no way to know a
+trace is finished — [there is no completion signal in OTLP](#why-the-collector-does-not-assemble-traces) —
+so it holds each trace for `decision_wait` after its **first** span and then judges whatever it has.
+That has three consequences worth stating before you tune anything:
+
+- **The topic lags by `decision_wait`.** At 30s, a trace that happened now reaches `otlp-traces`
+  half a minute from now. Consumers that alert on traces need to know that; consumers that store
+  them do not care.
+- **`num_traces` has to cover the arrival rate for that whole window.** It is a per-instance bound
+  on traces held simultaneously, so it needs to be at least `new traces/sec × decision_wait`.
+  100000 over 30s carries about **3,300 new traces a second per shard**, so roughly 10,000/s across
+  three — comfortable for the test workload and a real number to check against your own rate.
+- **Exceeding it evicts the oldest trace undecided**, which is not the same as sampling it away.
+  `otelcol_processor_tail_sampling_sampling_trace_dropped_too_early` counts those, and anything
+  above zero means the policies never got to vote.
+
+That is where the manifest's `4Gi` comes from — on the order of a gigabyte per 100,000 short traces
+held, with `limit_percentage: 75` protecting it. `expected_new_traces_per_sec` can be added
+alongside `num_traces` as a pre-allocation hint if your build accepts it; it changes allocation
+behaviour, not the bound.
 
 ### 2. Find the headless Service — do not assume its name
 
@@ -3175,11 +3294,11 @@ oc get endpointslice -n $OTEL_NAMESPACE -l kubernetes.io/service-name=otel-shard
 
 ### 3. Repoint the gateway
 
-Three changes to the collector from
-[Create the OpenTelemetryCollector](#create-the-opentelemetrycollector): drop the `spanmetrics`
-connector, replace the `kafka/traces` and `kafka/spanmetrics` exporters with a single
-`loadbalancing` exporter, and point the `traces` pipeline at it. The `prometheus/federate` receiver
-and the `kafka/metrics` exporter stay exactly as they are.
+One change to the collector from
+[Create the OpenTelemetryCollector](#create-the-opentelemetrycollector): the `kafka/traces` exporter
+becomes a `loadbalancing` exporter, and the `traces` pipeline exports to it *and* to the
+`spanmetrics` connector as before. The connector, the `kafka/spanmetrics` exporter, the
+`prometheus/federate` receiver and the `kafka/metrics` exporter are all untouched.
 
 **Do this only once the shards are Ready.** Between the gateway restarting and the shards accepting
 connections, the `loadbalancing` resolver has no backends and the gateway logs export failures for
@@ -3187,497 +3306,30 @@ every batch.
 
 > **What this does to the gateway's Kafka connection — and what it does not.** The gateway held
 > three Kafka producers (`kafka/traces`, `kafka/spanmetrics`, `kafka/metrics`). After this step it
-> holds **one**. Spans leave the gateway as OTLP/gRPC to the shards, and the shards — not the
-> gateway — are what write `$TOPIC_TRACES` and `$TOPIC_SPANMETRICS`. Three consequences:
+> holds **two**. Spans leave the gateway as OTLP/gRPC to the shards, and the shards — not the
+> gateway — are what write `$TOPIC_TRACES`. Three consequences:
 >
-> - **The gateway is still a Kafka client, so keep its credentials.** `kafka/metrics` carries the
->   `/federate` scrape, which has nothing to shard and never moves. On Path A that means the `env`,
->   `volumes` and `volumeMounts` blocks and the `kafka-sasl` / `kafka-ca` Secrets all stay — do not
->   strip them along with the trace exporters. This is the one thing people get wrong here: "the
->   gateway stops producing to Kafka" is true of traces and span metrics only.
-> - **The gateway now has no direct path to the trace topics.** If every shard is unavailable, the
+> - **The gateway is still a Kafka client, so keep its credentials.** Two of its three producers
+>   never move: `kafka/spanmetrics` carries RED metrics that must be computed before sampling, and
+>   `kafka/metrics` carries the `/federate` scrape, which has nothing to shard. On Path A that means
+>   the `env`, `volumes` and `volumeMounts` blocks and the `kafka-sasl` / `kafka-ca` Secrets all
+>   stay. "The gateway stops producing to Kafka" is true of traces and nothing else.
+> - **The gateway now has no direct path to the trace topic.** If every shard is unavailable, the
 >   `loadbalancing` sending queue is the only buffer in front of the applications; past it, spans
 >   are dropped and counted exactly as they would have been against an unreachable broker. There is
->   no fallback to writing Kafka itself. Federated metrics are unaffected — that pipeline never
->   touches the shards.
-> - **Ownership of the topic data moves.** The records on `$TOPIC_TRACES` are produced by three
->   StatefulSet pods from here on, which is what
->   [step 5](#5-confirm-kafka-is-still-receiving) re-checks.
+>   no fallback to writing Kafka itself. Span metrics and federated metrics are unaffected — neither
+>   pipeline touches the shards.
+> - **Ownership of the trace topic moves.** The records on `$TOPIC_TRACES` are produced by three
+>   StatefulSet pods from here on, and they are a *sample*, which is what
+>   [step 6](#6-confirm-on-kafka) re-checks.
 
 Two ways to make the change. **Option 1** if you kept `otel-collector.yaml` and want the file on
 disk to stay the source of truth; **Option 2** for a cluster you did not deploy from that file, or
 when you want the smallest possible diff against what is running. Both end at the same object.
 
 **Option 1 — re-apply the full resource.** Written to a new filename so the original
-`otel-collector.yaml` survives for [Reverting](#reverting-the-shard-tier).
-
-- **Path A** — an authenticated broker. Note the credential plumbing is still present, for
-  `kafka/metrics`.
-
-```bash
-cat <<EOF > otel-collector-sharded.yaml
-apiVersion: opentelemetry.io/v1beta1
-kind: OpenTelemetryCollector
-metadata:
-  name: otel
-  namespace: $OTEL_NAMESPACE
-spec:
-  mode: deployment
-  replicas: 2
-  serviceAccount: otel-collector
-  env:
-  - name: KAFKA_USERNAME
-    valueFrom:
-      secretKeyRef: { name: kafka-sasl, key: username }
-  - name: KAFKA_PASSWORD
-    valueFrom:
-      secretKeyRef: { name: kafka-sasl, key: password }
-  volumes:
-  - name: kafka-ca
-    secret:
-      secretName: kafka-ca
-  volumeMounts:
-  - name: kafka-ca
-    mountPath: /etc/kafka-ca
-    readOnly: true
-  config:
-    receivers:
-      otlp:
-        protocols:
-          grpc:
-            endpoint: 0.0.0.0:4317
-          http:
-            endpoint: 0.0.0.0:4318
-      prometheus/federate:
-        config:
-          scrape_configs:
-          - job_name: openshift-platform
-            scrape_interval: 30s
-            metrics_path: /federate
-            honor_labels: true
-            scheme: https
-            tls_config:
-              ca_file: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt
-              server_name: prometheus-k8s.openshift-monitoring.svc
-            authorization:
-              type: Bearer
-              credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
-            params:
-              'match[]':
-              - '{__name__=~"cluster:.+"}'
-              - '{job="node-exporter",__name__=~"node_(cpu|memory|filesystem|network)_.+"}'
-              - '{job="kube-state-metrics",__name__=~"kube_(pod|deployment|node|namespace)_.+"}'
-              - '{job="etcd"}'
-              - '{__name__=~"apiserver_request_(total|duration_seconds_bucket)"}'
-            static_configs:
-            - targets: ['prometheus-k8s.openshift-monitoring.svc:9091']
-          - job_name: openshift-user-workload
-            scrape_interval: 30s
-            metrics_path: /federate
-            honor_labels: true
-            scheme: https
-            tls_config:
-              ca_file: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt
-              server_name: prometheus-user-workload.openshift-user-workload-monitoring.svc
-            authorization:
-              type: Bearer
-              credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
-            params:
-              'match[]':
-              - '{namespace="$APP_NAMESPACE"}'
-            static_configs:
-            - targets: ['prometheus-user-workload.openshift-user-workload-monitoring.svc:9091']
-    processors:
-      memory_limiter:
-        check_interval: 1s
-        limit_percentage: 50
-        spike_limit_percentage: 30
-      k8sattributes:
-        auth_type: serviceAccount
-        passthrough: false
-        extract:
-          metadata:
-          - k8s.namespace.name
-          - k8s.pod.name
-          - k8s.pod.uid
-          - k8s.node.name
-          - k8s.deployment.name
-      batch:
-        send_batch_size: 8192
-        send_batch_max_size: 16384
-        timeout: 5s
-    exporters:
-      loadbalancing:
-        routing_key: service
-        protocol:
-          otlp:
-            tls:
-              insecure: true
-        resolver:
-          dns:
-            hostname: otel-shard-collector-headless.$OTEL_NAMESPACE.svc.cluster.local
-            port: 4317
-            interval: 5s
-      kafka/metrics:
-        brokers: ["$KAFKA_BOOTSTRAP"]
-        metrics:
-          topic: $TOPIC_METRICS
-          encoding: otlp_proto
-        protocol_version: "3.5.0"
-        sending_queue: { enabled: true, num_consumers: 4, queue_size: 1000 }
-        retry_on_failure: { enabled: true, initial_interval: 5s, max_interval: 30s, max_elapsed_time: 300s }
-        auth:
-          tls:
-            ca_file: /etc/kafka-ca/ca.crt
-          sasl:
-            mechanism: $KAFKA_SASL_MECHANISM
-            username: \${env:KAFKA_USERNAME}
-            password: \${env:KAFKA_PASSWORD}
-    service:
-      pipelines:
-        traces:
-          receivers: [otlp]
-          processors: [memory_limiter, k8sattributes, batch]
-          exporters: [loadbalancing]
-        metrics/federated:
-          receivers: [prometheus/federate]
-          processors: [memory_limiter, batch]
-          exporters: [kafka/metrics]
-EOF
-```
-
-- **Path B** — the plaintext lab broker. Same resource with the `env`, `volumes`, `volumeMounts` and
-  the `auth` block on `kafka/metrics` removed. The `loadbalancing` exporter is identical on both
-  paths: it talks to the shards, not to the broker, so broker authentication never enters into it.
-
-```bash
-cat <<EOF > otel-collector-sharded.yaml
-apiVersion: opentelemetry.io/v1beta1
-kind: OpenTelemetryCollector
-metadata:
-  name: otel
-  namespace: $OTEL_NAMESPACE
-spec:
-  mode: deployment
-  replicas: 2
-  serviceAccount: otel-collector
-  config:
-    receivers:
-      otlp:
-        protocols:
-          grpc:
-            endpoint: 0.0.0.0:4317
-          http:
-            endpoint: 0.0.0.0:4318
-      prometheus/federate:
-        config:
-          scrape_configs:
-          - job_name: openshift-platform
-            scrape_interval: 30s
-            metrics_path: /federate
-            honor_labels: true
-            scheme: https
-            tls_config:
-              ca_file: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt
-              server_name: prometheus-k8s.openshift-monitoring.svc
-            authorization:
-              type: Bearer
-              credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
-            params:
-              'match[]':
-              - '{__name__=~"cluster:.+"}'
-              - '{job="node-exporter",__name__=~"node_(cpu|memory|filesystem|network)_.+"}'
-              - '{job="kube-state-metrics",__name__=~"kube_(pod|deployment|node|namespace)_.+"}'
-              - '{job="etcd"}'
-              - '{__name__=~"apiserver_request_(total|duration_seconds_bucket)"}'
-            static_configs:
-            - targets: ['prometheus-k8s.openshift-monitoring.svc:9091']
-          - job_name: openshift-user-workload
-            scrape_interval: 30s
-            metrics_path: /federate
-            honor_labels: true
-            scheme: https
-            tls_config:
-              ca_file: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt
-              server_name: prometheus-user-workload.openshift-user-workload-monitoring.svc
-            authorization:
-              type: Bearer
-              credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
-            params:
-              'match[]':
-              - '{namespace="$APP_NAMESPACE"}'
-            static_configs:
-            - targets: ['prometheus-user-workload.openshift-user-workload-monitoring.svc:9091']
-    processors:
-      memory_limiter:
-        check_interval: 1s
-        limit_percentage: 50
-        spike_limit_percentage: 30
-      k8sattributes:
-        auth_type: serviceAccount
-        passthrough: false
-        extract:
-          metadata:
-          - k8s.namespace.name
-          - k8s.pod.name
-          - k8s.pod.uid
-          - k8s.node.name
-          - k8s.deployment.name
-      batch:
-        send_batch_size: 8192
-        send_batch_max_size: 16384
-        timeout: 5s
-    exporters:
-      loadbalancing:
-        routing_key: service
-        protocol:
-          otlp:
-            tls:
-              insecure: true
-        resolver:
-          dns:
-            hostname: otel-shard-collector-headless.$OTEL_NAMESPACE.svc.cluster.local
-            port: 4317
-            interval: 5s
-      kafka/metrics:
-        brokers: ["$KAFKA_BOOTSTRAP"]
-        metrics:
-          topic: $TOPIC_METRICS
-          encoding: otlp_proto
-        protocol_version: "3.5.0"
-        sending_queue: { enabled: true, num_consumers: 4, queue_size: 1000 }
-        retry_on_failure: { enabled: true, initial_interval: 5s, max_interval: 30s, max_elapsed_time: 300s }
-    service:
-      pipelines:
-        traces:
-          receivers: [otlp]
-          processors: [memory_limiter, k8sattributes, batch]
-          exporters: [loadbalancing]
-        metrics/federated:
-          receivers: [prometheus/federate]
-          processors: [memory_limiter, batch]
-          exporters: [kafka/metrics]
-EOF
-```
-
-- Apply whichever you wrote.
-
-```bash
-oc apply -f otel-collector-sharded.yaml
-oc rollout status deploy/otel-collector -n $OTEL_NAMESPACE --timeout=300s
-```
-
-**Option 2 — patch the running gateway.** A JSON merge patch that removes the two trace exporters
-and the connector, adds `loadbalancing`, and rewrites the two pipelines it touches. It is
-path-agnostic: it names nothing that differs between Path A and Path B, so the same patch applies
-to either, and the credential blocks it does not mention are left alone.
-
-```bash
-cat <<EOF > gateway-sharded.patch.json
-{
-  "spec": {
-    "config": {
-      "connectors": null,
-      "exporters": {
-        "kafka/traces": null,
-        "kafka/spanmetrics": null,
-        "loadbalancing": {
-          "routing_key": "service",
-          "protocol": { "otlp": { "tls": { "insecure": true } } },
-          "resolver": {
-            "dns": {
-              "hostname": "otel-shard-collector-headless.$OTEL_NAMESPACE.svc.cluster.local",
-              "port": 4317,
-              "interval": "5s"
-            }
-          }
-        }
-      },
-      "service": {
-        "pipelines": {
-          "traces": {
-            "receivers": ["otlp"],
-            "processors": ["memory_limiter", "k8sattributes", "batch"],
-            "exporters": ["loadbalancing"]
-          },
-          "metrics/spanmetrics": null
-        }
-      }
-    }
-  }
-}
-EOF
-```
-
-```bash
-oc patch opentelemetrycollector otel -n $OTEL_NAMESPACE \
-  --type=merge -p "$(cat gateway-sharded.patch.json)"
-oc rollout status deploy/otel-collector -n $OTEL_NAMESPACE --timeout=300s
-```
-
-Three things about that patch are worth understanding rather than copying:
-
-- **`null` is how a merge patch deletes a key.** `"kafka/traces": null` removes the exporter;
-  omitting it would leave it in place. `"connectors": null` drops the whole block, which is correct
-  here because `spanmetrics` was the only entry — `{"spanmetrics": null}` would work too and leave
-  an empty map behind. Same for the `metrics/spanmetrics` pipeline, which has nothing left to
-  receive from.
-- **A merge patch replaces arrays wholesale**, which is why the `traces` pipeline restates all
-  three processors instead of just the exporter list. Leave `processors` out and you would delete
-  `k8sattributes` — the one processor that
-  [must stay on the gateway](#choosing-the-tier-in-front-of-the-shards).
-- **This works because `spec.config` is structured in `v1beta1`.** On the older `v1alpha1` CRD
-  `config` is a single YAML *string*, and no merge patch can reach inside it; there, Option 1 is the
-  only route.
-
-Either way, confirm the object landed the way you meant before trusting the rollout. All three
-changes are visible in one read — two exporters left, no connectors, two pipelines:
-
-```bash
-oc get opentelemetrycollector otel -n $OTEL_NAMESPACE -o json | jq '{
-  exporters:  (.spec.config.exporters | keys),
-  connectors: (.spec.config.connectors // {} | keys),
-  pipelines:  (.spec.config.service.pipelines | keys)
-}'
-```
-
-```json
-{
-  "exporters": [
-    "kafka/metrics",
-    "loadbalancing"
-  ],
-  "connectors": [],
-  "pipelines": [
-    "metrics/federated",
-    "traces"
-  ]
-}
-```
-
-**`kafka/metrics` alone in `exporters` is the check that matters** — one Kafka producer where there
-were three, and `kafka/traces` gone means nothing on this pod writes the trace topic any more.
-
-Then read the log once. A `loadbalancing` exporter that cannot resolve its backends says so on
-startup, and this is the cheapest place to catch a wrong headless Service name from
-[step 2](#2-find-the-headless-service--do-not-assume-its-name):
-
-```bash
-oc logs -n $OTEL_NAMESPACE deploy/otel-collector --tail=40
-```
-
-Two settings in there decide the behaviour:
-
-- **`routing_key: service`** is the one that matters here — it hashes on the `service.name` resource
-  attribute, so every span from `checkoutservice` reaches the same shard and that shard computes the
-  complete RED metrics for it. Use `traceID` instead if you are adding
-  [tail sampling](#optional-tail-sampling-on-the-shards), which needs whole traces rather than whole
-  services. You cannot have both on one tier.
-- `tls: insecure: true` is collector-to-collector inside the cluster. Give the shards a serving
-  certificate and point `ca_file` at it if that hop has to be encrypted.
-
-### 4. Prove the routing is sticky
-
-This is the test worth running, because sharding that silently degrades to round-robin looks
-identical from the topic. Sample each shard's accepted spans over a minute:
-
-```bash
-sample() {
-  for i in 0 1 2; do
-    oc port-forward -n $OTEL_NAMESPACE pod/otel-shard-collector-$i 8888:8888 >/dev/null 2>&1 &
-    sleep 2
-    printf 'shard %s %s\n' "$i" "$(curl -s localhost:8888/metrics \
-      | awk '/^otelcol_receiver_accepted_spans/ {s+=$2} END {print s+0}')"
-    kill %1 2>/dev/null; wait %1 2>/dev/null
-  done
-}
-sample > /tmp/shards-1; sleep 60; sample > /tmp/shards-2
-join /tmp/shards-1 /tmp/shards-2 -j 2 | awk '{printf "shard %s  +%d spans/min\n", $1, $5-$3}'
-```
-
-Expect an **uneven** split — with a handful of services hashed across three shards, even is the
-suspicious answer. Then restart the gateway and repeat:
-
-```bash
-oc rollout restart deploy/otel-collector -n $OTEL_NAMESPACE
-oc rollout status deploy/otel-collector -n $OTEL_NAMESPACE --timeout=300s
-```
-
-**The proportions should come back the same.** Consistent hashing puts each service on the same
-shard across gateway restarts; round-robin would reshuffle them. If the split changes materially,
-`routing_key` is not being applied — check the gateway's log for `loadbalancing` resolver errors,
-and confirm the resolver hostname resolves from inside the gateway pod.
-
-### 5. Confirm Kafka is still receiving
-
-The producers changed; the topics did not.
-
-```bash
-oc delete job kafka-verify-topics -n $KAFKA_NAMESPACE --ignore-not-found
-```
-
-Re-run the [verify Job](#verify). `otlp-traces` and `otlp-spanmetrics` should keep advancing — now
-written by the shards rather than the gateway — and `federated-metrics` should be unaffected, since
-that pipeline never moved.
-
-### Optional: tail sampling on the shards
-
-Everything so far puts **100%** of traces on `otlp-traces`. That is the right default while you are
-proving the pipeline and the wrong one at volume — one page render of the
-[test workload](#test-workload) is two dozen spans, and the topic grows with request rate rather
-than with anything you will ever look at. The question is which traces you keep, and — the part that
-decides the architecture — **when you decide**.
-
-| | Head sampling (in the SDK) | Tail sampling (here) |
-|---|---|---|
-| Decides | at the root span, before the work happens | after the trace is complete |
-| Knows | the trace ID | every span, every status, the whole duration |
-| Can keep all errors | **no** — nothing has failed yet | yes |
-| Costs | nothing; the spans are never created | every span is created, sent, and buffered |
-| Saves | SDK CPU, network, broker and storage | **broker and storage only** |
-
-Head sampling at 5% throws away 95% of exactly the traces the stack exists to show. Tail sampling
-keeps them, and pays for it by moving the decision into a stateful component — which is what the
-shard tier is for. This is the payoff [Topology B](#topology-b-shard-traces-across-a-statefulset)
-was built for, and it is optional in the same way Topology B is.
-
-> **Two Technology Preview dependencies now, not one.** `loadbalancing` is Technology Preview in
-> the Red Hat build; `tail_sampling` is a contrib processor whose own tier you should check on the
-> [Processors](https://docs.redhat.com/en/documentation/red_hat_build_of_opentelemetry/3.10/html/configuring_the_collector/otel-collector-processors)
-> page for your version. It is *registered* on 0.152.1 — see
-> [What RHOSDT actually registers](#what-rhosdt-actually-registers) — which is availability, not
-> support. If either tier is a blocker, [sampling in the Kafka consumer](#if-technology-preview-is-a-blocker)
-> gets you the same result with no preview component at all.
-
-**Three changes to the topology you just built.** The first two are both on the gateway and land in
-one file; the third replaces the shard tier.
-
-**1. The routing key changes to `traceID`.** In step 3 the gateway hashes on `service`, so a
-service's spans always reach one shard. A sampler needs the opposite: every span of *one trace* on
-one shard, whatever service produced it.
-
-Everything a policy can express depends on this. `errors` matching "any span in the trace has status
-Error" is only true if the shard holds the whole trace — otherwise a shard judges a fragment,
-decides it looks healthy, and drops the half of the trace where the failure was. Same for a latency
-threshold, which is measured across the trace, and for `critical-services`, which keeps a *trace*
-because one of its services is on the list.
-
-**2. `spanmetrics` moves back to the gateway**, ahead of the sampler, and takes its
-`kafka/spanmetrics` exporter and `metrics/spanmetrics` pipeline back with it.
-
-> **RED metrics computed after a sampler describe the sample, not the service.** Leave `spanmetrics`
-> on the shards and it sees only what survived — a stream deliberately enriched with every error and
-> every slow request — so the error rate it publishes converges on something near 100% and the
-> latency histogram is weighted towards the tail. The numbers stay plausible, which is what makes it
-> dangerous. Aggregate before you sample; sample only what you store.
-
-**Both changes in one file.** Relative to [Topology A](#create-the-opentelemetrycollector) this
-gateway differs in exactly one way — `kafka/traces` has become `loadbalancing` — so the connector,
-the `kafka/spanmetrics` exporter and both metrics pipelines are back exactly as they were there.
-Relative to [step 3](#3-repoint-the-gateway) it re-adds all three and switches the routing key. As
-with the shards, take the whole block rather than editing the running config: it overwrites the
-`otel-collector-sharded.yaml` written in step 3 and leaves the Topology A `otel-collector.yaml`
-untouched, which is what [reverting](#reverting-the-shard-tier) restores.
+`otel-collector.yaml` survives for [Reverting](#reverting). Relative to Topology A exactly one
+exporter differs, so take the whole block rather than editing the running config.
 
 - **Path A** — an authenticated broker.
 
@@ -3983,244 +3635,158 @@ oc apply -f otel-collector-sharded.yaml
 oc rollout status deploy/otel-collector -n $OTEL_NAMESPACE --timeout=300s
 ```
 
-**Apply this before step 3, not after.** Until the shards become samplers nothing is being dropped,
-so the gap between the two applies costs you only a minute of span metrics computed on the shards
-from `traceID`-routed spans — a service's spans now land on all three, so each publishes a partial
-series for it. Those are wrong and self-correct the moment step 3 removes the connector from the
-shards. Applying step 3 first inverts the trade: the shards would sample `service`-routed traces,
-judging fragments and dropping the halves that carried the failures, which does not self-correct.
-
-**3. The shards become samplers.** They keep the `otlp` receiver and the `kafka/traces` exporter
-from [step 1](#1-create-the-shard-tier), and drop the `spanmetrics` connector, the
-`kafka/spanmetrics` exporter and the `metrics/spanmetrics` pipeline with it.
-
-**This is the whole file, not a patch.** Overwrite `otel-shard.yaml` with the block matching your
-path rather than editing the one from step 1. Deleting a pipeline by hand and leaving the components
-it referenced behind is the easy mistake here, and `spanmetrics` is the one that bites: a connector
-has to be used as an exporter on one pipeline *and* a receiver on another, so a half-removed one is
-a config the collector rejects at startup rather than quietly ignores.
-
-- **Path A** — an authenticated broker.
+**Option 2 — patch the running gateway.** A JSON merge patch that removes the trace exporter, adds
+`loadbalancing`, and rewrites the one pipeline it touches. It is path-agnostic: it names nothing
+that differs between Path A and Path B, so the same patch applies to either, and the credential
+blocks it does not mention are left alone.
 
 ```bash
-cat <<EOF > otel-shard.yaml
-apiVersion: opentelemetry.io/v1beta1
-kind: OpenTelemetryCollector
-metadata:
-  name: otel-shard
-  namespace: $OTEL_NAMESPACE
-spec:
-  mode: statefulset
-  replicas: 3
-  serviceAccount: otel-collector
-  env:
-  - name: KAFKA_USERNAME
-    valueFrom:
-      secretKeyRef: { name: kafka-sasl, key: username }
-  - name: KAFKA_PASSWORD
-    valueFrom:
-      secretKeyRef: { name: kafka-sasl, key: password }
-  volumes:
-  - name: kafka-ca
-    secret:
-      secretName: kafka-ca
-  volumeMounts:
-  - name: kafka-ca
-    mountPath: /etc/kafka-ca
-    readOnly: true
-  config:
-    receivers:
-      otlp:
-        protocols:
-          grpc:
-            endpoint: 0.0.0.0:4317
-    processors:
-      memory_limiter:
-        check_interval: 1s
-        limit_percentage: 75          # was 50 - the sampler's working set is the point
-        spike_limit_percentage: 15
-      batch:
-        send_batch_size: 8192
-        send_batch_max_size: 16384
-        timeout: 5s
-      # Tail-based sampling - keep errors, slow requests, and baseline
-      tail_sampling:
-        decision_wait: 30s
-        num_traces: 100000
-        policies:
-        # 1. Always keep errors
-        - name: errors
-          type: status_code
-          status_code:
-            status_codes: [ERROR]
-        # 2. Always keep slow traces (> 50ms)
-        - name: slow-traces
-          type: latency
-          latency:
-            threshold_ms: 50
-        # 3. Keep traces from critical services at 100%
-        - name: critical-services
-          type: string_attribute
-          string_attribute:
-            key: service.name
-            values: [paymentservice, checkoutservice, emailservice]
-        # 4. Baseline: keep 5% of everything else
-        - name: baseline
-          type: probabilistic
-          probabilistic:
-            sampling_percentage: 5
-    exporters:
-      kafka/traces:
-        brokers: ["$KAFKA_BOOTSTRAP"]
-        traces:
-          topic: $TOPIC_TRACES
-          encoding: otlp_proto
-        protocol_version: "3.5.0"
-        sending_queue: { enabled: true, num_consumers: 4, queue_size: 1000 }
-        auth:
-          tls:
-            ca_file: /etc/kafka-ca/ca.crt
-          sasl:
-            mechanism: $KAFKA_SASL_MECHANISM
-            username: \${env:KAFKA_USERNAME}
-            password: \${env:KAFKA_PASSWORD}
-    service:
-      pipelines:
-        traces:
-          receivers: [otlp]
-          processors: [memory_limiter, tail_sampling, batch]
-          exporters: [kafka/traces]
+cat <<EOF > gateway-sharded.patch.json
+{
+  "spec": {
+    "config": {
+      "exporters": {
+        "kafka/traces": null,
+        "loadbalancing": {
+          "routing_key": "traceID",
+          "protocol": { "otlp": { "tls": { "insecure": true } } },
+          "resolver": {
+            "dns": {
+              "hostname": "otel-shard-collector-headless.$OTEL_NAMESPACE.svc.cluster.local",
+              "port": 4317,
+              "interval": "5s"
+            }
+          }
+        }
+      },
+      "service": {
+        "pipelines": {
+          "traces": {
+            "receivers": ["otlp"],
+            "processors": ["memory_limiter", "k8sattributes", "batch"],
+            "exporters": ["loadbalancing", "spanmetrics"]
+          }
+        }
+      }
+    }
+  }
+}
 EOF
 ```
 
-- **Path B** — the plaintext lab broker. No `env`, no `volumes`, no `volumeMounts` and no `auth` on
-  the exporter; the processors, the policies and the pipeline are identical.
-
 ```bash
-cat <<EOF > otel-shard.yaml
-apiVersion: opentelemetry.io/v1beta1
-kind: OpenTelemetryCollector
-metadata:
-  name: otel-shard
-  namespace: $OTEL_NAMESPACE
-spec:
-  mode: statefulset
-  replicas: 3
-  serviceAccount: otel-collector
-  config:
-    receivers:
-      otlp:
-        protocols:
-          grpc:
-            endpoint: 0.0.0.0:4317
-    processors:
-      memory_limiter:
-        check_interval: 1s
-        limit_percentage: 75          # was 50 - the sampler's working set is the point
-        spike_limit_percentage: 15
-      batch:
-        send_batch_size: 8192
-        send_batch_max_size: 16384
-        timeout: 5s
-      # Tail-based sampling - keep errors, slow requests, and baseline
-      tail_sampling:
-        decision_wait: 30s
-        num_traces: 100000
-        policies:
-        # 1. Always keep errors
-        - name: errors
-          type: status_code
-          status_code:
-            status_codes: [ERROR]
-        # 2. Always keep slow traces (> 50ms)
-        - name: slow-traces
-          type: latency
-          latency:
-            threshold_ms: 50
-        # 3. Keep traces from critical services at 100%
-        - name: critical-services
-          type: string_attribute
-          string_attribute:
-            key: service.name
-            values: [paymentservice, checkoutservice, emailservice]
-        # 4. Baseline: keep 5% of everything else
-        - name: baseline
-          type: probabilistic
-          probabilistic:
-            sampling_percentage: 5
-    exporters:
-      kafka/traces:
-        brokers: ["$KAFKA_BOOTSTRAP"]
-        traces:
-          topic: $TOPIC_TRACES
-          encoding: otlp_proto
-        protocol_version: "3.5.0"
-        sending_queue: { enabled: true, num_consumers: 4, queue_size: 1000 }
-    service:
-      pipelines:
-        traces:
-          receivers: [otlp]
-          processors: [memory_limiter, tail_sampling, batch]
-          exporters: [kafka/traces]
-EOF
+oc patch opentelemetrycollector otel -n $OTEL_NAMESPACE \
+  --type=merge -p "$(cat gateway-sharded.patch.json)"
+oc rollout status deploy/otel-collector -n $OTEL_NAMESPACE --timeout=300s
 ```
 
-`memory_limiter` first and `batch` last, as always; `tail_sampling` goes between them. Batching
-before the sampler is work thrown away on traces about to be dropped, and batching after it keeps
-the Kafka records the same size they were.
+Three things about that patch are worth understanding rather than copying:
 
-- Apply whichever you wrote. The operator rolls the StatefulSet one pod at a time, so the tier keeps
-  taking traffic throughout — the in-flight traces on a restarting shard are lost, which at
-  `decision_wait: 30s` is up to half a minute of undecided traces per pod.
+- **`null` is how a merge patch deletes a key.** `"kafka/traces": null` removes the exporter;
+  omitting it would leave it defined, and a defined-but-unreferenced exporter is merely dead weight
+  rather than an error. Nothing else is deleted here — the connector and both metrics pipelines stay
+  exactly as Topology A left them.
+- **A merge patch replaces arrays wholesale**, which is why the `traces` pipeline restates all three
+  processors and both exporters instead of just the one that changed. Leave `processors` out and you
+  would delete `k8sattributes` — the one processor that
+  [must stay on the gateway](#choosing-the-tier-in-front-of-the-shards). Leave `spanmetrics` out of
+  `exporters` and you would silently stop computing RED metrics.
+- **This works because `spec.config` is structured in `v1beta1`.** On the older `v1alpha1` CRD
+  `config` is a single YAML *string*, and no merge patch can reach inside it; there, Option 1 is the
+  only route.
+
+Either way, confirm the object landed the way you meant before trusting the rollout. The change is
+visible in one read — `loadbalancing` present, `kafka/traces` gone, the connector and all three
+pipelines intact:
 
 ```bash
-oc apply -f otel-shard.yaml
-oc rollout status statefulset/otel-shard-collector -n $OTEL_NAMESPACE --timeout=300s
+oc get opentelemetrycollector otel -n $OTEL_NAMESPACE -o json | jq '{
+  exporters:  (.spec.config.exporters | keys),
+  connectors: (.spec.config.connectors // {} | keys),
+  pipelines:  (.spec.config.service.pipelines | keys)
+}'
 ```
 
-**Policies are OR'd, never AND'd.** A trace is kept if *any* policy votes for it, and that is the
-whole trick behind "everything interesting plus 5% of the rest": `baseline` is evaluated against
-every trace, errors included, but an error trace has already been claimed by `errors`, so the 5%
-only ever decides the fate of the ordinary ones. Expressing this with nested `and` / `not`
-sub-policies is the standard way to get it wrong and silently drop errors.
+```json
+{
+  "exporters": [
+    "kafka/metrics",
+    "kafka/spanmetrics",
+    "loadbalancing"
+  ],
+  "connectors": [
+    "spanmetrics"
+  ],
+  "pipelines": [
+    "metrics/federated",
+    "metrics/spanmetrics",
+    "traces"
+  ]
+}
+```
 
-| Policy | Fires when | Worth knowing |
-|---|---|---|
-| `errors` | any span in the trace has status `ERROR` | Span *status*, set by the instrumentation — `otelhttp` and `otelgrpc` mark a span Error on a 5xx or a non-OK gRPC code. A handled exception recorded as a span event without a status change is invisible to it; add an `ottl_condition` policy on `name == "exception"` if your services do that. |
-| `slow-traces` | the trace spans more than 50ms, earliest start to latest end | Not the root span's own duration. **50ms is tuned to this workload** — Online Boutique renders a page in tens of milliseconds, so the threshold has to sit inside that range to claim a tail rather than nothing. It is the wrong number for a real service by an order of magnitude: start from your own p95 and raise it until the policy stops claiming most of your traffic. |
-| `critical-services` | any span carries `service.name` in the list | The policy matches resource attributes as well as span attributes, which is what makes `service.name` — a resource attribute — usable here. These three are the [test workload](#test-workload)'s own names, exactly as its `OTEL_SERVICE_NAME` values set them, and together they are the checkout path: every trace that touches money is kept whole. Matching is exact, so a typo shows up as a policy whose counter never leaves zero. |
-| `baseline` | 5% of everything, by hash of the trace ID | Deterministic on the trace ID, so it is 5% of *traces* rather than 5% of spans — every span of a kept trace is kept, which is the only useful meaning of the number. |
+**`kafka/traces` gone while `kafka/spanmetrics` stays is the check that matters** — nothing on this
+pod writes the trace topic any more, and RED metrics are still being computed here, on every span,
+ahead of the sampler.
 
-> **Do not put `frontend` on that list.** It is on the entry path of essentially every request, so a
-> policy naming it keeps 100% of traces and turns the sampler off without appearing to. A
-> critical-services policy is only worth anything for services that appear on *some* traces — which
-> is why the three above are the checkout path and not the front door.
+Then read the log once. A `loadbalancing` exporter that cannot resolve its backends says so on
+startup, and this is the cheapest place to catch a wrong headless Service name from
+[step 2](#2-find-the-headless-service--do-not-assume-its-name):
 
+```bash
+oc logs -n $OTEL_NAMESPACE deploy/otel-collector --tail=40
+```
 
-**`decision_wait` and `num_traces` are the whole memory model.** The sampler has no way to know a
-trace is finished — [there is no completion signal in OTLP](#why-the-collector-does-not-assemble-traces) —
-so it holds each trace for `decision_wait` after its **first** span and then judges whatever it has.
-That has three consequences worth stating before you tune anything:
+`tls: insecure: true` on the `loadbalancing` protocol is collector-to-collector inside the cluster.
+Give the shards a serving certificate and point `ca_file` at it if that hop has to be encrypted.
 
-- **The topic lags by `decision_wait`.** At 30s, a trace that happened now reaches `otlp-traces`
-  half a minute from now. Consumers that alert on traces need to know that; consumers that store
-  them do not care.
-- **`num_traces` has to cover the arrival rate for that whole window.** It is a per-instance bound
-  on traces held simultaneously, so it needs to be at least `new traces/sec × decision_wait`.
-  100000 over 30s carries about **3,300 new traces a second per shard**, so roughly 10,000/s across
-  three — comfortable for the test workload and a real number to check against your own rate.
-- **Exceeding it evicts the oldest trace undecided**, which is not the same as sampling it away.
-  `otelcol_processor_tail_sampling_sampling_trace_dropped_too_early` counts those, and anything
-  above zero means the policies never got to vote.
+### 4. Prove whole traces reach one shard
 
-Budget memory to match: on the order of a gigabyte per 100,000 short traces held, so give the shards
-a limit in the low gigabytes rather than the megabytes a forwarding-only collector needs, and let
-`limit_percentage: 75` protect it. `expected_new_traces_per_sec` can be added alongside `num_traces`
-as a pre-allocation hint if your build accepts it; it changes allocation behaviour, not the bound.
+This is the test worth running, because routing that silently degrades to round-robin looks almost
+identical from the outside — and under `routing_key: traceID` it cannot be caught by looking at the
+load split, since random trace IDs and round-robin both spread evenly. Two checks, in order.
+
+**The load split, which only rules out the gross failure.** Sample each shard's accepted spans over
+a minute:
+
+```bash
+sample() {
+  for i in 0 1 2; do
+    oc port-forward -n $OTEL_NAMESPACE pod/otel-shard-collector-$i 8888:8888 >/dev/null 2>&1 &
+    sleep 2
+    printf 'shard %s %s\n' "$i" "$(curl -s localhost:8888/metrics \
+      | awk '/^otelcol_receiver_accepted_spans/ {s+=$2} END {print s+0}')"
+    kill %1 2>/dev/null; wait %1 2>/dev/null
+  done
+}
+sample > /tmp/shards-1; sleep 60; sample > /tmp/shards-2
+join /tmp/shards-1 /tmp/shards-2 -j 2 | awk '{printf "shard %s  +%d spans/min\n", $1, $5-$3}'
+```
+
+Expect an **even** split — trace IDs are uniformly random, so each shard should see about a third.
+A shard at zero, or a persistent two-way split across three pods, means the resolver is finding
+fewer backends than you think: check the gateway's log for `loadbalancing` resolver errors and
+confirm the headless hostname resolves from inside the gateway pod.
+
+**Trace completeness, which is the check that actually matters.** If the hash were not being
+applied, each shard would receive a slice of every trace, judge a fragment, and emit fragments. Read
+the topic back:
+
+```bash
+python3 tools/otlp-peek.py --bootstrap $KAFKA_BOOTSTRAP --topic $TOPIC_TRACES \
+  --max 500 --group --min-spans 3
+```
+
+Sampled traces should come back **whole** — a single root, and no `[!]` warning about root spans
+naming parents that are not in the records read. One such warning at a low `--max` is a reading
+artefact ([the first row here](#decoding-the-protobuf-topics)); *most* traces warning at a high
+`--max` is the shards judging fragments.
+
+### 5. Prove the sampler is deciding
 
 **Prove it, on the shard's own counters.** The processor publishes every decision it makes, and
 there is no `ServiceMonitor` in this stack to read them for you — go straight at the port, as in
-[step 4](#4-prove-the-routing-is-sticky):
+[step 4](#4-prove-whole-traces-reach-one-shard):
 
 ```bash
 oc port-forward -n $OTEL_NAMESPACE pod/otel-shard-collector-0 8888:8888 >/dev/null 2>&1 &
@@ -4256,8 +3822,15 @@ A policy that *should* be firing and reads zero is a name that does not match, n
 does not work. The `_total` suffix and the exact label set vary between builds; grep the prefix
 rather than assuming a full metric name.
 
-**Then read it off Kafka, which is the check that matters.** Re-run the
-[verify Job](#verify) and compare against the rates from
+### 6. Confirm on Kafka
+
+The producers changed; the topics did not.
+
+```bash
+oc delete job kafka-verify-topics -n $KAFKA_NAMESPACE --ignore-not-found
+```
+
+This is the check that matters. Re-run the [verify Job](#verify) and compare against the rates from
 [Is it still flowing?](#is-it-still-flowing):
 
 | Topic | Expected |
@@ -4276,13 +3849,10 @@ is the single observation that proves both halves of this design at once.
 what changes is that a specific trace ID you saw elsewhere may simply not be there, and that is the
 feature.
 
-**Routing evenness inverts, so do not read step 4's expectation.** Trace IDs are uniformly random,
-so `routing_key: traceID` spreads load **evenly** across the shards — the opposite of the uneven
-split that `routing_key: service` produces with a handful of services. Even is the pass condition
-now; a persistent skew means the resolver is finding fewer backends than you think.
+### Keeping the full stream as well
 
-**If you want both the sample and the full stream**, fork the shard receiver into two pipelines
-rather than choosing:
+If you want the sample *and* everything, fork the shard receiver into two pipelines rather than
+choosing:
 
 ```yaml
         traces/sampled:
@@ -4303,20 +3873,20 @@ is still created by the SDK, still serialized, still sent over the network and s
 collector. If the application-side cost is what hurts, head sampling is the right tool and this is
 the wrong one.
 
-**Reverting the sampler alone** — back to Topology B, without unwinding the shard tier — is
-step 1's shard config re-applied and `routing_key` back to `service` on the gateway. Both roll in
-place; nothing on Kafka needs touching. To unwind the shard tier as well, carry on below.
+### Reverting
 
-### Reverting the shard tier
+Restore the gateway first, so it stops routing to a tier you are about to delete: re-apply the
+original `otel-collector.yaml` from
+[Create the OpenTelemetryCollector](#create-the-opentelemetrycollector), or reverse the Option 2
+patch, then
 
 ```bash
 oc delete opentelemetrycollector otel-shard -n $OTEL_NAMESPACE
 ```
 
-then re-apply the original gateway from
-[Create the OpenTelemetryCollector](#create-the-opentelemetrycollector). Delete the shards **after**
-restoring the gateway, or the gateway spends the gap logging export failures against a resolver with
-no backends.
+Delete the shards **before** restoring the gateway and it spends the gap logging export failures
+against a resolver with no backends. Nothing on Kafka needs touching either way — `$TOPIC_TRACES`
+simply goes back to carrying every trace, produced by the gateway again.
 
 ### If Technology Preview is a blocker
 
@@ -4341,10 +3911,11 @@ already exists and already holds everything.
 
 ### What it costs
 
-One more network hop per span, three more pods, and a second collector config to keep in step with
-the first. Worth it when you need [tail sampling](#optional-tail-sampling-on-the-shards), when
-`spanmetrics` cardinality has outgrown one process, or when you want trace throughput to scale
-independently of the gateway. Not worth it otherwise — Topology A is two pods and one config.
+One more network hop per span, three more pods, a second collector config to keep in step with the
+first, and `decision_wait` of latency on everything that reaches the trace topic. Worth it when
+trace volume is the problem and you cannot answer it with head sampling — which is to say, when
+"keep every error" is a requirement. Not worth it otherwise: Topology A is two pods, one config, and
+no preview components.
 
 ## Clean up
 
