@@ -18,6 +18,31 @@
 # Do NOT create a single MachineSet spanning all three AZs: the autoscaler
 # cannot choose which zone a new node lands in, and topology spread would be
 # left to chance.
+#
+# ---------------------------------------------------------------------------
+# DO NOT APPLY THIS ON ROSA (or any other managed OpenShift).
+#
+# There are no user-managed MachineSets to point scaleTargetRef at -- ROSA
+# exposes machine pools (Classic) / node pools (HCP) instead, and autoscaling
+# is enabled on the pool itself via the Hybrid Cloud Console
+# (console.redhat.com/openshift -> your cluster -> Machine pools -> Edit ->
+# Enable autoscaling) or `rosa edit machinepool --enable-autoscaling
+# --min-replicas N --max-replicas M`.
+#
+# The per-AZ node group this file builds maps onto ROSA differently depending
+# on the flavour:
+#
+#   ROSA Classic, multi-AZ: one machine pool spans all three AZs and its
+#     replica count must be a multiple of 3, so a pool autoscaling from 3 to 12
+#     gives the one-node-per-AZ baseline this test assumes and grows evenly.
+#     You cannot scale a single zone independently.
+#
+#   ROSA HCP: node pools are single-AZ, so create one per AZ -- the closest
+#     equivalent to the three MachineAutoscalers below, and the one that lets a
+#     surviving zone grow on its own.
+#
+# See resilience-testing.md, "Running this on ROSA".
+# ---------------------------------------------------------------------------
 apiVersion: autoscaling.openshift.io/v1beta1
 kind: MachineAutoscaler
 metadata:

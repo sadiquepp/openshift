@@ -27,3 +27,9 @@ oc apply -f 09-kubedescheduler.yaml
 
 Substitute `<infra-id>`, `<vpc-id>`, `<account-id>` and the `us-east-1a/b/c`
 zone names before applying.
+
+**On ROSA**, skip `05`, `06` and `07` — the machine-api is service-managed
+there, and autoscaling is set on the machine pool / node pool instead (Hybrid
+Cloud Console → Machine pools → Edit → Enable autoscaling, or `rosa edit
+machinepool --enable-autoscaling`). Everything else applies unchanged. See
+[Running this on ROSA](resilience-testing.md#running-this-on-rosa).

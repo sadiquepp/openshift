@@ -119,6 +119,8 @@ stays Pending and no node is ever added.
   ```
 - `cluster-admin`, and AWS credentials with EC2/NACL (or FIS) permissions for
   whichever simulation method you choose.
+- On ROSA or another managed OpenShift, read [Running this on ROSA](#running-this-on-rosa)
+  first — three of these manifests do not apply there.
 - The cluster's `infrastructureName` and VPC ID:
   ```bash
   INFRA_ID=$(oc get infrastructure cluster -o jsonpath='{.status.infrastructureName}')
@@ -160,7 +162,8 @@ oc apply -f 02-deployment.yaml
 oc apply -f 03-service-route.yaml
 oc apply -f 04-pdb.yaml
 
-# 2. Autoscaling — substitute <infra-id> first
+# 2. Autoscaling — SKIP THIS STEP ENTIRELY ON ROSA, see "Running this on ROSA"
+#    Substitute <infra-id> first
 sed -i "s/<infra-id>/${INFRA_ID}/g" 06-machineautoscaler.yaml 07-machinehealthcheck.yaml
 # ...and the AZ suffixes if you are not in us-east-1
 oc apply -f 05-clusterautoscaler.yaml
@@ -194,6 +197,71 @@ while true; do
   sleep 1
 done
 ```
+
+---
+
+## Running this on ROSA
+
+Self-managed OpenShift is what this directory targets, and on it the three
+autoscaling manifests are the right interface. On **ROSA — and any other managed
+OpenShift — skip `05-clusterautoscaler.yaml`, `06-machineautoscaler.yaml` and
+`07-machinehealthcheck.yaml`.** Everything else applies unchanged.
+
+The reason is ownership: on ROSA the machine-api is operated by Red Hat SRE.
+There are no user-managed MachineSets for a `MachineAutoscaler` to reference,
+and `ClusterAutoscaler` / `MachineAutoscaler` / `MachineHealthCheck` CRs are not
+the supported interface — expect them to be rejected or reconciled away rather
+than to quietly work. Autoscaling is a property of the **machine pool** (ROSA
+Classic) or **node pool** (ROSA HCP) instead.
+
+Set it in the Hybrid Cloud Console — [console.redhat.com/openshift](https://console.redhat.com/openshift)
+→ your cluster → **Machine pools** → **Edit** → **Enable autoscaling**, with min
+and max node counts — or with the `rosa` CLI:
+
+```bash
+rosa list machinepools --cluster <cluster>
+
+rosa edit machinepool --cluster <cluster> \
+  --enable-autoscaling --min-replicas 3 --max-replicas 12 <machinepool>
+```
+
+ROSA Classic also exposes the cluster-wide settings that
+`05-clusterautoscaler.yaml` carries — scale-down timers, resource limits,
+balancing similar node groups — as a separate managed object; check
+`rosa create autoscaler --help` for your CLI version. On ROSA HCP, autoscaling
+is configured per node pool only.
+
+### What changes about the test itself
+
+The per-AZ node group model maps across differently depending on the flavour,
+and it changes what requirement 4 can actually demonstrate:
+
+| | Self-managed (this directory) | ROSA Classic, multi-AZ | ROSA HCP |
+|---|---|---|---|
+| Node group | One MachineSet per AZ | One machine pool spanning all 3 AZs | One node pool per AZ |
+| Replica granularity | Per zone | Multiples of 3, spread evenly | Per zone |
+| Can one zone grow alone? | ✅ Yes | ❌ No — scaling adds a node in *every* zone | ✅ Yes |
+| Autoscaling min/max set on | `MachineAutoscaler` | Machine pool | Node pool |
+
+**On ROSA Classic multi-AZ this is the detail to plan around.** A pool
+autoscaling 3 → 12 gives exactly the one-worker-per-AZ baseline this test
+assumes, and it grows evenly, so the surviving zones do get their capacity. But
+you cannot scale a single zone independently: absorbing 3 displaced pods costs
+you 3 nodes, one of which lands in the zone that is down (and will fail to come
+up until it recovers). The application-level result is the same — the pods do
+get scheduled — but the "scale only the surviving AZs" part of requirement 4 is
+not something ROSA Classic can express. If that specific behaviour is what you
+need to prove, use ROSA HCP with one node pool per AZ, or a self-managed
+cluster.
+
+Node remediation is likewise handled by the service on ROSA, which is why
+`07-machinehealthcheck.yaml` is skipped — the recovery leg still works, you just
+do not own the timing of it.
+
+The parts that carry the actual resilience argument — the topology spread
+constraints, the PDB and the Descheduler operator — are ordinary
+user-namespace and OLM objects, and behave identically on ROSA. See
+[`aws/rosa`](../../../rosa) for the ROSA deployments in this repository.
 
 ---
 

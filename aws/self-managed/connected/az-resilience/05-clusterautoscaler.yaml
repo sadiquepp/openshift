@@ -5,6 +5,31 @@
 # This CR only sets global limits and scale-down behaviour; it does not by
 # itself make anything scale. Each MachineSet you want scaled needs its own
 # MachineAutoscaler (see 06-machineautoscaler.yaml).
+#
+# ---------------------------------------------------------------------------
+# DO NOT APPLY THIS ON ROSA (or any other managed OpenShift).
+#
+# On ROSA the machine-api is owned by Red Hat SRE. You do not manage
+# MachineSets, and ClusterAutoscaler/MachineAutoscaler CRs are not the
+# supported interface -- creating them is rejected or silently reconciled away.
+# Autoscaling is a property of the machine pool / node pool instead, set in the
+# Hybrid Cloud Console (console.redhat.com/openshift -> your cluster ->
+# Machine pools -> Edit -> Enable autoscaling, with min/max nodes) or with the
+# rosa CLI:
+#
+#   rosa edit machinepool --cluster <cluster> --enable-autoscaling \
+#     --min-replicas 3 --max-replicas 12 <machinepool>
+#
+# ROSA Classic also exposes the cluster-wide autoscaler settings this CR
+# carries (scale-down timers, resource limits, balance-similar-node-groups) as
+# a separate managed object -- check `rosa create autoscaler --help` for your
+# CLI version. On ROSA HCP autoscaling is configured per node pool only.
+#
+# Everything else in this directory works unchanged on ROSA: the Deployment,
+# the spread constraints, the PDB and the Descheduler operator are all ordinary
+# user-namespace or OLM objects. Skip 05, 06 and 07 only.
+# See resilience-testing.md, "Running this on ROSA".
+# ---------------------------------------------------------------------------
 apiVersion: autoscaling.openshift.io/v1
 kind: ClusterAutoscaler
 metadata:
