@@ -1,0 +1,58 @@
+---
+# One MachineAutoscaler per AZ MachineSet. These are the node groups the
+# cluster autoscaler is allowed to grow when displaced pods go Pending.
+#
+# Substitute <infra-id> and the region/AZ suffixes to match your cluster:
+#
+#   oc get machinesets -n openshift-machine-api
+#   INFRA_ID=$(oc get infrastructure cluster -o jsonpath='{.status.infrastructureName}')
+#
+# The MachineSet names below follow the installer's convention,
+# <infra-id>-worker-<az>, e.g. ocp-demo-abcde-worker-us-east-1a.
+#
+# minReplicas: 1 keeps one worker per zone at steady state (the 3-node baseline
+# this test assumes). maxReplicas: 4 gives each surviving zone room to absorb
+# the displaced pods -- with 3 pods per node, two zones at 4 nodes can hold far
+# more than the 9 replicas, so the cap is not what limits recovery.
+#
+# Do NOT create a single MachineSet spanning all three AZs: the autoscaler
+# cannot choose which zone a new node lands in, and topology spread would be
+# left to chance.
+apiVersion: autoscaling.openshift.io/v1beta1
+kind: MachineAutoscaler
+metadata:
+  name: worker-us-east-1a
+  namespace: openshift-machine-api
+spec:
+  minReplicas: 1
+  maxReplicas: 4
+  scaleTargetRef:
+    apiVersion: machine.openshift.io/v1beta1
+    kind: MachineSet
+    name: <infra-id>-worker-us-east-1a
+---
+apiVersion: autoscaling.openshift.io/v1beta1
+kind: MachineAutoscaler
+metadata:
+  name: worker-us-east-1b
+  namespace: openshift-machine-api
+spec:
+  minReplicas: 1
+  maxReplicas: 4
+  scaleTargetRef:
+    apiVersion: machine.openshift.io/v1beta1
+    kind: MachineSet
+    name: <infra-id>-worker-us-east-1b
+---
+apiVersion: autoscaling.openshift.io/v1beta1
+kind: MachineAutoscaler
+metadata:
+  name: worker-us-east-1c
+  namespace: openshift-machine-api
+spec:
+  minReplicas: 1
+  maxReplicas: 4
+  scaleTargetRef:
+    apiVersion: machine.openshift.io/v1beta1
+    kind: MachineSet
+    name: <infra-id>-worker-us-east-1c

@@ -1,0 +1,44 @@
+{
+  "description": "OpenShift AZ resilience test - blackhole all subnets in one availability zone",
+  "targets": {
+    "az-subnets": {
+      "resourceType": "aws:ec2:subnet",
+      "resourceTags": {
+        "kubernetes.io/cluster/<infra-id>": "owned"
+      },
+      "filters": [
+        {
+          "path": "AvailabilityZone",
+          "values": ["us-east-1a"]
+        },
+        {
+          "path": "VpcId",
+          "values": ["<vpc-id>"]
+        }
+      ],
+      "selectionMode": "ALL"
+    }
+  },
+  "actions": {
+    "disrupt-az-connectivity": {
+      "actionId": "aws:network:disrupt-connectivity",
+      "description": "Deny all traffic to and from the targeted subnets",
+      "parameters": {
+        "duration": "PT20M",
+        "scope": "availability-zone"
+      },
+      "targets": {
+        "Subnets": "az-subnets"
+      }
+    }
+  },
+  "stopConditions": [
+    {
+      "source": "none"
+    }
+  ],
+  "roleArn": "arn:aws:iam::<account-id>:role/FISAzFailureRole",
+  "tags": {
+    "Name": "ocp-az-failure"
+  }
+}

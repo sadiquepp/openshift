@@ -1,0 +1,34 @@
+---
+# The name MUST be "cluster" and the namespace
+# openshift-kube-descheduler-operator -- the operator reconciles no other CR.
+#
+# The TopologySpreadConstraint profile enables RemovePodsViolatingTopology-
+# SpreadConstraint: every interval it compares the live pod distribution against
+# each workload's own topologySpreadConstraints and evicts pods out of the
+# over-weighted domains. It only evicts; the scheduler decides where the
+# replacement lands, and with maxSkew 1 the recovered zone is the only legal
+# destination. Rebalancing therefore converges over several intervals rather
+# than in one pass -- see resilience-testing.md, "Why recovery takes ~15
+# minutes, not 5".
+apiVersion: operator.openshift.io/v1
+kind: KubeDescheduler
+metadata:
+  name: cluster
+  namespace: openshift-kube-descheduler-operator
+spec:
+  managementState: Managed
+  deschedulingIntervalSeconds: 300  # Evaluates cluster every 5 minutes
+  profiles:
+    - TopologySpreadConstraint
+  # Optional hardening, uncomment as needed:
+  #
+  # profileCustomizations:
+  #   # By default the profile only acts on DoNotSchedule constraints. Enable
+  #   # this to rebalance soft (ScheduleAnyway) constraints too -- for this
+  #   # workload that means the per-hostname spread is also enforced.
+  #   enableSoftTopologyConstraints: true
+  #   # Restrict the descheduler to the demo namespace while testing, so it
+  #   # cannot evict anything else on the cluster.
+  #   namespaces:
+  #     included:
+  #       - az-resilience-demo

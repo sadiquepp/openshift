@@ -1,0 +1,14 @@
+---
+# Namespace for the AZ-resilience demo application.
+#
+# The Descheduler skips openshift-*, kube-* and the default namespace, so the
+# workload must live in a user namespace for the TopologySpreadConstraint
+# profile to be able to rebalance it.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: az-resilience-demo
+  labels:
+    app.kubernetes.io/part-of: az-resilience-demo
+    # Required for the default (non-root) SCC to admit the httpd-24 image.
+    pod-security.kubernetes.io/enforce: restricted

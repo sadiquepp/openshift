@@ -1,0 +1,33 @@
+---
+# Remediates workers that stop reporting. Optional for the failover test (pods
+# are evicted by the NoExecute taint regardless) but it is what makes the
+# *recovery* leg self-healing: the MHC deletes the Machine stranded in the dead
+# AZ, its MachineSet immediately tries to create a replacement in that same AZ,
+# the create fails while the zone is unreachable, and it succeeds on its own as
+# soon as the zone returns. Without it you have to delete the stuck Machine by
+# hand before the recovered zone has a node again.
+#
+# maxUnhealthy must exceed the share of workers in one AZ, or the MHC decides
+# the cluster is too broken to touch and remediates nothing. With 3 workers,
+# one per zone, a single-AZ failure is 33% unhealthy -- hence 40%. Recompute
+# this if you run more than one worker per zone.
+apiVersion: machine.openshift.io/v1beta1
+kind: MachineHealthCheck
+metadata:
+  name: worker-az-failure
+  namespace: openshift-machine-api
+spec:
+  selector:
+    matchLabels:
+      machine.openshift.io/cluster-api-cluster: <infra-id>
+      machine.openshift.io/cluster-api-machine-role: worker
+      machine.openshift.io/cluster-api-machine-type: worker
+  maxUnhealthy: "40%"
+  nodeStartupTimeout: 10m
+  unhealthyConditions:
+    - type: Ready
+      status: "Unknown"
+      timeout: 300s
+    - type: Ready
+      status: "False"
+      timeout: 300s

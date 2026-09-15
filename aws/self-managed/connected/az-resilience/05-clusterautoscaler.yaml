@@ -1,0 +1,39 @@
+---
+# Cluster-scoped autoscaler policy. The name MUST be "default" -- the
+# machine-api operator ignores any other ClusterAutoscaler.
+#
+# This CR only sets global limits and scale-down behaviour; it does not by
+# itself make anything scale. Each MachineSet you want scaled needs its own
+# MachineAutoscaler (see 06-machineautoscaler.yaml).
+apiVersion: autoscaling.openshift.io/v1
+kind: ClusterAutoscaler
+metadata:
+  name: default
+spec:
+  podPriorityThreshold: -10
+  resourceLimits:
+    maxNodesTotal: 24
+    cores:
+      min: 8
+      max: 128
+    memory:
+      min: 4
+      max: 512
+  # With one MachineSet per AZ, this keeps scale-out even across the surviving
+  # zones instead of piling every new worker into whichever zone the autoscaler
+  # happened to pick first.
+  balanceSimilarNodeGroups: true
+  # The demo pods mount emptyDir volumes, which the autoscaler classifies as
+  # local storage. Left at the default (true) it refuses to drain those nodes
+  # and the extra workers added during the outage are never removed after the
+  # AZ recovers. Set to false only when you are sure no workload depends on
+  # emptyDir contents surviving -- true for this stateless app.
+  skipNodesWithLocalStorage: false
+  scaleDown:
+    enabled: true
+    delayAfterAdd: 10m
+    delayAfterDelete: 10s
+    delayAfterFailure: 3m
+    unneededTime: 10m
+    utilizationThreshold: "0.5"
+  logVerbosity: 4

@@ -1,0 +1,171 @@
+---
+# Sample application for the AZ-failure resilience test.
+#
+# Deliberately stateless: a Red Hat UBI9 Apache container whose DocumentRoot is
+# an emptyDir. No PVC, therefore no EBS volume pinning a pod to a single AZ --
+# a pod can be recreated in any zone. The start-up command writes an index.html
+# containing the pod name and the node it landed on, so `curl` through the Route
+# shows which node (and therefore which AZ) served the request.
+#
+# Replace `registry.access.redhat.com/ubi9/httpd-24:latest` with a mirrored
+# reference when running against a disconnected cluster.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hello-az
+  namespace: az-resilience-demo
+  labels:
+    app: hello-az
+spec:
+  replicas: 9
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: hello-az
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0          # never exceed 9 pods, or the zone skew is distorted
+      maxUnavailable: 1     # mid-rollout during a rebalance
+  template:
+    metadata:
+      labels:
+        app: hello-az
+    spec:
+      # ------------------------------------------------------------------
+      # 3 replicas per zone across 3 zones.
+      #
+      # whenUnsatisfiable: DoNotSchedule is required, not cosmetic: pods that
+      # cannot be placed stay Pending, and Pending pods are the ONLY signal the
+      # cluster autoscaler acts on. With ScheduleAnyway the displaced pods would
+      # cram onto the surviving nodes and no worker would ever be added.
+      #
+      # nodeTaintsPolicy: Honor is the other load-bearing setting. When an AZ
+      # fails its node is tainted node.kubernetes.io/unreachable. With the
+      # default (Ignore) that node still counts as a zone holding 0 pods, so
+      # placing a 4th pod in a surviving zone would give skew 4 > maxSkew 1 and
+      # all 3 displaced pods would sit Pending forever. Honor drops the tainted
+      # node from the domain calculation, leaving two zones that can legally
+      # hold 5 and 4 pods (skew 1).
+      # ------------------------------------------------------------------
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          nodeTaintsPolicy: Honor
+          nodeAffinityPolicy: Honor
+          matchLabelKeys:
+            - pod-template-hash   # ignore the outgoing ReplicaSet during rollouts
+          labelSelector:
+            matchLabels:
+              app: hello-az
+        # Soft spread across nodes within a zone. Kept ScheduleAnyway so that it
+        # can never be the reason a pod is Pending -- only the zone constraint
+        # should ever block scheduling.
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          nodeTaintsPolicy: Honor
+          nodeAffinityPolicy: Honor
+          matchLabelKeys:
+            - pod-template-hash
+          labelSelector:
+            matchLabels:
+              app: hello-az
+      nodeSelector:
+        node-role.kubernetes.io/worker: ""
+      # Evict from a NotReady/unreachable node after 60s instead of the 300s
+      # default, so an AZ failure is observable within the test window.
+      tolerations:
+        - key: node.kubernetes.io/not-ready
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 60
+        - key: node.kubernetes.io/unreachable
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 60
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: httpd
+          image: registry.access.redhat.com/ubi9/httpd-24:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/bash
+            - -c
+            - |
+              cat > /var/www/html/index.html <<HTML
+              <html><body>
+              <h1>hello-az</h1>
+              <p>pod:  ${POD_NAME}</p>
+              <p>node: ${NODE_NAME}</p>
+              <p>ip:   ${POD_IP}</p>
+              </body></html>
+              HTML
+              exec /usr/bin/run-httpd
+          env:
+            # The zone label lives on the Node, which the downward API cannot
+            # reach. Report the node name and map it with:
+            #   oc get nodes -L topology.kubernetes.io/zone
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          # ----------------------------------------------------------------
+          # The CPU request is the knob that makes the autoscaler fire. Sized so
+          # that one m5.xlarge worker (~3500m allocatable) holds exactly 3 pods:
+          # losing a zone leaves 2 nodes with room for 6 of the 9 replicas, so 3
+          # pods go Pending and the surviving zones must scale out. Re-tune this
+          # against your instance type -- see resilience-testing.md, "Sizing the
+          # demo so it actually scales".
+          # ----------------------------------------------------------------
+          resources:
+            requests:
+              cpu: "1"
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          readinessProbe:
+            httpGet:
+              path: /index.html
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /index.html
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: docroot
+              mountPath: /var/www/html
+            - name: run
+              mountPath: /run/httpd
+      volumes:
+        - name: docroot
+          emptyDir: {}
+        - name: run
+          emptyDir: {}

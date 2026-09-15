@@ -1,0 +1,18 @@
+---
+# The Descheduler honours PodDisruptionBudgets, so this budget is what keeps a
+# rebalance from becoming an outage: at most one of the nine replicas is evicted
+# at a time.
+#
+# Do not set minAvailable to 9 (or maxUnavailable to 0) -- a budget that allows
+# zero disruption blocks every descheduler eviction and the pods will never
+# return to the recovered AZ.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: hello-az
+  namespace: az-resilience-demo
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: hello-az
