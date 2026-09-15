@@ -40,7 +40,8 @@ its own leaves a hole:
 | `simulate/verify-spread.sh` | Prints live node/zone/pod distribution — run before, during and after |
 | `simulate/drain-az.sh` | Simulation method 1 — graceful node drain |
 | `simulate/nacl-blackhole-az.sh` | Simulation method 2 — network ACL blackhole, with exact undo |
-| `simulate/fis-experiment-template.json` | Simulation method 3 — AWS Fault Injection Service experiment |
+| `simulate/fis-experiment-template.json` | Simulation method 3 — AWS FIS experiment, whole AZ selected by cluster tag |
+| `simulate/fis-experiment-template-subnet.json` | Same, but targeting one named subnet by ARN |
 
 Placeholders (`<infra-id>`, `<vpc-id>`, `<account-id>`, `us-east-1a/b/c`) follow
 this repository's convention — substitute real values before applying.
@@ -291,7 +292,7 @@ networks.
 | Exercises `nodeTaintsPolicy` | ❌ No | ✅ Yes | ✅ Yes |
 | Exercises MHC remediation | ❌ No | ✅ Yes | ✅ Yes |
 | Pod termination | Graceful | Ungraceful (node unreachable) | Ungraceful |
-| Blast radius | Cluster only | Every subnet in the AZ | Scoped to tagged targets |
+| Blast radius | Cluster only | Every subnet in the AZ | Tagged subnets in the AZ, or one subnet by ARN |
 | Auto-revert | No | No (`--undo`) | ✅ Yes, on duration expiry |
 | AWS permissions | none | `ec2:*NetworkAcl*` | FIS + service role |
 | Best for | Smoke-testing the manifests | A true one-off outage test | Scheduled/repeated game days |
@@ -370,8 +371,12 @@ aws iam attach-role-policy --role-name FISAzFailureRole \
   --policy-arn arn:aws:iam::aws:policy/service-role/AWSFaultInjectionSimulatorNetworkAccess
 ```
 
-Then substitute `<infra-id>`, `<vpc-id>`, `<account-id>` and the AZ in
-`simulate/fis-experiment-template.json` and run it:
+Two templates ship here, differing only in how they pick their targets.
+
+#### Targeting by tag (whole AZ) — `fis-experiment-template.json`
+
+Selects every subnet carrying the cluster ownership tag, filtered to one AZ.
+Substitute `<infra-id>`, `<vpc-id>`, `<account-id>` and the AZ, then:
 
 ```bash
 aws fis create-experiment-template \
@@ -381,13 +386,84 @@ aws fis start-experiment --experiment-template-id <id>
 aws fis get-experiment --id <experiment-id>    # watch state
 ```
 
-The template uses `aws:network:disrupt-connectivity` with
-`scope: availability-zone`, targeting subnets selected by the cluster ownership
-tag and filtered to one AZ — so it hits this cluster's subnets and nothing else,
-which is the main advantage over the NACL script. `duration: PT20M` reverts the
-disruption automatically after 20 minutes, which is long enough to observe
-failover and scale-out but you will want to extend it if you want to watch
-recovery inside the same experiment.
+This is the closest analogue to losing the zone: both the private (worker) and
+public (NAT/LB) subnets in that AZ go dark, and because selection is by tag it
+still hits only this cluster's subnets — the main advantage over the NACL
+script, which blackholes every subnet in the AZ regardless of owner.
+
+#### Targeting one named subnet — `fis-experiment-template-subnet.json`
+
+To blackhole exactly one subnet, replace the `resourceTags` + `filters` block
+with an explicit `resourceArns` list. The two are mutually exclusive — FIS
+rejects a target that sets both — and with `resourceArns` the `selectionMode`
+must be `ALL`:
+
+```json
+"targets": {
+  "worker-subnet": {
+    "resourceType": "aws:ec2:subnet",
+    "resourceArns": [
+      "arn:aws:ec2:<region>:<account-id>:subnet/<subnet-id>"
+    ],
+    "selectionMode": "ALL"
+  }
+}
+```
+
+Find the private worker subnet for the AZ you want to break:
+
+```bash
+AZ=us-east-1a
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+REGION=$(aws configure get region)
+
+# The subnet the worker MachineSet actually places nodes in
+SUBNET_ID=$(oc get machineset -n openshift-machine-api "${INFRA_ID}-worker-${AZ}" \
+  -o jsonpath='{.spec.template.spec.providerSpec.value.subnet.id}')
+
+# Falls back to a tag lookup if the MachineSet references the subnet by filter
+[ -n "$SUBNET_ID" ] || SUBNET_ID=$(aws ec2 describe-subnets \
+  --filters "Name=vpc-id,Values=${VPC_ID}" \
+            "Name=availability-zone,Values=${AZ}" \
+            "Name=tag:Name,Values=*private*" \
+  --query 'Subnets[0].SubnetId' --output text)
+
+echo "arn:aws:ec2:${REGION}:${ACCOUNT_ID}:subnet/${SUBNET_ID}"
+```
+
+Substitute that ARN (and `<account-id>` in the `roleArn`) into
+`simulate/fis-experiment-template-subnet.json` and start it the same way.
+
+Targeting the private worker subnet alone is arguably the *better* test for this
+workload: it isolates the node without touching the NAT gateway, load balancer
+ENIs or anything else sharing the zone, so any impact you observe is
+unambiguously your application's, not collateral damage. What it stops being is
+a full AZ-loss simulation — if you need to prove the cluster survives the whole
+zone disappearing, including ingress in that zone, use the tag-targeted
+template.
+
+#### `scope` decides what "disrupted" means
+
+The two templates also differ in `scope`, and this matters more than the
+targeting does:
+
+| `scope` | Denies | Use when |
+|---|---|---|
+| `all` | All traffic in and out of the subnet | You want the node simply gone — the closest match to the NACL script |
+| `availability-zone` | Traffic between the target subnet and other AZs in the VPC | You want a zone *partition*: the node keeps its own-AZ and internet path but loses the control plane |
+
+`availability-zone` is what AWS's own AZ-power-interruption scenario uses, and
+it is the more realistic failure mode. Be aware of what it leaves alive, though:
+the node can still reach its own AZ's NAT gateway, so it stays on the internet
+while being cut off from the API server. If you want an unambiguous "the node
+is unreachable, full stop", use `all` — the single-subnet template does.
+
+One caveat that applies to every scope, and to the NACL script equally: FIS
+implements this action by attaching a network ACL to the subnet, and traffic
+*within* a single subnet never traverses its NACL. Two nodes in the same subnet
+can still talk to each other no matter what scope you pick. Irrelevant for the
+one-node-per-AZ layout this test assumes, but it will surprise you if you run
+several workers per subnet.
 
 An alternative worth knowing: `aws:ec2:stop-instances` targeting worker
 instances in one AZ. It is a more brutal simulation (the instances are actually

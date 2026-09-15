@@ -1,0 +1,34 @@
+{
+  "description": "OpenShift AZ resilience test - blackhole one named worker subnet",
+  "targets": {
+    "worker-subnet": {
+      "resourceType": "aws:ec2:subnet",
+      "resourceArns": [
+        "arn:aws:ec2:<region>:<account-id>:subnet/<subnet-id>"
+      ],
+      "selectionMode": "ALL"
+    }
+  },
+  "actions": {
+    "disrupt-subnet-connectivity": {
+      "actionId": "aws:network:disrupt-connectivity",
+      "description": "Deny all traffic to and from the named subnet",
+      "parameters": {
+        "duration": "PT20M",
+        "scope": "all"
+      },
+      "targets": {
+        "Subnets": "worker-subnet"
+      }
+    }
+  },
+  "stopConditions": [
+    {
+      "source": "none"
+    }
+  ],
+  "tags": {
+    "Name": "ocp-subnet-blackhole"
+  },
+  "roleArn": "arn:aws:iam::<account-id>:role/FISAzFailureRole"
+}
