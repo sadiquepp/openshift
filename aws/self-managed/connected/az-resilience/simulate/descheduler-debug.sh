@@ -17,6 +17,18 @@ TAIL="${TAIL:-200}"
 
 hr() { printf '\n=== %s ===\n' "$1"; }
 
+hr "0. The two settings that silently disable it"
+echo "mode must be Automatic (default Predictive only simulates)."
+echo "profiles must include EvictPodsWithLocalStorage (hello-az mounts emptyDir)."
+oc get kubedescheduler cluster -n "$NS" \
+  -o jsonpath='mode={.spec.mode}{"\n"}profiles={.spec.profiles}{"\n"}interval={.spec.deschedulingIntervalSeconds}{"\n"}evictionLimits={.spec.evictionLimits}{"\n"}' 2>&1
+echo
+mode=$(oc get kubedescheduler cluster -n "$NS" -o jsonpath='{.spec.mode}' 2>/dev/null)
+[[ "$mode" == "Automatic" ]] || echo ">>> PROBLEM: mode is '${mode:-<unset, defaults to Predictive>}' -- nothing will actually be evicted."
+oc get kubedescheduler cluster -n "$NS" -o jsonpath='{.spec.profiles}' 2>/dev/null \
+  | grep -q EvictPodsWithLocalStorage \
+  || echo ">>> PROBLEM: EvictPodsWithLocalStorage not in profiles -- emptyDir pods are exempt from eviction."
+
 hr "1. Operator install (CSV must be Succeeded)"
 oc get csv -n "$NS" 2>&1
 oc get subscription -n "$NS" 2>&1

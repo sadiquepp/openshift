@@ -313,27 +313,29 @@ nodes are full, which is what the autoscaler is for.
 > window instead of at the 300s default. The toleration is short-lived and does
 > not make the node eligible for the spread calculation.
 
-### 3. Why recovery takes ~15 minutes, not 5
+### 3. Why recovery takes several descheduler passes
 
 The descheduler evicts; it does not place. Each pass it finds the domains
-holding too many pods and evicts from them, bounded by the PDB
-(`maxUnavailable: 1`). The scheduler then decides where the replacement goes,
-and `maxSkew: 1` forces it into the recovered zone, because that zone is the
-global minimum.
+holding too many pods and evicts from them, bounded by `evictionLimits.total: 1`
+and by the PDB (`maxUnavailable: 1`). The scheduler then decides where the
+replacement goes, and `maxSkew: 1` forces it into the recovered zone, because
+that zone is the global minimum.
 
 Starting from 0/5/4 after the zone returns, with one eviction per pass:
 
 | Descheduler pass | Before | Evicted from | After |
 |---|---|---|---|
-| 1 (t+5m) | 0 / 5 / 4 | `1b` | 1 / 4 / 4 |
-| 2 (t+10m) | 1 / 4 / 4 | `1b` | 2 / 3 / 4 |
-| 3 (t+15m) | 2 / 3 / 4 | `1c` | 3 / 3 / 3 ✅ |
+| 1 | 0 / 5 / 4 | `1b` | 1 / 4 / 4 |
+| 2 | 1 / 4 / 4 | `1b` | 2 / 3 / 4 |
+| 3 | 2 / 3 / 4 | `1c` | 3 / 3 / 3 ✅ |
 
-Three passes at `deschedulingIntervalSeconds: 300` is roughly 15 minutes. This
-is convergence, not a stall — do not conclude the descheduler is broken at the
-5-minute mark. If you want it faster for a demo, lower the interval (300s is the
-minimum the operator accepts) or temporarily relax the PDB to allow more
-concurrent evictions; leave the PDB tight for anything resembling production.
+Three passes, and the wall-clock cost is whatever you set
+`deschedulingIntervalSeconds` to: **~3 minutes at the 60s this test uses, ~15
+minutes at the 300s you would more likely run in production.** Either way this
+is convergence, not a stall — a single pass that moves one pod and appears to
+change nothing is expected progress. Raising `evictionLimits.total` or relaxing
+the PDB collapses it into fewer passes; leave both tight for anything resembling
+production.
 
 The requirement as stated — "two replicas should move back" — describes the net
 effect (one zone gains 3, two zones give up 2 and 1). It takes more than two
@@ -585,7 +587,7 @@ After restoring the zone:
 |---|---|
 | r+0 | NACL restored / FIS duration expires |
 | ~r+5m | MachineSet succeeds in creating the replacement Machine in `us-east-1a`; node joins `Ready` |
-| ~r+5/10/15m | Three descheduler passes walk 0/5/4 → 1/4/4 → 2/3/4 → **3/3/3** |
+| ~r+6/7/8m | Three descheduler passes walk 0/5/4 → 1/4/4 → 2/3/4 → **3/3/3** (60s interval; add ~5m per pass at the production default of 300s) |
 | ~r+25m | Autoscaler scales the surviving MachineSets back to 1 (`unneededTime: 10m` + `delayAfterAdd: 10m`) |
 
 The single most important line is the bold one: nine replicas becoming six and
@@ -674,8 +676,9 @@ you run more than one worker per zone.
 The descheduler is the quietest of the three mechanisms — it has no CLI, emits
 nothing when it decides to do nothing, and the only outward sign it worked is a
 pod disappearing five minutes later. When 3/3/3 does not come back, work down
-this ladder in order. Each step rules out everything above it, and the fast way
-to run the whole thing is:
+this ladder in order. Step 0 covers the two settings that account for most of
+these reports; the rest each rule out everything above them. The fast way to run
+the whole thing is:
 
 ```bash
 ./simulate/descheduler-debug.sh
@@ -687,6 +690,51 @@ on your cluster before trusting any command that hardcodes one:
 ```bash
 oc get all,cm,kubedescheduler -n openshift-kube-descheduler-operator
 ```
+
+### Step 0 — The two settings that silently disable it
+
+Start here. Both of these produce a descheduler that installs cleanly, accepts
+its CR, runs its operand, logs without error — and never moves a pod. Between
+them they account for most "the descheduler is not working" reports, and neither
+surfaces as a failure anywhere.
+
+```bash
+oc get kubedescheduler cluster -n openshift-kube-descheduler-operator \
+  -o jsonpath='mode={.spec.mode}{"\n"}profiles={.spec.profiles}{"\n"}interval={.spec.deschedulingIntervalSeconds}{"\n"}'
+```
+
+**`mode` must be `Automatic`.** The default is `Predictive`, which simulates:
+it evaluates every strategy and logs the evictions it *would* have performed,
+then performs none of them. Everything looks right, including the logs, which
+is what makes it so easy to miss. If the field is absent from your CR you are
+running Predictive.
+
+```yaml
+spec:
+  mode: Automatic
+```
+
+The tell in the operand log is eviction lines that never correspond to a pod
+disappearing — cross-check against `oc get pods -n az-resilience-demo -w`.
+
+**`EvictPodsWithLocalStorage` must be in `profiles` for this workload.** The
+descheduler refuses to evict any pod with local storage unless that profile is
+enabled, and `hello-az` mounts `emptyDir` for its DocumentRoot and `/run/httpd`.
+So the topology strategy finds the violation, evaluates the candidates, rejects
+every one of them, and reports zero evictions. It is not a configuration error
+and nothing logs a warning — the descheduler is behaving exactly as designed.
+
+```yaml
+spec:
+  profiles:
+    - TopologyAndDuplicates
+    - EvictPodsWithLocalStorage
+```
+
+This applies to far more than the demo app: anything with an `emptyDir`
+scratch volume, a cache, or a downward-API or projected volume that the
+descheduler classifies as local storage is equally exempt. If your real
+workloads use them, this profile is not a test-only setting.
 
 ### Step 1 — Is the operator actually installed?
 
@@ -800,7 +848,7 @@ evicted. What the interesting lines tell you:
 | `RemovePodsViolatingTopologySpreadConstraint` never appears | The strategy is not in the rendered policy — back to step 3 |
 | `Cannot evict pod as it would violate the pod's disruption budget` / HTTP 429 | The PDB is blocking it — step 6 |
 | `pod does not have an owner reference` / `no ReplicaSet owner` | Bare pods are skipped by design. Deployment pods are fine; if you see this, you are looking at something else |
-| `pod has local storage and descheduler is not configured with evictLocalStoragePods` | An `emptyDir` pod being refused. Our app uses `emptyDir`, so if this appears the operator's defaults are stricter than expected — enable local-storage eviction in `profileCustomizations` |
+| `pod has local storage and descheduler is not configured with evictLocalStoragePods` | The `EvictPodsWithLocalStorage` profile is missing. `hello-az` mounts `emptyDir`, so **every** candidate is refused and the pass reports zero evictions — see step 0 |
 | `pod is a DaemonSet pod` / `is a static pod` / `priority higher than threshold` | Correctly skipped, not your workload |
 | `namespace is excluded` | Step 7 |
 
@@ -871,10 +919,10 @@ oc describe node <node> | grep -A5 'Allocated resources'
 
 Timing is the part that trips people up. **The descheduler is a timer, not a
 controller** — it does not watch for the uncordon and react. The first pass
-lands up to `deschedulingIntervalSeconds` (300s) after you uncordon, and
-convergence back to 3/3/3 still takes about three passes, so budget ~15 minutes
-before concluding it is not working. See
-[Why recovery takes ~15 minutes, not 5](#3-why-recovery-takes-15-minutes-not-5).
+lands up to one `deschedulingIntervalSeconds` after you uncordon, and
+convergence back to 3/3/3 still takes about three passes — ~3 minutes at the 60s
+this test uses, ~15 at a production 300s. See
+[Why recovery takes several descheduler passes](#3-why-recovery-takes-several-descheduler-passes).
 To skip the wait while iterating, restart the operand as described below.
 
 Two cordon-specific things to be aware of:
@@ -901,9 +949,10 @@ already happened.
 
 ### Forcing a pass instead of waiting
 
-`deschedulingIntervalSeconds: 300` is the operator's minimum, so testing a
-change means five minutes per iteration. The operand runs a pass on startup, so
-restart it to get an immediate one:
+`deschedulingIntervalSeconds` accepts values well below the 300s you would run
+in production — `09-kubedescheduler.yaml` uses 60s for exactly this reason. Even
+so, the operand runs a pass on startup, so restarting it gives you one
+immediately:
 
 ```bash
 oc rollout restart deployment/descheduler -n openshift-kube-descheduler-operator
@@ -932,7 +981,7 @@ zone's node — most often a taint the node still carries, or a `nodeSelector` t
 new node does not satisfy. Also remember that three passes are needed to walk
 0/5/4 back to 3/3/3; one eviction that appears to change nothing is expected
 progress, not a failure. See
-[Why recovery takes ~15 minutes, not 5](#3-why-recovery-takes-15-minutes-not-5).
+[Why recovery takes several descheduler passes](#3-why-recovery-takes-several-descheduler-passes).
 
 ---
 
