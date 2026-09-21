@@ -38,6 +38,7 @@ its own leaves a hole:
 | `08-descheduler-operator.yaml` | Namespace, OperatorGroup and Subscription for the Kube Descheduler Operator |
 | `09-kubedescheduler.yaml` | `KubeDescheduler/cluster` with the `TopologySpreadConstraint` profile |
 | `simulate/verify-spread.sh` | Prints live node/zone/pod distribution — run before, during and after |
+| `simulate/descheduler-debug.sh` | Read-only diagnostic dump for when the descheduler is not rebalancing |
 | `simulate/drain-az.sh` | Simulation method 1 — graceful node drain |
 | `simulate/nacl-blackhole-az.sh` | Simulation method 2 — network ACL blackhole, with exact undo |
 | `simulate/fis-experiment-template.json` | Simulation method 3 — AWS FIS experiment, whole AZ selected by cluster tag |
@@ -589,8 +590,8 @@ oc describe pod -n az-resilience-demo -l app=hello-az | grep -A5 Events
 # Autoscaler decisions
 oc logs -n openshift-machine-api -l k8s-app=cluster-autoscaler --tail=100 | grep -i "scale"
 
-# Descheduler evictions
-oc logs -n openshift-kube-descheduler-operator -l app=descheduler --tail=100 \
+# Descheduler evictions (see "Troubleshooting the descheduler" when this is empty)
+oc logs deployment/descheduler -n openshift-kube-descheduler-operator --tail=100 \
   | grep -i "evict"
 
 # Eviction events, cluster-wide
@@ -631,18 +632,11 @@ Usually a second constraint the new node does not satisfy — the `nodeSelector`
 or a hostname spread constraint left at `DoNotSchedule`. `oc describe pod` lists
 every filter that rejected each node.
 
-**The descheduler never evicts anything.**
-Check: does the KubeDescheduler CR exist as `cluster` in
-`openshift-kube-descheduler-operator`; is `managementState: Managed`; is the PDB
-blocking every eviction (`maxUnavailable: 0` or `minAvailable` equal to the
-replica count); is the workload in an excluded namespace (`openshift-*`,
-`kube-*`, `default` are skipped); and does the recovered zone actually have a
-`Ready` node to receive the pods.
-
-**The descheduler evicts, but pods come back to the same zone.**
-The recovered zone has no schedulable node — most often the stranded Machine was
-never remediated. `oc get machines -n openshift-machine-api` and delete the
-failed one by hand if the MHC did not.
+**The descheduler never evicts anything, or evicts without improving the
+spread.** It has its own section — work down
+[Troubleshooting the descheduler](#troubleshooting-the-descheduler), which
+covers the operator install, the CR, the rendered policy, the operand logs and
+the PDB in the order that rules each out.
 
 **Extra workers are never removed after recovery.**
 `skipNodesWithLocalStorage` defaults to `true` and these pods use `emptyDir`,
@@ -654,6 +648,218 @@ for exactly this reason. Also check `scaleDown.enabled` and give it
 `maxUnhealthy` is likely too low. One unhealthy node out of three workers is
 33%; a `maxUnhealthy` at or below that makes the MHC stand down. Recompute it if
 you run more than one worker per zone.
+
+---
+
+## Troubleshooting the descheduler
+
+The descheduler is the quietest of the three mechanisms — it has no CLI, emits
+nothing when it decides to do nothing, and the only outward sign it worked is a
+pod disappearing five minutes later. When 3/3/3 does not come back, work down
+this ladder in order. Each step rules out everything above it, and the fast way
+to run the whole thing is:
+
+```bash
+./simulate/descheduler-debug.sh
+```
+
+Object names below assume the defaults the operator creates. Confirm them once
+on your cluster before trusting any command that hardcodes one:
+
+```bash
+oc get all,cm,kubedescheduler -n openshift-kube-descheduler-operator
+```
+
+### Step 1 — Is the operator actually installed?
+
+```bash
+oc get csv -n openshift-kube-descheduler-operator
+oc get subscription -n openshift-kube-descheduler-operator -o yaml | grep -A10 'conditions:'
+oc get installplan -n openshift-kube-descheduler-operator
+```
+
+The CSV must read `Succeeded`. Anything else — `Pending`, `InstallReady`,
+`Failed` — and no operand exists yet, so nothing downstream can work. The usual
+causes are a missing `redhat-operators` CatalogSource (common on disconnected
+clusters, where it must be mirrored) or an OperatorGroup whose
+`targetNamespaces` does not include the install namespace.
+
+### Step 2 — Is the CR accepted, and is the operand running?
+
+```bash
+oc get kubedescheduler cluster -n openshift-kube-descheduler-operator
+oc get kubedescheduler cluster -n openshift-kube-descheduler-operator \
+  -o jsonpath='{range .status.conditions[*]}{.type}{"\t"}{.status}{"\t"}{.reason}{"\t"}{.message}{"\n"}{end}'
+
+oc get pods -n openshift-kube-descheduler-operator
+```
+
+You are looking for two pods: the operator (`descheduler-operator-*`) and the
+operand (`descheduler-*`). If only the operator is there, the CR was not
+accepted.
+
+Three things silently produce exactly that:
+
+- **The CR is not named `cluster`, or is not in
+  `openshift-kube-descheduler-operator`.** The operator reconciles only that
+  one name in that one namespace. A CR named anything else is accepted by the
+  API server — it is valid YAML against a real CRD — and then ignored forever.
+  No error, no status, no operand. Check with
+  `oc get kubedescheduler -A`.
+- **`managementState` is not `Managed`.** `Removed` scales the operand to zero;
+  `Unmanaged` leaves whatever is there and stops reconciling your edits.
+- **A `Degraded` condition.** Read the `message` from the jsonpath above —
+  `TargetConfigControllerDegraded` usually means the profile or
+  `profileCustomizations` you asked for is not valid for the operator version
+  installed.
+
+### Step 3 — Does the rendered policy contain the strategy you think it does?
+
+This is the highest-value check, and the one most people skip. The operator
+translates the `profiles` list in your CR into a descheduler policy file
+delivered as a ConfigMap. Read the rendered result rather than assuming your CR
+produced it:
+
+```bash
+oc get cm -n openshift-kube-descheduler-operator
+oc get cm cluster -n openshift-kube-descheduler-operator \
+  -o jsonpath='{.data.policy\.yaml}'
+```
+
+`RemovePodsViolatingTopologySpreadConstraint` must appear in that output. If it
+does not, the `TopologySpreadConstraint` profile did not take effect regardless
+of what the CR says — go back to the `Degraded` message in step 2.
+
+While you are in there, check what the rendered policy says about namespaces and
+about soft constraints. If you enabled `enableSoftTopologyConstraints` or a
+namespace filter, they show up here; if your customization was silently dropped,
+this is where you find out.
+
+### Step 4 — Is there actually a violation to act on?
+
+The descheduler is not broken when it has nothing to do. Before reading logs,
+confirm a real violation exists:
+
+```bash
+./simulate/verify-spread.sh
+oc get nodes -l node-role.kubernetes.io/worker -L topology.kubernetes.io/zone
+```
+
+The trap on the recovery leg: **the strategy computes topology domains from
+Nodes, not from AWS.** If the recovered AZ has no `Ready`, schedulable node —
+the stranded Machine was never remediated, or the replacement is still booting —
+then that zone is not a domain at all, the surviving 5/4 split is perfectly
+legal under `maxSkew: 1`, and the descheduler correctly evicts nothing. It looks
+identical to a broken descheduler.
+
+```bash
+oc get machines -n openshift-machine-api
+oc get nodes | grep -v Ready        # anything NotReady or SchedulingDisabled
+```
+
+Fix the node first, then give it one interval before concluding anything.
+
+### Step 5 — Read the operand log
+
+```bash
+# One pass, in full
+oc logs deployment/descheduler -n openshift-kube-descheduler-operator --tail=200
+
+# Follow it across the next interval
+oc logs deployment/descheduler -n openshift-kube-descheduler-operator -f
+
+# Just the decisions
+oc logs deployment/descheduler -n openshift-kube-descheduler-operator --tail=500 \
+  | grep -iE 'evict|topolog|skew|violat|pdb|disruption'
+```
+
+A pass logs the policy it loaded, the strategies it ran, and a count of pods
+evicted. What the interesting lines tell you:
+
+| Log line contains | Means |
+|---|---|
+| `"Number of evicted pods: 0"` (or no eviction lines at all) | The strategy ran and found nothing to do — you are in step 4 territory, not a descheduler fault |
+| `RemovePodsViolatingTopologySpreadConstraint` never appears | The strategy is not in the rendered policy — back to step 3 |
+| `Cannot evict pod as it would violate the pod's disruption budget` / HTTP 429 | The PDB is blocking it — step 6 |
+| `pod does not have an owner reference` / `no ReplicaSet owner` | Bare pods are skipped by design. Deployment pods are fine; if you see this, you are looking at something else |
+| `pod has local storage and descheduler is not configured with evictLocalStoragePods` | An `emptyDir` pod being refused. Our app uses `emptyDir`, so if this appears the operator's defaults are stricter than expected — enable local-storage eviction in `profileCustomizations` |
+| `pod is a DaemonSet pod` / `is a static pod` / `priority higher than threshold` | Correctly skipped, not your workload |
+| `namespace is excluded` | Step 7 |
+
+If the log is too terse to tell you anything, raise the level on the CR — it
+takes `logLevel` from the standard OpenShift operator spec:
+
+```bash
+oc patch kubedescheduler cluster -n openshift-kube-descheduler-operator \
+  --type=merge -p '{"spec":{"logLevel":"Debug"}}'
+```
+
+`Debug` is usually enough; `Trace` logs per-pod decisions. Put it back to
+`Normal` afterwards — this is noisy.
+
+### Step 6 — Is the PDB refusing every eviction?
+
+```bash
+oc get pdb -n az-resilience-demo
+oc describe pdb hello-az -n az-resilience-demo
+```
+
+Read the **ALLOWED DISRUPTIONS** column. If it is `0`, the descheduler cannot
+evict anything, and it will keep not evicting anything forever — this is the
+single most common reason a correctly configured descheduler appears dead.
+
+It reads `0` when `maxUnavailable: 0`, when `minAvailable` equals the replica
+count, or — the easy one to miss — when the replicas are not all healthy yet. If
+one of the nine pods is `Pending` or `CrashLoopBackOff`, the budget is already
+spent on that pod and there is no headroom left for a voluntary eviction. Get
+the app to nine `Running` first.
+
+### Step 7 — Is the workload excluded?
+
+The descheduler skips `openshift-*`, `kube-*` and `default` by default, which is
+why `01-namespace.yaml` creates a plain user namespace. Also check, in the
+rendered policy from step 3:
+
+- a `namespaces.included` list from `profileCustomizations` that does not
+  contain `az-resilience-demo` — an inclusion list excludes everything else
+- a priority threshold above your pods' priority class
+- `evictionLimits`, if your operator version supports it, capping evictions per
+  pass low enough that convergence stalls
+
+### Forcing a pass instead of waiting
+
+`deschedulingIntervalSeconds: 300` is the operator's minimum, so testing a
+change means five minutes per iteration. The operand runs a pass on startup, so
+restart it to get an immediate one:
+
+```bash
+oc rollout restart deployment/descheduler -n openshift-kube-descheduler-operator
+oc rollout status  deployment/descheduler -n openshift-kube-descheduler-operator
+oc logs -f deployment/descheduler -n openshift-kube-descheduler-operator
+```
+
+This is also how you confirm a CR edit is live at all: after any change to the
+`KubeDescheduler`, the operator rolls the operand, so a pod whose `AGE` predates
+your edit means your edit never took.
+
+### It evicts, but nothing improves
+
+Eviction is the only thing the descheduler does — the scheduler decides where
+the replacement lands. If pods are being evicted and coming straight back to the
+same over-weighted zone, the problem is on the scheduling side, not here:
+
+```bash
+oc get events -n az-resilience-demo --field-selector reason=Evicted \
+  --sort-by=.lastTimestamp | tail -20
+oc describe pod -n az-resilience-demo -l app=hello-az | grep -A10 'Events:'
+```
+
+`FailedScheduling` on the new pod names the filter that rejected the recovered
+zone's node — most often a taint the node still carries, or a `nodeSelector` the
+new node does not satisfy. Also remember that three passes are needed to walk
+0/5/4 back to 3/3/3; one eviction that appears to change nothing is expected
+progress, not a failure. See
+[Why recovery takes ~15 minutes, not 5](#3-why-recovery-takes-15-minutes-not-5).
 
 ---
 
