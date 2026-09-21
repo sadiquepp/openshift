@@ -358,13 +358,15 @@ networks.
 | Fidelity | Low — planned evacuation | High | High, and repeatable |
 | Node state | `Ready,SchedulingDisabled` | `NotReady` | `NotReady` |
 | Taint applied | `unschedulable:NoSchedule` | `unreachable:NoExecute` | `unreachable:NoExecute` |
-| Exercises `nodeTaintsPolicy` | ❌ No | ✅ Yes | ✅ Yes |
+| Exercises `nodeTaintsPolicy` | ✅ Yes (`NoSchedule`) | ✅ Yes | ✅ Yes |
 | Exercises MHC remediation | ❌ No | ✅ Yes | ✅ Yes |
+| Exercises `NoExecute` eviction | ❌ No — drain evicts | ✅ Yes | ✅ Yes |
 | Pod termination | Graceful | Ungraceful (node unreachable) | Ungraceful |
 | Blast radius | Cluster only | Every subnet in the AZ | Tagged subnets in the AZ, or one subnet by ARN |
 | Auto-revert | No | No (`--undo`) | ✅ Yes, on duration expiry |
 | AWS permissions | none | `ec2:*NetworkAcl*` | FIS + service role |
-| Best for | Smoke-testing the manifests | A true one-off outage test | Scheduled/repeated game days |
+| Descheduler recovery leg | ✅ Faithful | ✅ Faithful | ✅ Faithful |
+| Best for | Iterating on spread + descheduler | A true one-off outage test | Scheduled/repeated game days |
 
 ### Method 1 — node drain
 
@@ -375,16 +377,32 @@ networks.
 ```
 
 **What it exercises.** The topology spread and autoscaler paths, quickly and
-with no AWS access. Cordoning removes the node as a scheduling candidate, so
-pods redistribute and Pending pods still drive scale-up.
+with no AWS access — and more than you might expect.
 
-**What it does not exercise, and why that matters.** The node stays `Ready` and
-the kubelet keeps reporting. The taint is `NoSchedule`, not `NoExecute`, so this
-never tests `nodeTaintsPolicy: Honor` — a Deployment with the default `Ignore`
-will pass this test and then fail a real outage. The MachineHealthCheck also
-never fires, since nothing is unhealthy. Treat a passing drain test as "my
-manifests are syntactically doing the right thing", not as evidence of zone
-resilience.
+Cordoning adds `node.kubernetes.io/unschedulable:NoSchedule`, and
+`nodeTaintsPolicy: Honor` excludes nodes carrying any `NoSchedule` or
+`NoExecute` taint the pod does not tolerate. So the cordoned node drops out of
+the domain calculation exactly as an unreachable one does, and the drain is a
+real test of [mechanism 2](#2-nodetaintspolicy-honor-is-what-lets-pods-leave-the-dead-zone):
+with the default `nodeTaintsPolicy: Ignore` the drained zone would still count
+as a domain holding 0 pods, and the displaced pods would sit Pending rather than
+forming a 5/4 split. If a drain redistributes cleanly, that setting is working.
+
+**What it does not exercise.** The node stays `Ready` and the kubelet keeps
+reporting. Pods leave because `oc adm drain` evicts them through the eviction
+API, gracefully and one PDB slot at a time — nothing tests the
+`unreachable:NoExecute` path, the `tolerationSeconds` you set for it, or how the
+app behaves when connections are severed mid-request instead of drained. The
+MachineHealthCheck never fires either, since nothing is unhealthy. A passing
+drain says your scheduling configuration is correct; it says nothing about
+whether the app survives an ungraceful zone loss.
+
+**The uncordon is a faithful recovery test.** On the way back, an uncordoned
+node and a freshly booted replacement node look identical to the descheduler:
+the zone is a domain again, holding 0 pods, and 0/5/4 violates `maxSkew: 1`. The
+rebalance proceeds exactly as after a real outage, which makes cordon → drain →
+uncordon the fastest loop for iterating on the descheduler half of this test.
+See [Does the descheduler act after a cordon → uncordon?](#does-the-descheduler-act-after-a-cordon--uncordon)
 
 ### Method 2 — network ACL blackhole
 
@@ -825,6 +843,61 @@ rendered policy from step 3:
 - a priority threshold above your pods' priority class
 - `evictionLimits`, if your operator version supports it, capping evictions per
   pass low enough that convergence stalls
+
+### Does the descheduler act after a cordon → uncordon?
+
+Yes — a cordon/drain/uncordon cycle produces the same rebalance a real AZ
+recovery does, and it is the quickest way to exercise that leg.
+
+Why it works: while the node is cordoned it carries
+`node.kubernetes.io/unschedulable:NoSchedule`, so `nodeTaintsPolicy: Honor`
+drops it from the domain calculation and the surviving zones legally hold 5 and
+4. The uncordon removes that taint, the zone becomes a domain again holding 0
+pods, and 0/5/4 now violates `maxSkew: 1`. The descheduler's next pass sees that
+violation and starts evicting from the over-weighted zones.
+
+What it needs, in the order worth checking:
+
+```bash
+# 1. The taint is actually gone and the node is schedulable
+oc get node <node> -o jsonpath='{.spec.unschedulable}{"\n"}{.spec.taints}{"\n"}'
+
+# 2. PDB has headroom (ALLOWED DISRUPTIONS > 0)
+oc get pdb -n az-resilience-demo
+
+# 3. The recovered node has room for the returning pods
+oc describe node <node> | grep -A5 'Allocated resources'
+```
+
+Timing is the part that trips people up. **The descheduler is a timer, not a
+controller** — it does not watch for the uncordon and react. The first pass
+lands up to `deschedulingIntervalSeconds` (300s) after you uncordon, and
+convergence back to 3/3/3 still takes about three passes, so budget ~15 minutes
+before concluding it is not working. See
+[Why recovery takes ~15 minutes, not 5](#3-why-recovery-takes-15-minutes-not-5).
+To skip the wait while iterating, restart the operand as described below.
+
+Two cordon-specific things to be aware of:
+
+- **Do not set `minReplicas: 0` on the MachineAutoscalers.** The recovered node
+  sits empty for up to five minutes, which makes it a scale-down candidate. If
+  the autoscaler is allowed to take the zone to zero nodes it may remove the
+  node before the descheduler rebalances onto it, and the two will fight: the
+  descheduler evicts, the pod cannot fit in the zone, it returns to where it
+  came from. `06-machineautoscaler.yaml` uses `minReplicas: 1` partly for this
+  reason.
+- **A cordon alone does nothing.** Cordoning without draining leaves the pods
+  running where they are, so the spread never changes and there is nothing to
+  rebalance on uncordon. `drain-az.sh` does both; if you cordoned by hand,
+  drain too.
+
+You may also see the descheduler evicting *during* the cordoned window, with the
+evicted pods simply landing back in the surviving zones. Whether it does depends
+on whether your descheduler version applies `nodeTaintsPolicy` when it computes
+domains — the scheduler always does, but the descheduler's implementation of
+that has changed across releases. It is harmless churn bounded by the PDB, not a
+fault, but it is worth recognising so you do not read it as the rebalance having
+already happened.
 
 ### Forcing a pass instead of waiting
 
