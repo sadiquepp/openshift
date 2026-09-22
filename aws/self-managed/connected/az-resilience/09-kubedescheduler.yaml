@@ -1,10 +1,3 @@
----
-# The name MUST be "cluster" and the namespace
-# openshift-kube-descheduler-operator -- the operator reconciles no other CR.
-#
-# This spec is the version validated on a live cluster. Three of its fields are
-# the difference between a descheduler that rebalances and one that looks
-# healthy while doing nothing at all -- see the comments on each.
 apiVersion: operator.openshift.io/v1
 kind: KubeDescheduler
 metadata:
@@ -13,56 +6,26 @@ metadata:
 spec:
   managementState: Managed
 
-  # ------------------------------------------------------------------
-  # REQUIRED. The default is Predictive, which only simulates: it logs the
-  # evictions it would have made and evicts nothing. A Predictive descheduler
-  # is indistinguishable from a working one until you notice no pod ever
-  # actually moves -- CR accepted, operand Running, no errors, no effect.
-  # ------------------------------------------------------------------
+  # Actually evict pods.
+  # Predictive only simulates.
   mode: Automatic
 
-  # 60s makes the test loop tolerable. Convergence back to 3/3/3 takes several
-  # passes regardless of interval (see resilience-testing.md, "Why recovery
-  # takes several descheduler passes"), so a short interval is the difference
-  # between rebalancing in ~3 minutes and ~15. Raise it for production, where
-  # there is no reason to re-evaluate the whole cluster every minute.
+  # Run every 60 seconds for the test.
   deschedulingIntervalSeconds: 60
 
   profiles:
-    # Enables RemovePodsViolatingTopologySpreadConstraint: each pass compares
-    # the live distribution against each workload's own
-    # topologySpreadConstraints and evicts from the over-weighted domains.
-    # It only evicts -- the scheduler decides where the replacement lands, and
-    # with maxSkew 1 the recovered zone is the only legal destination.
-    #
-    # This profile also bundles RemoveDuplicates, which spreads same-ReplicaSet
-    # pods across nodes. Benign here (9 replicas over 3 nodes is exactly its
-    # target average) but it is extra behaviour beyond what this test needs.
-    # Newer operator versions expose a narrower `TopologySpreadConstraint`
-    # profile that carries the topology strategy alone -- prefer it if your
-    # version's CRD accepts it.
+    # Rebalance pods according to topologySpreadConstraints
     - TopologyAndDuplicates
 
-    # ------------------------------------------------------------------
-    # REQUIRED for this workload. hello-az mounts emptyDir volumes for its
-    # DocumentRoot and /run/httpd, and the descheduler refuses to evict a pod
-    # with local storage unless this is enabled. Without it the topology
-    # strategy finds the violation, declines every candidate, and reports zero
-    # evictions -- again, with no error anywhere.
-    # ------------------------------------------------------------------
+    # Required because hello-az uses emptyDir
     - EvictPodsWithLocalStorage
 
+  # Restrict the test only to our demo namespace
   profileCustomizations:
-    # Confine the descheduler to the demo namespace. Worth keeping on any
-    # cluster that is not exclusively yours: without it these profiles apply
-    # to every eligible workload, not just the test app.
     namespaces:
       included:
         - az-resilience-demo
 
-  # One eviction per pass. Together with the PDB (maxUnavailable: 1) this keeps
-  # the rebalance to a steady walk instead of a burst, and makes each pass easy
-  # to read in the logs. Requires a recent operator version; drop this field if
-  # your CRD rejects it and rely on the PDB alone.
+  # Evict only one pod per descheduler cycle
   evictionLimits:
     total: 1
