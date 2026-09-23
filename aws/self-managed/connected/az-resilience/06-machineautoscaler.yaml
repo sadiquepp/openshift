@@ -1,0 +1,83 @@
+---
+# One MachineAutoscaler per AZ MachineSet. These are the node groups the
+# cluster autoscaler is allowed to grow when displaced pods go Pending.
+#
+# Substitute <infra-id> and the region/AZ suffixes to match your cluster:
+#
+#   oc get machinesets -n openshift-machine-api
+#   INFRA_ID=$(oc get infrastructure cluster -o jsonpath='{.status.infrastructureName}')
+#
+# The MachineSet names below follow the installer's convention,
+# <infra-id>-worker-<az>, e.g. ocp-demo-abcde-worker-us-east-1a.
+#
+# minReplicas: 1 keeps one worker per zone at steady state (the 3-node baseline
+# this test assumes). maxReplicas: 4 gives each surviving zone room to absorb
+# the displaced pods -- with 3 pods per node, two zones at 4 nodes can hold far
+# more than the 9 replicas, so the cap is not what limits recovery.
+#
+# Do NOT create a single MachineSet spanning all three AZs: the autoscaler
+# cannot choose which zone a new node lands in, and topology spread would be
+# left to chance.
+#
+# ---------------------------------------------------------------------------
+# DO NOT APPLY THIS ON ROSA (or any other managed OpenShift).
+#
+# There are no user-managed MachineSets to point scaleTargetRef at -- ROSA
+# exposes machine pools (Classic) / node pools (HCP) instead, and autoscaling
+# is enabled on the pool itself via the Hybrid Cloud Console
+# (console.redhat.com/openshift -> your cluster -> Machine pools -> Edit ->
+# Enable autoscaling) or `rosa edit machinepool --enable-autoscaling
+# --min-replicas N --max-replicas M`.
+#
+# The per-AZ node group this file builds maps onto ROSA differently depending
+# on the flavour:
+#
+#   ROSA Classic, multi-AZ: one machine pool spans all three AZs and its
+#     replica count must be a multiple of 3, so a pool autoscaling from 3 to 12
+#     gives the one-node-per-AZ baseline this test assumes and grows evenly.
+#     You cannot scale a single zone independently.
+#
+#   ROSA HCP: node pools are single-AZ, so create one per AZ -- the closest
+#     equivalent to the three MachineAutoscalers below, and the one that lets a
+#     surviving zone grow on its own.
+#
+# See resilience-testing.md, "Running this on ROSA".
+# ---------------------------------------------------------------------------
+apiVersion: autoscaling.openshift.io/v1beta1
+kind: MachineAutoscaler
+metadata:
+  name: worker-us-east-1a
+  namespace: openshift-machine-api
+spec:
+  minReplicas: 1
+  maxReplicas: 4
+  scaleTargetRef:
+    apiVersion: machine.openshift.io/v1beta1
+    kind: MachineSet
+    name: <infra-id>-worker-us-east-1a
+---
+apiVersion: autoscaling.openshift.io/v1beta1
+kind: MachineAutoscaler
+metadata:
+  name: worker-us-east-1b
+  namespace: openshift-machine-api
+spec:
+  minReplicas: 1
+  maxReplicas: 4
+  scaleTargetRef:
+    apiVersion: machine.openshift.io/v1beta1
+    kind: MachineSet
+    name: <infra-id>-worker-us-east-1b
+---
+apiVersion: autoscaling.openshift.io/v1beta1
+kind: MachineAutoscaler
+metadata:
+  name: worker-us-east-1c
+  namespace: openshift-machine-api
+spec:
+  minReplicas: 1
+  maxReplicas: 4
+  scaleTargetRef:
+    apiVersion: machine.openshift.io/v1beta1
+    kind: MachineSet
+    name: <infra-id>-worker-us-east-1c

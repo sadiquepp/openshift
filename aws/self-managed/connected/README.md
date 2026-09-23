@@ -783,6 +783,20 @@ will auto-renew when the certificate has fewer than 30 days remaining
 update the secrets on the bastion, then re-run `./apply-letsencrypt-certs.sh`.
 
 ---
+## AZ Failure Resilience Testing
+
+[`az-resilience/`](az-resilience/) holds a self-contained test that proves an
+application survives the loss of a single Availability Zone on a three-AZ
+cluster built from this environment: a 9-replica stateless Deployment spread
+3/3/3 with `topologySpreadConstraints`, cluster + machine autoscalers to add
+workers in the surviving zones, and the Kube Descheduler Operator
+(`TopologySpreadConstraint` profile) to rebalance once the zone returns.
+
+Three AZ-failure simulation methods (node drain, network ACL blackhole, AWS
+Fault Injection Service) are scripted and compared in
+[`az-resilience/resilience-testing.md`](az-resilience/resilience-testing.md).
+
+---
 ## Access Bastion VNC Console for GUI Access
 ```bash
 sudo su - vncuser

@@ -1,0 +1,32 @@
+---
+# Kube Descheduler Operator install. Apply this and wait for the CSV to reach
+# Succeeded before applying 09-kubedescheduler.yaml:
+#
+#   oc get csv -n openshift-kube-descheduler-operator -w
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openshift-kube-descheduler-operator
+  labels:
+    openshift.io/cluster-monitoring: "true"
+---
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: openshift-kube-descheduler-operator
+  namespace: openshift-kube-descheduler-operator
+spec:
+  targetNamespaces:
+    - openshift-kube-descheduler-operator
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: cluster-kube-descheduler-operator
+  namespace: openshift-kube-descheduler-operator
+spec:
+  channel: stable
+  installPlanApproval: Automatic
+  name: cluster-kube-descheduler-operator
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
