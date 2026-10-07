@@ -117,6 +117,7 @@ hardened/
   check-bases.sh              what a new base image release made stale
   scan-stack.sh               CVE diff between two deployed namespaces
   cve-demo/                   emailservice built 3 ways, scanned and diffed
+                              (compare.sh, or manual-steps.md by hand)
 ```
 
 ## Why the base needs patching

@@ -532,6 +532,8 @@ build-push.sh                 build all 11, or --only one; push immutable + floa
 check-bases.sh                which services a new base image release made stale
 scan-stack.sh                 scan a running namespace; diff two of them
 cve-demo/                     emailservice built 3 ways, scanned and diffed
+  compare.sh                  ... as one command
+  manual-steps.md             ... as individual commands you run yourself
 ```
 
 Deploy-time changes are in [`../overlays/hardened`](../overlays/hardened), and the UBI counterpart
