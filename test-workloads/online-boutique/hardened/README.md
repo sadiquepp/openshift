@@ -158,35 +158,145 @@ not be checked from here and they are the most likely cause of a first-run failu
    builder stage. This is the single most likely runtime failure in the whole set, and it shows up
    as an `ImportError` on `grpc._cython`, not at build time.
 
-## Running it
+## Getting started
+
+Six steps, in this order. The first three take about five minutes and will tell
+you whether the other three are going to work.
+
+### 1. Preflight
+
+```bash
+./preflight.sh registry.example.com:8443 --build-check
+```
+
+Checks your tooling, then asks the registry whether every tag in
+[`bases.env`](bases.env) actually exists, whether `hi/go` works as a runtime base
+for a static binary, and whether `hi/python` carries `libstdc++` — the three
+things flagged under [Before the first build](#before-the-first-build). It
+pushes nothing and exits non-zero if anything is wrong, with the fix in the
+message. A wrong tag is the most likely reason a first run dies, and this is how
+you find out in ten seconds instead of twenty minutes.
+
+Needs `skopeo` and `podman`; `--build-check` additionally builds and runs a
+five-line static Go binary across the builder/runtime pair.
+
+### 2. Point the overlays at your registry
+
+```bash
+./set-registry.sh registry.example.com:8443/online-boutique
+./set-registry.sh --check
+```
+
+Rewrites all 13 image references in both overlays. Idempotent — run it again
+with a different value any time. Takes `<registry>/<namespace>`, not a bare
+registry, because 13 repositories at a registry root is nobody's intent.
+
+### 3. Build and scan one service
+
+```bash
+cd cve-demo && ./compare.sh && cd ..
+```
+
+Start here rather than with the full stack. It exercises the whole Python
+toolchain end to end — hardened builder, wheel install, distroless runtime — on
+the service most likely to expose a problem, and it is also the CVE comparison,
+so step 3 is both the smoke test and the demo. Roughly ten minutes, mostly
+pulling base images. Read `cve-demo/results/report.md` when it finishes.
+
+If this works, the remaining ten services are variations on it.
+
+### 4. Build the full stack
 
 ```bash
 podman login registry.example.com:8443
-./build-push.sh registry.example.com:8443/online-boutique
+BASE=hardened ./build-push.sh registry.example.com:8443/online-boutique
 ```
 
-Builds all 11 services from a shallow clone of upstream `v0.10.6`, pushes each, and mirrors
-`hi/valkey` alongside them. Override the version with a second argument, any base image with the
-`GO_BUILDER`/`PY_RUNTIME`/… environment variables, and the engine with `ENGINE=docker`.
+Clones upstream `v0.10.6`, builds all 11 services, pushes each, mirrors the
+cache image. Expect 20–40 minutes — `adservice` (Gradle) and `cartservice`
+(.NET restore) dominate, and both need outbound access to Maven Central and
+NuGet. Add `BASE=ubi` in a second run for the comparison stack.
 
-`BASE=ubi ./build-push.sh …` builds the same 11 services on UBI 9 instead and tags them `-ubi`, so
-both stacks can sit in one registry and be compared. The Containerfiles are shared — only the base
-images change, which is what makes the comparison meaningful. Both sets live in
-[`bases.env`](bases.env).
+### 5. Let the cluster pull from your registry
 
-Then set your registry in [`../overlays/hardened/kustomization.yaml`](../overlays/hardened/kustomization.yaml)
-— it ships with the repo's usual `registry.example.com:8443` placeholder — and:
+Two things OpenShift needs, and the usual cause of `ImagePullBackOff` here.
+
+**A private CA.** If the registry serves a self-signed or internal certificate,
+trust it cluster-wide. Note the `..` in the key where the port's colon goes:
 
 ```bash
-oc apply -k test-workloads/online-boutique/overlays/hardened
+oc create configmap registry-cas -n openshift-config \
+  --from-file=registry.example.com..8443=/path/to/ca.crt
+```
+
+```bash
+oc patch image.config.openshift.io/cluster --type=merge \
+  -p '{"spec":{"additionalTrustedCA":{"name":"registry-cas"}}}'
+```
+
+**Credentials**, if the registry needs a login. Namespace-scoped is the lighter
+option, but this workload has 12 ServiceAccounts, so link the secret to all of
+them — and run it *after* `oc apply`, since the manifests create those accounts:
+
+```bash
+oc create secret docker-registry mirror-creds -n online-boutique \
+  --docker-server=registry.example.com:8443 \
+  --docker-username='<user>' --docker-password='<pass>'
+```
+
+```bash
+for sa in $(oc get sa -n online-boutique -o name); do
+  oc secrets link "${sa#*/}" mirror-creds --for=pull -n online-boutique
+done
+```
+
+Adding the credentials to the cluster-wide pull secret instead covers every
+namespace in one step, but it rolls every node through the Machine Config
+Operator — correct, and not what you want mid-demo.
+
+### 6. Deploy and diff
+
+```bash
+oc apply -k ../overlays/hardened
+oc get pods -n online-boutique -w
 ```
 
 ```bash
 oc get route frontend -n online-boutique -o jsonpath='https://{.spec.host}{"\n"}'
 ```
 
-The overlay builds on `overlays/default`, so the namespace, labels and the SCC patches all come
-from the same place they always did.
+Then, once the UBI stack is built and deployed too:
+
+```bash
+oc apply -k ../overlays/ubi
+./scan-stack.sh online-boutique online-boutique-ubi
+```
+
+### If a pod will not start
+
+| symptom | cause |
+|---|---|
+| `ImagePullBackOff` | step 5 — CA not trusted, or no pull secret on that ServiceAccount |
+| `CrashLoopBackOff` on a Python service, `ImportError` on `grpc._cython` | `libstdc++` missing from the runtime image; see the fix `preflight.sh` prints |
+| `CreateContainerError`, `exec: "/bin/sh"` | something still has a shell-form entrypoint or a shell `command:` — the runtime images are distroless |
+| `unable to validate against any security context constraint` | the base `runAsUser`/`runAsGroup`/`fsGroup` patch did not apply; `kustomize build` and check the pod `securityContext` is `runAsNonRoot` only |
+| permission denied reading `/app` | an image built without the `chmod -R a+rX` the Containerfiles end with |
+
+`oc rsh` will not work on these pods — there is no shell. Use
+`oc debug --image=registry.access.redhat.com/ubi9/ubi-minimal -n online-boutique`
+or read `oc logs`.
+
+## Knobs
+
+`build-push.sh` takes the upstream version as a second argument, the engine as
+`ENGINE=docker`, and every base image from the environment — the full list, for
+both base sets, is in [`bases.env`](bases.env). `BASE=ubi` builds the same 11
+services on UBI 9 and tags them `-ubi`, from the same Containerfiles; only the
+base images change, which is what makes the comparison in
+[`cve-demo/`](cve-demo) mean anything.
+
+Both overlays build on `overlays/default`, so the namespace, labels and the SCC
+patches come from where they always did.
 
 ### Disconnected clusters
 
@@ -206,6 +316,8 @@ Containerfile.loadgenerator   loadgenerator — separate because of the Locust e
 Containerfile.java            adservice
 Containerfile.dotnet          cartservice
 bases.env                     the hardened and UBI base-image sets  (BASE=hardened|ubi)
+preflight.sh                  check tags, runtimes and your registry before building
+set-registry.sh               point both overlays at your registry
 build-push.sh                 clone upstream, build all 11, push, mirror the cache image
 scan-stack.sh                 scan a running namespace; diff two of them
 cve-demo/                     emailservice built 3 ways, scanned and diffed
