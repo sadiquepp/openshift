@@ -172,7 +172,8 @@ run:
    end — but using it would ship a compiler in four of eleven production images,
    so it is deliberately not the default.
 
-And two things that are not catalog questions but broke the same way:
+And three things that are not catalog questions but bit during the first real
+builds:
 
 5. **The interpreter is `python3`, not `python`.** RHEL and Fedora ship
    `/usr/bin/python3` and only provide a bare `python` if
@@ -192,6 +193,15 @@ And two things that are not catalog questions but broke the same way:
    keep their base image's non-root user, and OpenShift assigns a UID from the
    namespace range anyway. `preflight.sh` reports the builder's uid so an edited
    Containerfile that drops `USER 0` has an obvious explanation.
+7. **`pip --prefix` splits packages across `lib/` and `lib64/` on RHEL.** Fedora
+   and RHEL patch `sysconfig` so *purelib* goes to `lib/` and *platlib* to
+   `lib64/`. `grpcio` is a compiled extension, so installing with `--prefix` and
+   then moving `lib/python*/site-packages` moved the pure packages and left
+   `grpc` behind — the build succeeded and `import grpc` then failed. All four
+   Python Containerfiles now use `--target`, which puts everything in one flat
+   directory and removes the `python3.X` path component too. The import smoke
+   test in `cve-demo/Containerfile.hardened` is what caught it, at build time
+   rather than in a CrashLoopBackOff.
 
 ## Getting started
 

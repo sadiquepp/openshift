@@ -24,8 +24,14 @@ FROM ${BUILDER} AS builder
 USER 0
 WORKDIR /app
 COPY requirements.txt ./
-RUN python3 -m pip install --no-cache-dir --prefix=/app/python -r requirements.txt \
- && mv /app/python/lib/python*/site-packages /app/site-packages
+# --target puts every package, pure-Python and compiled alike, into one flat
+# directory. NOT --prefix: RHEL and Fedora patch sysconfig so that a prefix
+# install splits purelib into lib/ and platlib into lib64/, and grpcio is a
+# compiled extension, so `mv .../lib/python*/site-packages` moved the pure
+# packages and silently left grpc behind in lib64 -- a build that succeeded and
+# then failed on `import grpc`. --target also means no python3.X directory name
+# in any path, so nothing downstream has to know the interpreter version.
+RUN python3 -m pip install --no-cache-dir --target=/app/site-packages -r requirements.txt
 COPY locustfile.py ./
 RUN chmod -R a+rX /app
 
