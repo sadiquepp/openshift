@@ -172,7 +172,7 @@ run:
    end — but using it would ship a compiler in four of eleven production images,
    so it is deliberately not the default.
 
-And one thing that is not a catalog question but broke the same way:
+And two things that are not catalog questions but broke the same way:
 
 5. **The interpreter is `python3`, not `python`.** RHEL and Fedora ship
    `/usr/bin/python3` and only provide a bare `python` if
@@ -183,6 +183,15 @@ And one thing that is not a catalog question but broke the same way:
    with a crun `executable file not found`, which reads exactly like a missing
    interpreter and is why `preflight.sh` now identifies the name before it tests
    anything with it.
+6. **The `-builder` images run as uid 65532, not root.** A directory created by
+   `WORKDIR` is owned by root, so an unprivileged `RUN` cannot write into it:
+   `pip --prefix=/install` downloads every wheel and then fails with
+   `OSError: [Errno 13] Permission denied`, and `dnf`, `gradle` and
+   `dotnet publish` fail the same way. Every build stage here declares `USER 0`,
+   which costs nothing because build stages are discarded — the runtime stages
+   keep their base image's non-root user, and OpenShift assigns a UID from the
+   namespace range anyway. `preflight.sh` reports the builder's uid so an edited
+   Containerfile that drops `USER 0` has an obvious explanation.
 
 ## Getting started
 

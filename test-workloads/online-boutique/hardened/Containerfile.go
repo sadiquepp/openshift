@@ -17,6 +17,13 @@ ARG BUILDER=registry.access.redhat.com/hi/go:latest-builder
 ARG RUNTIME=registry.access.redhat.com/hi/static:latest
 
 FROM ${BUILDER} AS builder
+# The -builder variants run as a non-root user, and a directory created by
+# WORKDIR is owned by root, so an unprivileged RUN cannot write into it --
+# installs, dnf, chmod and the compiler all fail with EACCES. Build stages
+# therefore run as root. Nothing from this stage ships: the runtime stage below
+# keeps its base image's non-root user, and OpenShift assigns its own UID from
+# the namespace range regardless.
+USER 0
 WORKDIR /src
 COPY . ./
 RUN go mod download \

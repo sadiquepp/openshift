@@ -15,6 +15,13 @@ ARG BUILDER=registry.access.redhat.com/hi/python:3.12-builder
 ARG RUNTIME=registry.access.redhat.com/hi/python:3.12
 
 FROM ${BUILDER} AS builder
+# The -builder variants run as a non-root user, and a directory created by
+# WORKDIR is owned by root, so an unprivileged RUN cannot write into it --
+# installs, dnf, chmod and the compiler all fail with EACCES. Build stages
+# therefore run as root. Nothing from this stage ships: the runtime stage below
+# keeps its base image's non-root user, and OpenShift assigns its own UID from
+# the namespace range regardless.
+USER 0
 WORKDIR /app
 COPY requirements.txt ./
 RUN python3 -m pip install --no-cache-dir --prefix=/app/python -r requirements.txt \

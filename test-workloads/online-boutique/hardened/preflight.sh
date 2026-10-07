@@ -162,6 +162,24 @@ else
 fi
 
 echo
+echo "== build stages: which user do the -builder images run as?"
+# A non-root builder cannot write into a WORKDIR-created directory, because that
+# directory is owned by root. That is what breaks `pip --prefix=/install`, dnf,
+# gradle and dotnet publish, and it surfaces only after the download finishes.
+# Every build stage in this directory declares USER 0 for exactly this reason;
+# this check reports the fact so an edited Containerfile that drops it has an
+# obvious explanation.
+if uid=$("$ENGINE" run --rm --entrypoint id "$PY_BUILDER" -u 2>/dev/null); then
+  if [ "$uid" = 0 ]; then
+    pass "$PY_BUILDER runs as root -- USER 0 in the build stages is a no-op"
+  else
+    pass "$PY_BUILDER runs as uid $uid -- which is why build stages declare USER 0"
+  fi
+else
+  warn "could not read the builder's uid (no \`id\` in the image?) -- not fatal"
+fi
+
+echo
 echo "== end to end: can the Go pair build and run a static binary?"
 if [ "$BUILD_CHECK" -eq 1 ]; then
   tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
