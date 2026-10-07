@@ -52,8 +52,8 @@ them.
 | `golang:1.26-alpine` | `hi/go:latest-builder` | |
 | `gcr.io/distroless/static` | `hi/go:latest` | runtime stage only holds a static binary |
 | `node:20-alpine` | `hi/nodejs:latest-builder` / `:latest` | |
-| `python:3.14-alpine` | `hi/python:3.14-builder` / `:3.14` | |
-| `eclipse-temurin:25-jre-alpine` | `hi/openjdk:25-builder` / `:25` | |
+| `python:3.14-alpine` | `hi/python:3.12-builder` / `:3.12` | 3.12 so the UBI comparison is on one interpreter |
+| `eclipse-temurin:25-jre-alpine` | `hi/openjdk:21-builder` / `:21` | `build.gradle` sets `sourceCompatibility = VERSION_21` |
 | `mcr.microsoft.com/dotnet/sdk:10.0` | `hi/dotnet-sdk:10.0` | |
 | `mcr.microsoft.com/dotnet/runtime-deps:10.0` | `hi/dotnet-runtime:10.0` | |
 | `redis:alpine` | `hi/valkey` | Valkey, not Redis — see below |
@@ -145,12 +145,11 @@ server try to persist.
 Three things to confirm against [images.redhat.com](https://images.redhat.com/), because they could
 not be checked from here and they are the most likely cause of a first-run failure:
 
-1. **Tags.** Everything here assumes `hi/python:3.14`, `hi/openjdk:25`, `hi/dotnet-sdk:10.0`,
-   `hi/go:latest`, `hi/nodejs:latest`. They are variables in both the Containerfiles and
-   `build-push.sh` precisely so they can be corrected in one place. `cartservice` targets `net10.0`
-   and `adservice` builds on JDK 24+ — if the catalog's versions are older, those two need
-   `TargetFramework` / Gradle toolchain adjustment, which is the one place this could get genuinely
-   annoying.
+1. **Tags.** Everything here assumes `hi/python:3.12`, `hi/openjdk:21`, `hi/dotnet-sdk:10.0`,
+   `hi/go:latest`, `hi/nodejs:latest`. They all live in [`bases.env`](bases.env), so a wrong guess
+   is a one-line fix in one file. `cartservice` targets `net10.0`, which is the one hard floor here
+   — if the catalog has no .NET 10, that service needs its `TargetFramework` changed. `adservice`
+   needs only JDK 21 despite upstream building it on 24.
 2. **Whether `hi/go:latest` is usable as a runtime base** for a static binary, or whether the `go`
    image is builder-only. If it is builder-only, set `GO_RUNTIME` to `ubi9/ubi-micro` or `scratch` —
    these four services speak plaintext gRPC in-cluster and need neither a CA bundle nor tzdata.
@@ -169,6 +168,11 @@ podman login registry.example.com:8443
 Builds all 11 services from a shallow clone of upstream `v0.10.6`, pushes each, and mirrors
 `hi/valkey` alongside them. Override the version with a second argument, any base image with the
 `GO_BUILDER`/`PY_RUNTIME`/… environment variables, and the engine with `ENGINE=docker`.
+
+`BASE=ubi ./build-push.sh …` builds the same 11 services on UBI 9 instead and tags them `-ubi`, so
+both stacks can sit in one registry and be compared. The Containerfiles are shared — only the base
+images change, which is what makes the comparison meaningful. Both sets live in
+[`bases.env`](bases.env).
 
 Then set your registry in [`../overlays/hardened/kustomization.yaml`](../overlays/hardened/kustomization.yaml)
 — it ships with the repo's usual `registry.example.com:8443` placeholder — and:
@@ -201,7 +205,33 @@ Containerfile.python          emailservice, recommendationservice  (ENTRY build 
 Containerfile.loadgenerator   loadgenerator — separate because of the Locust entrypoint
 Containerfile.java            adservice
 Containerfile.dotnet          cartservice
-build-push.sh                 clone upstream, build all 11, push, mirror valkey
+bases.env                     the hardened and UBI base-image sets  (BASE=hardened|ubi)
+build-push.sh                 clone upstream, build all 11, push, mirror the cache image
+scan-stack.sh                 scan a running namespace; diff two of them
+cve-demo/                     emailservice built 3 ways, scanned and diffed
 ```
 
-The matching deploy-time changes are in [`../overlays/hardened`](../overlays/hardened).
+Deploy-time changes are in [`../overlays/hardened`](../overlays/hardened), and the UBI counterpart
+in [`../overlays/ubi`](../overlays/ubi).
+
+## Measuring it
+
+Whether this is worth doing is an empirical question, so there are two ways to answer it:
+
+| | scope | what it answers |
+|---|---|---|
+| [`cve-demo/`](cve-demo) | one service, three variants | separates what *multi-stage* buys from what the *hardened base* buys — and is the worked example of the multi-stage pattern |
+| [`scan-stack.sh`](scan-stack.sh) | two whole namespaces | the as-deployed number, per service and per stack |
+
+```bash
+cd cve-demo && ./compare.sh
+```
+
+```bash
+./scan-stack.sh online-boutique online-boutique-ubi
+```
+
+Both need `grype` or `trivy` and nothing else. Neither commits its output: CVE
+counts are true for the day they were scanned, and a stale table in git reads as
+a current claim. See [`cve-demo/README.md`](cve-demo/README.md) for how to read
+the diff, including the two ways a scan can mislead you.

@@ -1,0 +1,4 @@
+# scan-stack.sh output. Not committed: a CVE count is only true for the day it
+# was scanned, and a stale one in git reads as a current claim.
+results-*/
+results-stack-report.md

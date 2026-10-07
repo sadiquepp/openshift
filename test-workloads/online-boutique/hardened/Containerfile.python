@@ -10,10 +10,13 @@
 # path, so nothing here is pinned to a particular python3.X directory name and
 # there is no venv whose interpreter path has to exist in the runtime image.
 
-ARG BUILDER=registry.access.redhat.com/hi/python:3.14-builder
+# 3.12 rather than upstream's 3.14: UBI 9 tops out at 3.12, and cve-demo/ needs
+# both sides of its comparison on the same interpreter. Nothing in these two
+# services needs 3.14. Override PY_BUILDER/PY_RUNTIME to track upstream instead.
+ARG BUILDER=registry.access.redhat.com/hi/python:3.12-builder
 # Must be the same Python minor version as the builder -- the wheels installed
 # below are built for one ABI.
-ARG RUNTIME=registry.access.redhat.com/hi/python:3.14
+ARG RUNTIME=registry.access.redhat.com/hi/python:3.12
 
 FROM ${BUILDER} AS builder
 # email_server.py for emailservice, recommendation_server.py for

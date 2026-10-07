@@ -1,66 +1,86 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-# The default deploy, re-pointed at images rebuilt on Red Hat Hardened Images and
-# pushed to a local registry (../../hardened/build-push.sh does the building).
+# The same deploy as ../hardened, rebuilt on UBI 9 instead, in its own namespace
+# so the two stacks can run side by side and be compared:
+#
+#   BASE=ubi ../../hardened/build-push.sh registry.example.com:8443/online-boutique
+#   oc apply -k overlays/hardened      -> namespace online-boutique
+#   oc apply -k overlays/ubi           -> namespace online-boutique-ubi
+#   ../../hardened/scan-stack.sh online-boutique online-boutique-ubi
 #
 # Replace registry.example.com:8443/online-boutique below with your registry.
-# Everything else here is the part that is NOT a simple image swap: the hardened
-# runtime images are distroless -- no shell, no package manager -- and two of
-# upstream's containers depend on a shell.
+#
+# The deploy-time patches are IDENTICAL to ../hardened. That is deliberate: the
+# UBI runtime images do have a shell, so upstream's shell-form loadgenerator
+# entrypoint and Gradle launcher script would in fact still work here -- but
+# holding the manifests constant means a CVE diff between the two namespaces
+# measures the base images and nothing else. It also means one deployment
+# recipe covers both, which is worth more than the shell.
+#
+# Builds on ../../base rather than ../default because ../default pins the
+# `online-boutique` namespace and ships that Namespace object.
+
+namespace: online-boutique-ubi
 
 resources:
-  - ../default
+  - ../../base
+  - namespace.yaml
+
+labels:
+  - includeSelectors: false
+    pairs:
+      app.kubernetes.io/instance: online-boutique-ubi
 
 images:
   # The 11 services, rebuilt from upstream source on hardened base images.
   - name: us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/frontend
     newName: registry.example.com:8443/online-boutique/frontend
-    newTag: v0.10.6
+    newTag: v0.10.6-ubi
   - name: us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/adservice
     newName: registry.example.com:8443/online-boutique/adservice
-    newTag: v0.10.6
+    newTag: v0.10.6-ubi
   - name: us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/cartservice
     newName: registry.example.com:8443/online-boutique/cartservice
-    newTag: v0.10.6
+    newTag: v0.10.6-ubi
   - name: us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/checkoutservice
     newName: registry.example.com:8443/online-boutique/checkoutservice
-    newTag: v0.10.6
+    newTag: v0.10.6-ubi
   - name: us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/currencyservice
     newName: registry.example.com:8443/online-boutique/currencyservice
-    newTag: v0.10.6
+    newTag: v0.10.6-ubi
   - name: us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/emailservice
     newName: registry.example.com:8443/online-boutique/emailservice
-    newTag: v0.10.6
+    newTag: v0.10.6-ubi
   - name: us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/loadgenerator
     newName: registry.example.com:8443/online-boutique/loadgenerator
-    newTag: v0.10.6
+    newTag: v0.10.6-ubi
   - name: us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/paymentservice
     newName: registry.example.com:8443/online-boutique/paymentservice
-    newTag: v0.10.6
+    newTag: v0.10.6-ubi
   - name: us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/productcatalogservice
     newName: registry.example.com:8443/online-boutique/productcatalogservice
-    newTag: v0.10.6
+    newTag: v0.10.6-ubi
   - name: us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/recommendationservice
     newName: registry.example.com:8443/online-boutique/recommendationservice
-    newTag: v0.10.6
+    newTag: v0.10.6-ubi
   - name: us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/shippingservice
     newName: registry.example.com:8443/online-boutique/shippingservice
-    newTag: v0.10.6
+    newTag: v0.10.6-ubi
 
-  # redis-cart: the hardened catalog has no Redis, it has Valkey -- the fork the
-  # Linux Foundation took over at Redis 7.2.4, still wire-compatible, which is
-  # all cartservice's StackExchange.Redis client needs. Nothing to build, just
-  # mirror registry.access.redhat.com/hi/valkey into the local registry.
+  # redis-cart: UBI ships neither Redis nor Valkey, so on this side build-push.sh
+  # mirrors upstream's redis:alpine unchanged. Worth noticing -- an all-UBI stack
+  # still leaves one Docker Hub image in the deployment, and it is the one image
+  # here that no Red Hat errata stream covers.
   - name: redis
     newName: registry.example.com:8443/online-boutique/cache
-    newTag: v0.10.6
+    newTag: v0.10.6-ubi
 
   # The busybox init container is replaced wholesale below; this only stops
   # kustomize from leaving a Docker Hub reference in the rendered output.
   - name: busybox
     newName: registry.example.com:8443/online-boutique/loadgenerator
-    newTag: v0.10.6
+    newTag: v0.10.6-ubi
 
 patches:
   # ── loadgenerator: shell-form entrypoint -> Locust environment variables ────
@@ -134,9 +154,9 @@ patches:
             print("Failed to reach frontend after 12 attempts.", flush=True)
             sys.exit(1)
 
-  # ── redis-cart -> valkey ───────────────────────────────────────────────────
-  # The cart is ephemeral (emptyDir), so turn off RDB snapshotting rather than
-  # let the server try to write dump.rdb. Exec form: no shell in the image.
+  # ── redis-cart ─────────────────────────────────────────────────────────────
+  # Same flags as ../hardened passes to Valkey -- redis-server accepts them
+  # identically, which is the whole reason Valkey is a drop-in over there.
   - target:
       kind: Deployment
       name: redis-cart

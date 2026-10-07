@@ -107,9 +107,13 @@ overlays/
   tracing/                    default + OTLP tracing env vars
   no-loadgenerator/           default minus the traffic generator
   hardened/                   default, rebuilt on Red Hat Hardened Images
+  ubi/                        the same, rebuilt on UBI 9, for comparison
 hardened/
   Containerfile.*             one per language, 11 services
+  bases.env                   the hardened and UBI base-image sets
   build-push.sh               build them all, push to your registry
+  scan-stack.sh               CVE diff between two deployed namespaces
+  cve-demo/                   emailservice built 3 ways, scanned and diffed
 ```
 
 ## Why the base needs patching
@@ -195,6 +199,10 @@ Add them to the `additionalImages` list in your `ImageSetConfiguration` (see
 [Red Hat Hardened Images](https://images.redhat.com/) and push them to your own registry, which
 leaves nothing to mirror but Valkey. Read its README first — it is a rebuild, not a retag, and the
 hardened runtime images are distroless, which upstream's load generator and ad service both notice.
+The same Containerfiles build the stack on UBI 9 (`BASE=ubi`) for
+[`overlays/ubi`](overlays/ubi), so the two can be deployed side by side and their CVEs diffed —
+[`hardened/cve-demo`](hardened/cve-demo) does that on one service, with the multi-stage build
+pattern written out stage by stage.
 
 ## Refreshing to a newer upstream release
 

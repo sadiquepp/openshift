@@ -11,8 +11,8 @@
 # below plus env vars on the Deployment is an exact replacement. See
 # ../overlays/hardened/kustomization.yaml for the matching env block.
 
-ARG BUILDER=registry.access.redhat.com/hi/python:3.14-builder
-ARG RUNTIME=registry.access.redhat.com/hi/python:3.14
+ARG BUILDER=registry.access.redhat.com/hi/python:3.12-builder
+ARG RUNTIME=registry.access.redhat.com/hi/python:3.12
 
 FROM ${BUILDER} AS builder
 WORKDIR /app

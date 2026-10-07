@@ -14,8 +14,13 @@
 # The build stage needs network access: ./gradlew downloadRepos fetches the
 # dependency jars. That is a build-host concern, not a cluster one.
 
-ARG BUILDER=registry.access.redhat.com/hi/openjdk:25-builder
-ARG RUNTIME=registry.access.redhat.com/hi/openjdk:25
+# JDK 21, not upstream's 24/25: build.gradle sets
+#   sourceCompatibility = targetCompatibility = JavaVersion.VERSION_21
+# so 21 is all this service needs, it is what UBI 9 ships (which keeps the
+# cve-demo comparison fair), and an older JDK is the safer bet against the
+# Gradle wrapper's supported-JDK range.
+ARG BUILDER=registry.access.redhat.com/hi/openjdk:21-builder
+ARG RUNTIME=registry.access.redhat.com/hi/openjdk:21
 
 FROM ${BUILDER} AS builder
 WORKDIR /app
