@@ -1,0 +1,37 @@
+# Online Boutique Python gRPC services (emailservice, recommendationservice) on
+# Red Hat Hardened Images. Build context is src/<service> in an upstream checkout.
+#
+# Moving off Alpine actually helps here: grpcio, protobuf and the OpenTelemetry
+# stack all publish manylinux wheels but no musl wheels, so upstream compiles
+# grpcio from source (hence the g++/linux-headers in its builder stage) while a
+# glibc builder just downloads them.
+#
+# Dependencies go to a prefix and the resulting site-packages is moved to a fixed
+# path, so nothing here is pinned to a particular python3.X directory name and
+# there is no venv whose interpreter path has to exist in the runtime image.
+
+ARG BUILDER=registry.access.redhat.com/hi/python:3.14-builder
+# Must be the same Python minor version as the builder -- the wheels installed
+# below are built for one ABI.
+ARG RUNTIME=registry.access.redhat.com/hi/python:3.14
+
+FROM ${BUILDER} AS builder
+# email_server.py for emailservice, recommendation_server.py for
+# recommendationservice.
+ARG ENTRY
+WORKDIR /app
+COPY requirements.txt ./
+RUN pip install --no-cache-dir --prefix=/app/python -r requirements.txt \
+ && mv /app/python/lib/python*/site-packages /app/site-packages
+COPY . ./
+# Exec-form ENTRYPOINT cannot interpolate a build arg, so fix the entry filename.
+RUN cp "${ENTRY}" ./main.py \
+ && chmod -R a+rX /app
+
+FROM ${RUNTIME}
+WORKDIR /app
+COPY --from=builder /app /app
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app/site-packages
+ENTRYPOINT ["python", "/app/main.py"]

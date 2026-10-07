@@ -106,6 +106,10 @@ overlays/
   default/                    namespace + labels           <- start here
   tracing/                    default + OTLP tracing env vars
   no-loadgenerator/           default minus the traffic generator
+  hardened/                   default, rebuilt on Red Hat Hardened Images
+hardened/
+  Containerfile.*             one per language, 11 services
+  build-push.sh               build them all, push to your registry
 ```
 
 ## Why the base needs patching
@@ -186,6 +190,11 @@ Add them to the `additionalImages` list in your `ImageSetConfiguration` (see
 [`../../disconnected`](../../disconnected)), then repoint them with an `images:` block in
 `overlays/default/kustomization.yaml` — there is a commented stub there. Upstream also ships a
 `container-images-registry` component that does the same job if you prefer.
+
+[`hardened/`](hardened) is the other way round: rebuild all 11 services from upstream source on
+[Red Hat Hardened Images](https://images.redhat.com/) and push them to your own registry, which
+leaves nothing to mirror but Valkey. Read its README first — it is a rebuild, not a retag, and the
+hardened runtime images are distroless, which upstream's load generator and ad service both notice.
 
 ## Refreshing to a newer upstream release
 

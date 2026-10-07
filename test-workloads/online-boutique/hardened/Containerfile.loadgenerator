@@ -1,0 +1,36 @@
+# Online Boutique load generator (Locust) on Red Hat Hardened Images.
+# Build context is src/loadgenerator in an upstream checkout.
+#
+# Separate from Containerfile.python because upstream's entrypoint is shell form:
+#
+#   ENTRYPOINT locust --host="http://${FRONTEND_ADDR}" --headless -u "${USERS:-10}" ...
+#
+# Shell form needs /bin/sh, and the hardened runtime images are distroless -- no
+# shell, so that line cannot survive the move. Locust reads every one of those
+# flags from LOCUST_* environment variables instead, so the exec-form entrypoint
+# below plus env vars on the Deployment is an exact replacement. See
+# ../overlays/hardened/kustomization.yaml for the matching env block.
+
+ARG BUILDER=registry.access.redhat.com/hi/python:3.14-builder
+ARG RUNTIME=registry.access.redhat.com/hi/python:3.14
+
+FROM ${BUILDER} AS builder
+WORKDIR /app
+COPY requirements.txt ./
+RUN pip install --no-cache-dir --prefix=/app/python -r requirements.txt \
+ && mv /app/python/lib/python*/site-packages /app/site-packages
+COPY locustfile.py ./
+RUN chmod -R a+rX /app
+
+FROM ${RUNTIME}
+WORKDIR /app
+COPY --from=builder /app /app
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app/site-packages \
+    GEVENT_SUPPORT=True \
+    LOCUST_LOCUSTFILE=/app/locustfile.py \
+    LOCUST_HEADLESS=true
+# `python -m locust` rather than the console script: pip wrote that script with a
+# shebang pointing at the builder's interpreter path.
+ENTRYPOINT ["python", "-m", "locust"]

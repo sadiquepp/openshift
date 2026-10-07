@@ -1,0 +1,32 @@
+# Online Boutique Node services (currencyservice, paymentservice) on Red Hat
+# Hardened Images. Build context is src/<service> in an upstream checkout.
+#
+# Unlike the Go services this is a real rebuild, not a recompile-and-copy:
+# upstream installs node_modules on Alpine, and @google-cloud/profiler contains
+# native code (which is why upstream's builder stage adds g++/make/python3).
+# Modules built against musl cannot be copied into a glibc image, so npm has to
+# run again inside the hardened builder.
+
+ARG BUILDER=registry.access.redhat.com/hi/nodejs:latest-builder
+ARG RUNTIME=registry.access.redhat.com/hi/nodejs:latest
+
+FROM ${BUILDER} AS builder
+# server.js for currencyservice, index.js for paymentservice.
+ARG ENTRY=server.js
+WORKDIR /app
+COPY package*.json ./
+# The -builder variant carries dnf and bash; the runtime variant carries neither.
+RUN dnf install -y --setopt=install_weak_deps=0 gcc-c++ make python3 \
+ && npm install --omit=dev \
+ && dnf clean all
+COPY . ./
+# ENTRYPOINT is exec form (no shell in the runtime image) and cannot interpolate
+# a build arg, so normalise the entry file to a fixed name here instead.
+RUN cp "${ENTRY}" ./main.js \
+ && chmod -R a+rX /app
+
+FROM ${RUNTIME}
+WORKDIR /app
+COPY --from=builder /app /app
+ENV NODE_ENV=production
+ENTRYPOINT ["node", "/app/main.js"]

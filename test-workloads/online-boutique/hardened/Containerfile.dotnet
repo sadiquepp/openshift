@@ -1,0 +1,38 @@
+# Online Boutique cartservice (C#/.NET, ASP.NET Core gRPC) on Red Hat Hardened
+# Images. Build context is src/cartservice/src in an upstream checkout.
+#
+# cartservice.csproj targets net10.0 and uses Microsoft.NET.Sdk.Web, so it needs
+# the ASP.NET Core shared framework, not just the base .NET runtime. The hardened
+# catalog ships dotnet-sdk and dotnet-runtime; rather than depend on whether
+# dotnet-runtime carries the ASP.NET Core framework, publish SELF-CONTAINED --
+# then the app brings its own copy and dotnet-runtime only has to supply the
+# native dependencies (libicu, openssl, zlib), which it does by definition.
+#
+# Upstream additionally uses PublishSingleFile + PublishTrimmed/TrimMode=full.
+# Both are dropped here: trimming is the single most likely thing to break a
+# gRPC/reflection-heavy app in a way that only shows up at runtime, and it buys
+# image size, not security. Add them back once the plain build is known good.
+
+ARG SDK=registry.access.redhat.com/hi/dotnet-sdk:10.0
+ARG RUNTIME=registry.access.redhat.com/hi/dotnet-runtime:10.0
+
+FROM ${SDK} AS builder
+ARG TARGETARCH=amd64
+WORKDIR /src
+COPY cartservice.csproj ./
+RUN dotnet restore cartservice.csproj -a ${TARGETARCH}
+COPY . ./
+RUN dotnet publish cartservice.csproj \
+      -c Release \
+      -a ${TARGETARCH} \
+      --self-contained true \
+      -o /out \
+ && chmod -R a+rX /out
+
+FROM ${RUNTIME}
+WORKDIR /app
+COPY --from=builder /out /app
+EXPOSE 7070
+ENV DOTNET_EnableDiagnostics=0 \
+    ASPNETCORE_HTTP_PORTS=7070
+ENTRYPOINT ["/app/cartservice"]
