@@ -113,7 +113,8 @@ hardened/
   bases.env                   the hardened and UBI base-image sets
   preflight.sh                check everything before building   <- start here
   set-registry.sh             point both overlays at your registry
-  build-push.sh               build them all, push to your registry
+  build-push.sh               build them all, or just one, push to your registry
+  check-bases.sh              what a new base image release made stale
   scan-stack.sh               CVE diff between two deployed namespaces
   cve-demo/                   emailservice built 3 ways, scanned and diffed
 ```

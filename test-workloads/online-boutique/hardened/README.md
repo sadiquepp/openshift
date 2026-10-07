@@ -272,6 +272,10 @@ oc apply -k ../overlays/ubi
 ./scan-stack.sh online-boutique online-boutique-ubi
 ```
 
+Then set up the rebuild loop — see [Rebuilding when a base image gets a CVE
+fix](#rebuilding-when-a-base-image-gets-a-cve-fix). The first build is the
+bootstrap; the loop is the point.
+
 ### If a pod will not start
 
 | symptom | cause |
@@ -285,6 +289,141 @@ oc apply -k ../overlays/ubi
 `oc rsh` will not work on these pods — there is no shell. Use
 `oc debug --image=registry.access.redhat.com/ubi9/ubi-minimal -n online-boutique`
 or read `oc logs`.
+
+## Rebuilding when a base image gets a CVE fix
+
+**This is not a one-time build.** The reason to take on the rebuild is that
+patching stops being somebody else's release cadence — which only pays off if
+you rerun it. A build you cannot repeat has traded waiting on upstream for
+waiting on nobody, which is strictly worse than where you started.
+
+Red Hat ships a fixed base image under the *same tag* with a new digest. Your
+image still contains the old one, and nothing about it looks different.
+
+### Finding out what went stale
+
+`build-push.sh` stamps the builder and runtime digests onto every image it
+builds, as OCI labels. That state lives in the registry, with the image, rather
+than on whoever's laptop ran the build:
+
+| label | |
+|---|---|
+| `org.opencontainers.image.base.name` / `.base.digest` | the runtime base, standard OCI annotations |
+| `online-boutique.build.builder-base.name` / `.digest` | the builder base |
+| `org.opencontainers.image.revision` | the build id |
+| `online-boutique.build.base-set` | `hardened` or `ubi` |
+
+```bash
+./check-bases.sh registry.example.com:8443/online-boutique
+```
+
+Compares what each image was built *from* against what that tag resolves to
+*now*, and names the services whose rebuild is overdue. Registry-only — no
+cluster, nothing pulled beyond manifests. Exits non-zero when anything is stale,
+so it works as a cron job or a CI gate.
+
+### Rebuilding just that service
+
+```bash
+BASE=hardened ./build-push.sh registry.example.com:8443/online-boutique \
+  --only emailservice
+```
+
+`check-bases.sh` prints this line for you with the right service list.
+
+A `hi/python` fix rebuilds three services; a `hi/go` fix rebuilds four; a
+`glibc`-level fix in every base rebuilds all eleven. That spread is the argument
+for the shared Containerfiles — a base image bump is a build-arg change, not
+eleven files to edit.
+
+### Tags, and why the app version is not enough
+
+Each image is pushed twice:
+
+```
+v0.10.6-b20261007   immutable -- deploy this
+v0.10.6             floating convenience pointer
+```
+
+A CVE fix changes the image without changing the app, so `v0.10.6` alone cannot
+identify a build. Worse, these manifests set **no `imagePullPolicy`**, which for
+a non-`:latest` tag defaults to `IfNotPresent` — move the `v0.10.6` tag and a
+node that already has that tag cached will happily keep running the vulnerable
+image, and `oc rollout restart` will not change its mind. Deploying the
+immutable tag makes the rollout a real change to the pod spec, which is what
+makes it happen at all.
+
+### Rolling it out
+
+```bash
+cd ../overlays/hardened
+kustomize edit set image \
+  us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/emailservice=registry.example.com:8443/online-boutique/emailservice:v0.10.6-b20261007
+oc apply -k .
+```
+
+Note the left-hand side: `kustomize edit set image` keys on the **original**
+image name, the one the vendored manifests actually reference. Keying on the
+rewritten name looks right, succeeds, and silently appends a second `images:`
+entry that matches nothing — the rendered output keeps the old tag and the
+rollout never happens. `build-push.sh` prints the correct command for the
+services it just built; for `redis-cart` the key is the bare `redis`.
+
+The edit rewrites the `images:` entry in place, so the new tag is committed to
+git rather than typed at a cluster — which also means the next `oc apply -k`
+from anywhere agrees with what is running.
+
+The Deployment's pod template changes, so OpenShift performs a normal rolling
+update: new pod, readiness gate, old pod terminated. Every service here is
+stateless (`redis-cart` uses `emptyDir`), so there is nothing to drain and no
+ordering to respect.
+
+Pin by digest instead of tag if you want certainty that content cannot change
+under a tag you have already deployed — `build-push.sh` prints each digest after
+pushing, and `newTag:` becomes `digest:` in the overlay.
+
+### Automating it
+
+Three places this can live, in increasing order of how much you have to build:
+
+1. **Cron plus the two scripts.** `check-bases.sh` nightly; on a non-zero exit,
+   rebuild the named services and open a PR that bumps the tag. Smallest thing
+   that works, and it is auditable because the tag bump is a commit.
+2. **A pipeline** (Tekton, GitHub Actions, Jenkins) on the same logic, with the
+   scan from `cve-demo/` as a gate so a rebuild that does not actually reduce
+   findings does not get promoted.
+3. **In-cluster builds.** OpenShift `BuildConfig` with the **docker** strategy
+   plus an `ImageStream` on each base image with `scheduled: true`, an
+   `ImageChangeTrigger` on the BuildConfig, and a Deployment image trigger. Red
+   Hat moving a base tag then drives a rebuild and a rollout with nothing
+   watching. This is the most hands-off option and the most OpenShift-native;
+   note that `ImageChangeTrigger` substitution against a *multi-stage*
+   Containerfile is fiddly — the trigger fires on the stream, but which `FROM`
+   gets substituted needs checking against your OCP version, so pass the bases
+   as `dockerStrategy.buildArgs` and treat the trigger as a trigger only. Not
+   shipped here because it is untested.
+
+## Does this use S2I?
+
+No, and it should not.
+
+S2I needs `assemble` and `run` scripts in the builder image, and it produces a
+**single-stage** result by default: the image you build with is the image you
+ship. That is precisely variant C in [`cve-demo/`](cve-demo) — the one that
+carries `pip`, `setuptools` and `gcc` into production because there is no second
+stage to leave them behind in.
+
+More concretely, it cannot work against this catalog. The hardened runtime
+variants are distroless, with no shell and no S2I scripts, so there is nothing
+for `oc new-build --strategy=source` to invoke. The UBI s2i images
+(`ubi9/python-312`, `ubi9/nodejs-22`) *do* carry those scripts, so S2I would work
+on the UBI side — which would make the comparison measure S2I versus
+multi-stage rather than UBI versus hardened, and that is a different question.
+
+If you want builds to run in the cluster, the mechanism is a `BuildConfig` with
+the **docker** strategy, which consumes the Containerfiles here unchanged. S2I
+chained builds get you something multi-stage-shaped, but at that point you have
+reimplemented a multi-stage Containerfile in two BuildConfigs.
 
 ## Knobs
 
@@ -318,7 +457,8 @@ Containerfile.dotnet          cartservice
 bases.env                     the hardened and UBI base-image sets  (BASE=hardened|ubi)
 preflight.sh                  check tags, runtimes and your registry before building
 set-registry.sh               point both overlays at your registry
-build-push.sh                 clone upstream, build all 11, push, mirror the cache image
+build-push.sh                 build all 11, or --only one; push immutable + floating tags
+check-bases.sh                which services a new base image release made stale
 scan-stack.sh                 scan a running namespace; diff two of them
 cve-demo/                     emailservice built 3 ways, scanned and diffed
 ```

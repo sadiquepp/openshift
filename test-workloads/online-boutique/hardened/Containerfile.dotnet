@@ -13,10 +13,10 @@
 # gRPC/reflection-heavy app in a way that only shows up at runtime, and it buys
 # image size, not security. Add them back once the plain build is known good.
 
-ARG SDK=registry.access.redhat.com/hi/dotnet-sdk:10.0
+ARG BUILDER=registry.access.redhat.com/hi/dotnet-sdk:10.0
 ARG RUNTIME=registry.access.redhat.com/hi/dotnet-runtime:10.0
 
-FROM ${SDK} AS builder
+FROM ${BUILDER} AS builder
 ARG TARGETARCH=amd64
 WORKDIR /src
 COPY cartservice.csproj ./
