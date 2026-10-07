@@ -91,7 +91,7 @@ patches:
   #
   # Shell form, so the container needs /bin/sh to expand those variables. The
   # hardened Python runtime is distroless and has none. ../../hardened/
-  # Containerfile.loadgenerator uses an exec-form `python -m locust` entrypoint
+  # Containerfile.loadgenerator uses an exec-form `python3 -m locust` entrypoint
   # instead and relies on Locust's own LOCUST_* environment variables, which do
   # exactly what those flags did. LOCUST_LOCUSTFILE and LOCUST_HEADLESS are baked
   # into the image; the three that encode deployment intent are set here.
@@ -135,7 +135,7 @@ patches:
       - op: replace
         path: /spec/template/spec/initContainers/0/command
         value:
-          - python
+          - python3
           - -c
           - |
             import os, sys, time, urllib.request

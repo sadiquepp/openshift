@@ -59,11 +59,39 @@ for var in GO_BUILDER GO_RUNTIME NODE_BUILDER NODE_RUNTIME PY_BUILDER PY_RUNTIME
 done
 
 echo
+echo "== minimal base candidates for static binaries"
+# The Go services produce a static binary and need a base that holds it and
+# nothing else. Which minimal images the hardened catalog actually ships is not
+# something the docs pin down, so ask the registry and report what is there.
+FOUND_MINIMAL=""
+for cand in registry.access.redhat.com/hi/ubi-micro:latest \
+            registry.access.redhat.com/hi/ubi-minimal:latest \
+            registry.access.redhat.com/hi/static:latest \
+            registry.access.redhat.com/hi/base:latest \
+            registry.access.redhat.com/ubi9/ubi-micro:latest; do
+  if skopeo inspect --raw "docker://$cand" >/dev/null 2>&1; then
+    pass "$cand"
+    [ -z "$FOUND_MINIMAL" ] && FOUND_MINIMAL="$cand"
+  else
+    printf '  --    %s (not present)\n' "$cand"
+  fi
+done
+[ -n "$FOUND_MINIMAL" ] && [ "$FOUND_MINIMAL" != "$GO_RUNTIME" ] \
+  && warn "smallest available is $FOUND_MINIMAL -- set GO_RUNTIME to it if it beats your current one"
+
+echo
 echo "== unknown 2: is $GO_RUNTIME usable as a runtime base?"
 if skopeo inspect "docker://$GO_RUNTIME" >/dev/null 2>&1; then
-  size=$(skopeo inspect --raw "docker://$GO_RUNTIME" 2>/dev/null \
-         | jq '[.layers[]?.size] | add // 0' 2>/dev/null || echo 0)
-  human=$(numfmt --to=iec --suffix=B "$size" 2>/dev/null || echo "$size bytes")
+  # For a multi-arch image `--raw` returns an image index whose top level has
+  # .manifests and no .layers at all, so summing .layers there yields nothing.
+  # Resolve one platform first, then sum that manifest's layers.
+  raw=$(skopeo inspect --raw "docker://$GO_RUNTIME" 2>/dev/null)
+  if [ "$(echo "$raw" | jq -r 'has("manifests")')" = true ]; then
+    child=$(echo "$raw" | jq -r '[.manifests[] | select(.platform.architecture=="amd64")][0].digest // .manifests[0].digest')
+    raw=$(skopeo inspect --raw "docker://${GO_RUNTIME%%:*}@$child" 2>/dev/null)
+  fi
+  size=$(echo "$raw" | jq '[.layers[]?.size] | add // 0' 2>/dev/null || echo 0)
+  human=$(numfmt --to=iec --suffix=B "${size:-0}" 2>/dev/null || echo "${size:-0} bytes")
   if "$ENGINE" run --rm --entrypoint go "$GO_RUNTIME" version >/dev/null 2>&1; then
     warn "it carries the Go toolchain ($human compressed) -- works, but you are"
     warn "shipping a compiler. Prefer ubi9/ubi-micro or scratch: GO_RUNTIME=..."
@@ -75,19 +103,40 @@ else
 fi
 
 echo
-echo "== unknown 3: does $PY_RUNTIME carry libstdc++?"
-# grpcio's manylinux wheels link against libstdc++. If it is missing, the Python
-# services build fine and then fail at import time, which is the worst way to
-# find out.
-if out=$("$ENGINE" run --rm --entrypoint python "$PY_RUNTIME" \
-           -c "import ctypes; ctypes.CDLL('libstdc++.so.6'); print('present')" 2>&1); then
-  pass "libstdc++.so.6 $out"
+echo "== unknown 3: what is the interpreter called, and is libstdc++ there?"
+# Which name exists matters: RHEL and Fedora ship /usr/bin/python3 and only
+# provide a bare `python` if python-unversioned-command is installed, so an
+# ENTRYPOINT of ["python", ...] fails with a crun "executable file not found"
+# that looks exactly like a missing interpreter. Find the name first, then use
+# it for the library check -- otherwise a naming problem reads as a missing
+# libstdc++.
+PY_EXE=""
+for cand in python3 python; do
+  if "$ENGINE" run --rm --entrypoint "$cand" "$PY_RUNTIME" -c 'pass' >/dev/null 2>&1; then
+    PY_EXE="$cand"; break
+  fi
+done
+if [ -z "$PY_EXE" ]; then
+  fail "neither python3 nor python runs in $PY_RUNTIME -- check the image"
 else
-  fail "libstdc++.so.6 missing -- grpcio will fail to import at runtime."
-  fail "Fix: add to the runtime stage of Containerfile.python (stage name 'builder')"
-  fail "and Containerfile.loadgenerator, and 'deps' in cve-demo/Containerfile.*:"
-  fail "  COPY --from=builder /usr/lib64/libstdc++.so.6* /usr/lib64/"
-  printf '        (%s)\n' "$(echo "$out" | tail -1)"
+  if [ "$PY_EXE" = python3 ]; then
+    pass "interpreter is python3 (no bare \`python\`) -- which is what the Containerfiles use"
+  else
+    warn "only a bare \`python\` works here; the Containerfiles call python3"
+  fi
+  # grpcio's manylinux wheels link against libstdc++. If it is missing, the
+  # Python services build fine and then fail at import, which is the worst way
+  # to find out.
+  if out=$("$ENGINE" run --rm --entrypoint "$PY_EXE" "$PY_RUNTIME" \
+             -c "import ctypes; ctypes.CDLL('libstdc++.so.6'); print('present')" 2>&1); then
+    pass "libstdc++.so.6 $out"
+  else
+    fail "libstdc++.so.6 missing -- grpcio will fail to import at runtime."
+    fail "Fix: add to the runtime stage of Containerfile.python and"
+    fail "Containerfile.loadgenerator (stage 'builder'), and cve-demo/ (stage 'deps'):"
+    fail "  COPY --from=builder /usr/lib64/libstdc++.so.6* /usr/lib64/"
+    printf '        (%s)\n' "$(echo "$out" | tail -1)"
+  fi
 fi
 
 echo
@@ -126,13 +175,14 @@ fi
 if [ -n "$REGISTRY" ]; then
   echo
   echo "== your registry ($REGISTRY)"
-  if curl -skf --max-time 10 "https://$REGISTRY/v2/" >/dev/null \
-     || curl -skf --max-time 10 -o /dev/null -w '%{http_code}' "https://$REGISTRY/v2/" \
-        | grep -qE '401|200'; then
-    pass "reachable over https"
-  else
-    warn "no answer on https://$REGISTRY/v2/ -- fine if it is plain http or behind a proxy"
-  fi
+  # No -f here: a registry that wants credentials answers /v2/ with 401, which
+  # -f reports as failure. 401 means it is up and talking, which is the question.
+  code=$(curl -sk --max-time 10 -o /dev/null -w '%{http_code}' "https://$REGISTRY/v2/" 2>/dev/null)
+  case "$code" in
+    200|401|403) pass "reachable over https (/v2/ returned $code)" ;;
+    000)         warn "no https answer -- fine if it is plain http or behind a proxy" ;;
+    *)           warn "/v2/ returned $code" ;;
+  esac
   if "$ENGINE" login --get-login "$REGISTRY" >/dev/null 2>&1; then
     pass "logged in as $("$ENGINE" login --get-login "$REGISTRY" 2>/dev/null)"
   else

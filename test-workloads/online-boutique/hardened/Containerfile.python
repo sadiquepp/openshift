@@ -24,7 +24,7 @@ FROM ${BUILDER} AS builder
 ARG ENTRY
 WORKDIR /app
 COPY requirements.txt ./
-RUN pip install --no-cache-dir --prefix=/app/python -r requirements.txt \
+RUN python3 -m pip install --no-cache-dir --prefix=/app/python -r requirements.txt \
  && mv /app/python/lib/python*/site-packages /app/site-packages
 COPY . ./
 # Exec-form ENTRYPOINT cannot interpolate a build arg, so fix the entry filename.
@@ -37,4 +37,4 @@ COPY --from=builder /app /app
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app/site-packages
-ENTRYPOINT ["python", "/app/main.py"]
+ENTRYPOINT ["python3", "/app/main.py"]

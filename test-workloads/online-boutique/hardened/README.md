@@ -50,7 +50,7 @@ them.
 | upstream base | hardened replacement | notes |
 |---|---|---|
 | `golang:1.26-alpine` | `hi/go:latest-builder` | |
-| `gcr.io/distroless/static` | `hi/go:latest` | runtime stage only holds a static binary |
+| `gcr.io/distroless/static` | `ubi9/ubi-micro` | `hi/go:latest` works but ships the toolchain — see below |
 | `node:20-alpine` | `hi/nodejs:latest-builder` / `:latest` | |
 | `python:3.14-alpine` | `hi/python:3.12-builder` / `:3.12` | 3.12 so the UBI comparison is on one interpreter |
 | `eclipse-temurin:25-jre-alpine` | `hi/openjdk:21-builder` / `:21` | `build.gradle` sets `sourceCompatibility = VERSION_21` |
@@ -93,7 +93,7 @@ ENTRYPOINT locust --host="http://${FRONTEND_ADDR}" --headless -u "${USERS:-10}" 
 Shell form, so the container needs `/bin/sh` to expand those variables. A distroless runtime has
 none. Locust reads every one of those flags from `LOCUST_*` environment variables, so
 [`Containerfile.loadgenerator`](Containerfile.loadgenerator) uses an exec-form
-`python -m locust` entrypoint with `LOCUST_LOCUSTFILE` and `LOCUST_HEADLESS` baked in, and the
+`python3 -m locust` entrypoint with `LOCUST_LOCUSTFILE` and `LOCUST_HEADLESS` baked in, and the
 overlay sets `LOCUST_HOST`, `LOCUST_USERS` and `LOCUST_SPAWN_RATE`. Behaviour is identical.
 
 ### 2. `adservice` — the Gradle launcher is a shell script
@@ -111,7 +111,7 @@ Upstream gates the load generator behind a busybox container running a `/bin/sh`
 Hub image and has no counterpart in a catalog of language runtimes and servers.
 
 Keeping it would leave one unhardened image — and one anonymous Docker Hub pull — in an otherwise
-hardened deployment. The overlay instead expresses the same wait as an exec-form `python -c` command
+hardened deployment. The overlay instead expresses the same wait as an exec-form `python3 -c` command
 **on the loadgenerator image you already build**: same 12 attempts, same 10-second interval, no
 shell, no thirteenth image. If you would rather keep a busybox-shaped tool, `ubi9/ubi-minimal` is
 the closest thing with a shell in it, at the cost of being UBI rather than hardened.
@@ -140,23 +140,39 @@ server try to persist.
   against the pod's node, or `oc exec` a binary you know is in the image.
 - **Resource requests are unchanged.** None of this moves the 1.57 CPU / 1368 Mi footprint.
 
-## Before the first build
+## What a real preflight run established
 
-Three things to confirm against [images.redhat.com](https://images.redhat.com/), because they could
-not be checked from here and they are the most likely cause of a first-run failure:
+The three unknowns this originally flagged have been resolved against the live
+catalog, on OCP with `podman` and `skopeo`. Re-run [`preflight.sh`](preflight.sh)
+yourself rather than trusting this list — the catalog moves — but as of the last
+run:
 
-1. **Tags.** Everything here assumes `hi/python:3.12`, `hi/openjdk:21`, `hi/dotnet-sdk:10.0`,
-   `hi/go:latest`, `hi/nodejs:latest`. They all live in [`bases.env`](bases.env), so a wrong guess
-   is a one-line fix in one file. `cartservice` targets `net10.0`, which is the one hard floor here
-   — if the catalog has no .NET 10, that service needs its `TargetFramework` changed. `adservice`
-   needs only JDK 21 despite upstream building it on 24.
-2. **Whether `hi/go:latest` is usable as a runtime base** for a static binary, or whether the `go`
-   image is builder-only. If it is builder-only, set `GO_RUNTIME` to `ubi9/ubi-micro` or `scratch` —
-   these four services speak plaintext gRPC in-cluster and need neither a CA bundle nor tzdata.
-3. **Whether `hi/python` carries `libstdc++`.** `grpcio`'s manylinux wheels link against it;
-   upstream installs it explicitly on Alpine. If the runtime variant omits it, copy it out of the
-   builder stage. This is the single most likely runtime failure in the whole set, and it shows up
-   as an `ImportError` on `grpc._cython`, not at build time.
+1. **Every tag in [`bases.env`](bases.env) exists.** `hi/python:3.12`,
+   `hi/openjdk:21`, `hi/dotnet-sdk:10.0`, `hi/dotnet-runtime:10.0`,
+   `hi/nodejs:latest`, `hi/go:latest-builder`, `hi/valkey:latest` — all present,
+   unauthenticated. No `TargetFramework` or Gradle toolchain change needed:
+   .NET 10 and JDK 21 are both there.
+2. **`hi/python:3.12` carries `libstdc++`**, so `grpcio`'s wheels import fine and
+   nothing needs copying out of the builder stage.
+3. **`hi/go:latest` works as a runtime base but carries the Go toolchain.** A
+   static binary built on `hi/go:latest-builder` runs on it — verified end to
+   end — but using it would ship a compiler in four of eleven production images.
+   `GO_RUNTIME` therefore defaults to `ubi9/ubi-micro`, which is the one
+   deliberate non-hardened base in the set; see the comment in `bases.env`.
+   `preflight.sh` probes for a hardened minimal image (`hi/ubi-micro`,
+   `hi/static` and friends) and will name one if the catalog gains it.
+
+And one thing that is not a catalog question but broke the same way:
+
+4. **The interpreter is `python3`, not `python`.** RHEL and Fedora ship
+   `/usr/bin/python3` and only provide a bare `python` if
+   `python-unversioned-command` is installed, which these images do not. Every
+   Python entrypoint here — the two service images, the load generator, the
+   `cve-demo` variants and the overlays' init container — calls `python3`, and
+   `pip` is invoked as `python3 -m pip`. An `ENTRYPOINT ["python", ...]` fails
+   with a crun `executable file not found`, which reads exactly like a missing
+   interpreter and is why `preflight.sh` now identifies the name before it tests
+   anything with it.
 
 ## Getting started
 

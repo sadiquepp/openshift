@@ -17,7 +17,7 @@ ARG RUNTIME=registry.access.redhat.com/hi/python:3.12
 FROM ${BUILDER} AS builder
 WORKDIR /app
 COPY requirements.txt ./
-RUN pip install --no-cache-dir --prefix=/app/python -r requirements.txt \
+RUN python3 -m pip install --no-cache-dir --prefix=/app/python -r requirements.txt \
  && mv /app/python/lib/python*/site-packages /app/site-packages
 COPY locustfile.py ./
 RUN chmod -R a+rX /app
@@ -33,4 +33,4 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     LOCUST_HEADLESS=true
 # `python -m locust` rather than the console script: pip wrote that script with a
 # shebang pointing at the builder's interpreter path.
-ENTRYPOINT ["python", "-m", "locust"]
+ENTRYPOINT ["python3", "-m", "locust"]
