@@ -530,7 +530,21 @@ cd cve-demo && ./compare.sh
 ./scan-stack.sh online-boutique online-boutique-ubi
 ```
 
-Both need `grype` or `trivy` and nothing else. Neither commits its output: CVE
+Both need **one** scanner — `grype` or `trivy`, whichever you have; grype is
+preferred when both are installed, and the report names which one ran. Neither
+is required by the build, only by these two. Installing the second one is a
+cross-check, not a requirement:
+
+```bash
+curl -sSfL https://get.anchore.io/grype | sh -s -- -b /usr/local/bin
+```
+
+The two use overlapping but different vulnerability databases, so a sharp
+disagreement between them on the same image is itself the finding — usually a
+distroless image whose packages one of them cannot enumerate. `compare.sh` runs
+both when both are present and keeps both JSON files for exactly that reason.
+
+Neither commits its output: CVE
 counts are true for the day they were scanned, and a stale table in git reads as
 a current claim. See [`cve-demo/README.md`](cve-demo/README.md) for how to read
 the diff, including the two ways a scan can mislead you.

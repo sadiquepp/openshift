@@ -45,9 +45,21 @@ echo "== tools"
 for t in "$ENGINE" skopeo git jq; do
   if command -v "$t" >/dev/null; then pass "$t"; else fail "$t not on PATH"; fi
 done
-for t in grype trivy oc; do
-  if command -v "$t" >/dev/null; then pass "$t"; else warn "$t not on PATH (needed later, not now)"; fi
-done
+if command -v oc >/dev/null; then pass "oc"; else warn "oc not on PATH (needed to deploy, not to build)"; fi
+# One scanner is enough. grype and trivy use overlapping but different
+# vulnerability databases, so the second is a cross-check, not a requirement --
+# useful when a distroless image's count looks implausibly low.
+if command -v grype >/dev/null; then
+  pass "grype"
+  command -v trivy >/dev/null && pass "trivy (second opinion)" \
+    || printf '  --    trivy not installed (optional second opinion)\n'
+elif command -v trivy >/dev/null; then
+  pass "trivy"
+  printf '  --    grype not installed (optional second opinion)\n'
+else
+  warn "no scanner yet -- needed for cve-demo/ and scan-stack.sh, not for building:"
+  warn "  curl -sSfL https://get.anchore.io/grype | sh -s -- -b /usr/local/bin"
+fi
 
 echo
 echo "== unknown 1: do the tags in bases.env exist? (BASE=$BASE)"

@@ -15,9 +15,10 @@
 # the whole thing as deployed -- which is the number anyone asking "how much
 # does this actually buy us" wants.
 #
-# Requires: oc (logged in), grype, jq. Images must be pullable by the scanner,
-# so authenticate to the registry first (grype reads ~/.docker/config.json and
-# $REGISTRY_AUTH_FILE).
+# Requires: oc (logged in), jq, and EITHER grype or trivy -- same as
+# cve-demo/compare.sh. grype is preferred when both are present; neither needs
+# credentials of its own, but the images must be pullable, so authenticate to
+# the registry first (both read ~/.docker/config.json and $REGISTRY_AUTH_FILE).
 #
 # Results land in ./results-<namespace>/ ; report at ./results-stack-report.md.
 
@@ -28,9 +29,17 @@ NS_B="${2:-}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPORT="$HERE/results-stack-report.md"
 
-for tool in oc grype jq; do
-  command -v "$tool" >/dev/null || { echo "error: $tool not on PATH" >&2; exit 1; }
+have() { command -v "$1" >/dev/null 2>&1; }
+for tool in oc jq; do
+  have "$tool" || { echo "error: $tool not on PATH" >&2; exit 1; }
 done
+if   have grype; then SCANNER=grype
+elif have trivy; then SCANNER=trivy
+else
+  echo "error: need grype or trivy on PATH" >&2
+  echo "  grype: curl -sSfL https://get.anchore.io/grype | sh -s -- -b /usr/local/bin" >&2
+  exit 1
+fi
 
 # Collect the images a namespace is really running, from the pods rather than
 # the Deployments -- that way `oc set image` and any mutating admission webhook
@@ -53,11 +62,22 @@ scan_ns() {
   [ -n "$images" ] || { echo "error: no running pods in namespace $ns" >&2; exit 1; }
   while read -r image; do
     local svc; svc=$(svc_of "$image")
-    echo "==> [$ns] grype $image" >&2
-    grype "$image" -o json > "$out/grype-$svc.json"
-    jq -r '.matches[] | [(.vulnerability.severity // "Unknown" | ascii_upcase),
-                         .vulnerability.id, .artifact.name] | @tsv' \
-      "$out/grype-$svc.json" | sort -u > "$out/cves-$svc.tsv"
+    echo "==> [$ns] $SCANNER $image" >&2
+    case "$SCANNER" in
+      grype)
+        grype "$image" -o json > "$out/$SCANNER-$svc.json"
+        jq -r '.matches[]
+               | [(.vulnerability.severity // "Unknown" | ascii_upcase),
+                  .vulnerability.id, .artifact.name] | @tsv' \
+          "$out/$SCANNER-$svc.json" | sort -u > "$out/cves-$svc.tsv" ;;
+      trivy)
+        trivy image --quiet --format json --output "$out/$SCANNER-$svc.json" "$image"
+        jq -r '[ .Results[]? | .Vulnerabilities[]? ]
+               | .[]
+               | [(.Severity // "UNKNOWN" | ascii_upcase),
+                  .VulnerabilityID, .PkgName] | @tsv' \
+          "$out/$SCANNER-$svc.json" | sort -u > "$out/cves-$svc.tsv" ;;
+    esac
     local c h m l t
     c=$(awk -F'\t' '$1=="CRITICAL"' "$out/cves-$svc.tsv" | wc -l | tr -d ' ')
     h=$(awk -F'\t' '$1=="HIGH"'     "$out/cves-$svc.tsv" | wc -l | tr -d ' ')
@@ -84,7 +104,7 @@ B="$HERE/results-$NS_B"
 {
   echo "# Online Boutique — CVEs as deployed"
   echo
-  echo "Generated $(date -u '+%Y-%m-%d %H:%M UTC') · scanner \`grype\`"
+  echo "Generated $(date -u '+%Y-%m-%d %H:%M UTC') · scanner \`$SCANNER\`"
   echo
   if [ -n "$NS_B" ]; then
     echo "## Stack totals"
@@ -142,7 +162,7 @@ B="$HERE/results-$NS_B"
   echo "- A scanner reports what it can match. A distroless image carries no RPM"
   echo "  database, so OS-level findings are matched from the SBOM the image"
   echo "  ships rather than from rpm -qa; a image with neither can under-report."
-  echo "  Cross-check anything surprising with \`trivy\` or Red Hat ACS."
+  echo "  Cross-check anything surprising with the other scanner or Red Hat ACS."
   echo "- Per-service rows count that image's own findings; the stack total"
   echo "  deduplicates across images, so the rows do not sum to the total."
   echo "- Counts move as the vulnerability database updates. Date any number you"
