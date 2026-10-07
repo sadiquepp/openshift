@@ -50,7 +50,15 @@ if command -v oc >/dev/null; then pass "oc"; else warn "oc not on PATH (needed t
 # vulnerability databases, so the second is a cross-check, not a requirement --
 # useful when a distroless image's count looks implausibly low.
 if command -v grype >/dev/null; then
-  pass "grype"
+  # A downloaded-but-unhydrated database is the common grype failure: it reports
+  # "failed to hydrate" then "database does not exist", usually from no disk
+  # space or a cache written by an older grype with a different db format.
+  if grype db status >/dev/null 2>&1; then
+    pass "grype (vulnerability db ok)"
+  else
+    fail "grype's vulnerability db is not usable -- grype db delete && grype db update"
+    fail "  needs ~1GB free in \${GRYPE_DB_CACHE_DIR:-~/.cache/grype}"
+  fi
   command -v trivy >/dev/null && pass "trivy (second opinion)" \
     || printf '  --    trivy not installed (optional second opinion)\n'
 elif command -v trivy >/dev/null; then

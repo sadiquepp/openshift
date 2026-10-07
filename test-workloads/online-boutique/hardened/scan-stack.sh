@@ -40,6 +40,11 @@ else
   echo "  grype: curl -sSfL https://get.anchore.io/grype | sh -s -- -b /usr/local/bin" >&2
   exit 1
 fi
+if [ "$SCANNER" = grype ] && ! grype db status >/dev/null 2>&1; then
+  echo "error: grype's vulnerability database is not usable." >&2
+  echo "  fix:  grype db delete && grype db update" >&2
+  exit 1
+fi
 
 # Collect the images a namespace is really running, from the pods rather than
 # the Deployments -- that way `oc set image` and any mutating admission webhook
@@ -65,13 +70,17 @@ scan_ns() {
     echo "==> [$ns] $SCANNER $image" >&2
     case "$SCANNER" in
       grype)
-        grype "$image" -o json > "$out/$SCANNER-$svc.json"
+        # registry: explicitly -- without it grype probes the docker and podman
+        # sockets first and fails with "podman not available: no host address"
+        # on a host that only ever runs `podman build`.
+        grype "registry:$image" -o json > "$out/$SCANNER-$svc.json"
         jq -r '.matches[]
                | [(.vulnerability.severity // "Unknown" | ascii_upcase),
                   .vulnerability.id, .artifact.name] | @tsv' \
           "$out/$SCANNER-$svc.json" | sort -u > "$out/cves-$svc.tsv" ;;
       trivy)
-        trivy image --quiet --format json --output "$out/$SCANNER-$svc.json" "$image"
+        trivy image --quiet --image-src remote \
+          --format json --output "$out/$SCANNER-$svc.json" "$image"
         jq -r '[ .Results[]? | .Vulnerabilities[]? ]
                | .[]
                | [(.Severity // "UNKNOWN" | ascii_upcase),

@@ -172,7 +172,7 @@ run:
    end — but using it would ship a compiler in four of eleven production images,
    so it is deliberately not the default.
 
-And three things that are not catalog questions but bit during the first real
+And five things that are not catalog questions but bit during the first real
 builds:
 
 5. **The interpreter is `python3`, not `python`.** RHEL and Fedora ship
@@ -202,6 +202,21 @@ builds:
    directory and removes the `python3.X` path component too. The import smoke
    test in `cve-demo/Containerfile.hardened` is what caught it, at build time
    rather than in a CrashLoopBackOff.
+8. **Scanners need an image archive, not the local image store.** `grype
+   podman:<image>` asks podman's API socket for the image, and that socket is
+   not running after a plain `podman build` — it fails with `podman: podman not
+   available: no host address`. A bare `trivy image <image>` probes for the same
+   thing. Both read a `podman save` docker-archive directly instead, with no
+   daemon and no registry round trip, which is what `compare.sh` now does.
+   `scan-stack.sh` names `registry:` explicitly for the same reason, since the
+   images it scans live in your registry.
+9. **grype's database can download and still be unusable.** A `failed to
+   hydrate` followed by `database does not exist` means the download worked and
+   the unpack did not — normally no disk space in
+   `${GRYPE_DB_CACHE_DIR:-~/.cache/grype}` (it wants ~1GB) or a cache left by an
+   older grype with a different format. `grype db delete && grype db update`
+   fixes it, and `preflight.sh`, `compare.sh` and `scan-stack.sh` all check
+   `grype db status` up front rather than after the builds.
 
 ## Getting started
 
