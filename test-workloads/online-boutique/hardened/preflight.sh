@@ -2,10 +2,14 @@
 #
 # Check everything that could fail before you spend 40 minutes building.
 #
+#   export REGISTRY=registry.example.com:8443
 #   ./preflight.sh                                    # hardened base set
-#   BASE=ubi ./preflight.sh                           # UBI base set
-#   ./preflight.sh registry.example.com:8443          # also check your registry
 #   ./preflight.sh --build-check                      # + a real Go build/run test
+#   BASE=ubi ./preflight.sh                           # UBI base set
+#
+# REGISTRY is read from the environment (see registry.env); passing it as an
+# argument still works and overrides. Without it, every check runs except the
+# registry reachability and login one.
 #
 # Resolves the three unknowns this directory's README flags -- whether the tags
 # in bases.env exist, whether the Go runtime base works, and whether the Python
@@ -19,15 +23,16 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENGINE="${ENGINE:-podman}"
 BASE="${BASE:-hardened}"
 BUILD_CHECK=0
-REGISTRY=""
 for a in "$@"; do
   case "$a" in
     --build-check) BUILD_CHECK=1 ;;
     -*) echo "unknown option: $a" >&2; exit 2 ;;
-    *) REGISTRY="$a" ;;
+    *) REGISTRY="$a" ;;   # positional still wins over the environment
   esac
 done
 
+# shellcheck source=registry.env
+. "$HERE/registry.env"
 # shellcheck source=bases.env
 . "$HERE/bases.env"
 
@@ -172,7 +177,7 @@ else
   warn "skipped -- pass --build-check to actually build and run a static binary"
 fi
 
-if [ -n "$REGISTRY" ]; then
+if [ -n "${REGISTRY:-}" ]; then
   echo
   echo "== your registry ($REGISTRY)"
   # No -f here: a registry that wants credentials answers /v2/ with 401, which
@@ -192,7 +197,12 @@ fi
 
 echo
 if [ "$FAIL" -eq 0 ]; then
-  echo "All checks passed. Next: cd cve-demo && ./compare.sh"
+  if [ -z "${REGISTRY:-}" ]; then
+    echo "All base-image checks passed. Set REGISTRY and rerun to check the registry too:"
+    echo "  export REGISTRY=registry.example.com:8443"
+  else
+    echo "All checks passed. Next: ./set-registry.sh && (cd cve-demo && ./compare.sh)"
+  fi
 else
   echo "Fix the FAILs above before building. Every base image is overridable from"
   echo "the environment or by editing bases.env."

@@ -4,7 +4,8 @@ kind: Kustomization
 # The same deploy as ../hardened, rebuilt on UBI 9 instead, in its own namespace
 # so the two stacks can run side by side and be compared:
 #
-#   BASE=ubi ../../hardened/build-push.sh registry.example.com:8443/online-boutique
+#   export REGISTRY=registry.example.com:8443
+#   BASE=ubi ../../hardened/build-push.sh
 #   oc apply -k overlays/hardened      -> namespace online-boutique
 #   oc apply -k overlays/ubi           -> namespace online-boutique-ubi
 #   ../../hardened/scan-stack.sh online-boutique online-boutique-ubi

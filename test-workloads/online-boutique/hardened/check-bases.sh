@@ -2,8 +2,11 @@
 #
 # Which services are stale because their base image moved?
 #
-#   ./check-bases.sh registry.example.com:8443/online-boutique
-#   ./check-bases.sh registry.example.com:8443/online-boutique v0.10.6
+#   export REGISTRY=registry.example.com:8443
+#   ./check-bases.sh
+#
+# Takes $REGISTRY/$NAMESPACE and $VERSION from the environment (see
+# registry.env); a <registry>/<namespace> [version] argument pair overrides.
 #
 # When Red Hat ships a CVE fix, the fixed base image is pushed under the same
 # tag with a new digest. An image you built last week still contains the old
@@ -14,18 +17,22 @@
 # Reads the registry only -- no cluster, no local images, nothing pulled beyond
 # manifests. Exits 1 if anything is stale, so it works as a cron or CI gate.
 #
-#   ./check-bases.sh <dest> || BASE=hardened ./build-push.sh <dest> --only "$(...)"
+#   ./check-bases.sh || BASE=hardened ./build-push.sh --only <the services it named>
 #
 # Requires skopeo and jq. BASE must match the set the images were built with;
 # it is also read back from each image's label and mismatches are reported.
 
 set -uo pipefail
 
-DEST="${1:?usage: $0 <registry>/<namespace> [upstream-version]}"
-VERSION="${2:-v0.10.6}"
 BASE="${BASE:-hardened}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# shellcheck source=registry.env
+. "$HERE/registry.env"
+ARGS_GIVEN=0
+[ $# -gt 0 ] && { DEST="$1"; ARGS_GIVEN=1; }   # positional still wins
+[ $# -gt 1 ] && VERSION="$2"
+require_registry "$0" || exit 1
 # shellcheck source=bases.env
 . "$HERE/bases.env"
 
@@ -114,7 +121,12 @@ if [ -n "$STALE" ]; then
   echo "Stale:$STALE"
   echo
   echo "Rebuild just those:"
-  echo "  BASE=$BASE ./build-push.sh $DEST $VERSION --only $(echo $STALE | tr ' ' ',')"
+  if [ "$ARGS_GIVEN" -eq 1 ]; then
+    echo "  BASE=$BASE ./build-push.sh $DEST $VERSION --only $(echo $STALE | tr ' ' ',')"
+  else
+    # REGISTRY is already exported in this shell, so the short form is enough.
+    echo "  BASE=$BASE ./build-push.sh --only $(echo $STALE | tr ' ' ',')"
+  fi
   exit 1
 fi
 echo "All built services are on the current base images."

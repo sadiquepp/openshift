@@ -9,10 +9,14 @@
 # this workload on hardened images means rebuilding each service from upstream
 # source. That is what this script does.
 #
-#   ./build-push.sh registry.example.com:8443/online-boutique
-#   ./build-push.sh registry.example.com:8443/online-boutique v0.10.6
-#   ./build-push.sh registry.example.com:8443/online-boutique --only emailservice
-#   SERVICES="emailservice adservice" ./build-push.sh registry.example.com:8443/ob
+#   export REGISTRY=registry.example.com:8443
+#   ./build-push.sh                           # all 11 services
+#   ./build-push.sh --only emailservice        # just one
+#   SERVICES="emailservice adservice" ./build-push.sh
+#   VERSION=v0.10.7 ./build-push.sh
+#
+# REGISTRY, NAMESPACE and VERSION come from the environment (see registry.env);
+# a <registry>/<namespace> [version] argument pair still overrides them.
 #
 # This is NOT a one-time bootstrap. The reason to take on the rebuild is that
 # patching stops being somebody else's release cadence -- which only pays off if
@@ -44,24 +48,29 @@
 
 set -euo pipefail
 
-DEST=""
-VERSION=""
+ARG_DEST=""
+ARG_VERSION=""
 ONLY=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --only) ONLY="${2:?--only needs a comma- or space-separated service list}"; shift 2 ;;
     -*) echo "unknown option: $1" >&2; exit 2 ;;
-    *) if [ -z "$DEST" ]; then DEST="$1"; elif [ -z "$VERSION" ]; then VERSION="$1"; fi; shift ;;
+    *) if [ -z "$ARG_DEST" ]; then ARG_DEST="$1"
+       elif [ -z "$ARG_VERSION" ]; then ARG_VERSION="$1"; fi; shift ;;
   esac
 done
-: "${DEST:?usage: $0 <registry>/<namespace> [upstream-version] [--only svc,svc]}"
-VERSION="${VERSION:-v0.10.6}"
 
 ENGINE="${ENGINE:-podman}"
 BASE="${BASE:-hardened}"
 BUILD_ID="${BUILD_ID:-b$(date -u +%Y%m%d)}"
 WORKDIR="${WORKDIR:-$(mktemp -d)}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# shellcheck source=registry.env
+. "$HERE/registry.env"
+[ -n "$ARG_DEST" ] && DEST="$ARG_DEST"           # positional still wins
+[ -n "$ARG_VERSION" ] && VERSION="$ARG_VERSION"
+require_registry "$0" || exit 1
 
 # Every base image comes from here, and every one is overridable from the
 # environment. Confirm what the catalogs actually ship -- https://images.redhat.com

@@ -17,14 +17,19 @@ shell, no package manager**. Three of upstream's containers assume a shell, and 
 (`busybox`) has no hardened equivalent at all. Those four are addressed below and in
 [`../overlays/hardened`](../overlays/hardened).
 
-> **None of this was executed.** The session this was written in has no container engine and its
-> egress policy blocks `images.redhat.com`, `registry.access.redhat.com` and `docs.redhat.com`, so
-> no image was pulled, built or inspected. The analysis is from upstream's own Dockerfiles, build
-> files and dependency manifests at `v0.10.6` (all read directly) plus Red Hat's published
-> documentation. Image **tags in particular are unverified** — see
-> [Before the first build](#before-the-first-build). The kustomize overlay, by contrast, *is*
-> verified: `kustomize build overlays/hardened` renders, and the rendered output contains no
+> **What has and has not been run.** The analysis was written without a container engine, from
+> upstream's own Dockerfiles, build files and dependency manifests at `v0.10.6` (all read directly)
+> plus Red Hat's published documentation. A [`preflight.sh`](preflight.sh) run has since confirmed,
+> against the live catalog, that every tag exists, that `hi/python` carries `libstdc++`, and that a
+> static Go binary built on `hi/go:latest-builder` runs — see
+> [What a real preflight run established](#what-a-real-preflight-run-established). The kustomize
+> overlays are verified too: all five render, and the hardened output contains no
 > `us-central1-docker.pkg.dev`, `docker.io` or `redis:alpine` reference.
+>
+> **The eleven service builds themselves have not been run.** Expect to hit something; the
+> symptom table under [If a pod will not start](#if-a-pod-will-not-start) covers what is likely,
+> and the first real preflight run already caught a wrong Python interpreter name that would
+> otherwise have surfaced as a CrashLoopBackOff.
 
 ## Why a rebuild, and what it costs
 
@@ -179,19 +184,39 @@ And one thing that is not a catalog question but broke the same way:
 Six steps, in this order. The first three take about five minutes and will tell
 you whether the other three are going to work.
 
+Set the registry once, in the shell you are going to work in. Every script here
+reads it from the environment — see [`registry.env`](registry.env) — so it is
+stated once rather than repeated on four command lines:
+
+```bash
+export REGISTRY=registry.example.com:8443
+```
+
+Optionally `export NAMESPACE=...` (defaults to `online-boutique`, so images
+land at `$REGISTRY/online-boutique/<service>`) and `export VERSION=...`
+(defaults to `v0.10.6`, which is what `base/kubernetes-manifests.yaml` is
+vendored from — change both together or the manifests and images drift).
+
+A positional argument still overrides the environment on any of these scripts,
+for one-off runs against a different registry.
+
 ### 1. Preflight
 
 ```bash
-./preflight.sh registry.example.com:8443 --build-check
+./preflight.sh --build-check
 ```
 
 Checks your tooling, then asks the registry whether every tag in
-[`bases.env`](bases.env) actually exists, whether `hi/go` works as a runtime base
-for a static binary, and whether `hi/python` carries `libstdc++` — the three
-things flagged under [Before the first build](#before-the-first-build). It
-pushes nothing and exits non-zero if anything is wrong, with the fix in the
-message. A wrong tag is the most likely reason a first run dies, and this is how
-you find out in ten seconds instead of twenty minutes.
+[`bases.env`](bases.env) actually exists, which name the Python interpreter goes
+by, whether it carries `libstdc++`, and whether the Go runtime base is minimal
+or secretly the whole toolchain — see [What a real preflight run
+established](#what-a-real-preflight-run-established) for what these came back as
+last time. It pushes nothing and exits non-zero if anything is wrong, with the
+fix in the message. A wrong tag is the most likely reason a first run dies, and
+this is how you find out in ten seconds instead of twenty minutes.
+
+Without `REGISTRY` set it still runs every base-image check and just skips the
+registry reachability and login one.
 
 Needs `skopeo` and `podman`; `--build-check` additionally builds and runs a
 five-line static Go binary across the builder/runtime pair.
@@ -199,13 +224,17 @@ five-line static Go binary across the builder/runtime pair.
 ### 2. Point the overlays at your registry
 
 ```bash
-./set-registry.sh registry.example.com:8443/online-boutique
+./set-registry.sh
 ./set-registry.sh --check
 ```
 
-Rewrites all 13 image references in both overlays. Idempotent — run it again
-with a different value any time. Takes `<registry>/<namespace>`, not a bare
-registry, because 13 repositories at a registry root is nobody's intent.
+Rewrites all 13 image references in both overlays to
+`$REGISTRY/$NAMESPACE/<service>`. Idempotent — change `REGISTRY` and run it
+again any time, from whatever the overlays currently say rather than only from
+the placeholder. `--check` prints what they point at now and changes nothing.
+
+It insists on a namespace under the registry — the `NAMESPACE` default exists
+because 13 repositories at a registry root is nobody's intent.
 
 ### 3. Build and scan one service
 
@@ -224,8 +253,8 @@ If this works, the remaining ten services are variations on it.
 ### 4. Build the full stack
 
 ```bash
-podman login registry.example.com:8443
-BASE=hardened ./build-push.sh registry.example.com:8443/online-boutique
+podman login "$REGISTRY"
+BASE=hardened ./build-push.sh
 ```
 
 Clones upstream `v0.10.6`, builds all 11 services, pushes each, mirrors the
@@ -242,7 +271,7 @@ trust it cluster-wide. Note the `..` in the key where the port's colon goes:
 
 ```bash
 oc create configmap registry-cas -n openshift-config \
-  --from-file=registry.example.com..8443=/path/to/ca.crt
+  --from-file="${REGISTRY/:/..}=/path/to/ca.crt"
 ```
 
 ```bash
@@ -256,7 +285,7 @@ them — and run it *after* `oc apply`, since the manifests create those account
 
 ```bash
 oc create secret docker-registry mirror-creds -n online-boutique \
-  --docker-server=registry.example.com:8443 \
+  --docker-server="$REGISTRY" \
   --docker-username='<user>' --docker-password='<pass>'
 ```
 
@@ -330,7 +359,7 @@ than on whoever's laptop ran the build:
 | `online-boutique.build.base-set` | `hardened` or `ubi` |
 
 ```bash
-./check-bases.sh registry.example.com:8443/online-boutique
+./check-bases.sh
 ```
 
 Compares what each image was built *from* against what that tag resolves to
@@ -341,8 +370,7 @@ so it works as a cron job or a CI gate.
 ### Rebuilding just that service
 
 ```bash
-BASE=hardened ./build-push.sh registry.example.com:8443/online-boutique \
-  --only emailservice
+BASE=hardened ./build-push.sh --only emailservice
 ```
 
 `check-bases.sh` prints this line for you with the right service list.
@@ -374,7 +402,7 @@ makes it happen at all.
 ```bash
 cd ../overlays/hardened
 kustomize edit set image \
-  us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/emailservice=registry.example.com:8443/online-boutique/emailservice:v0.10.6-b20261007
+  us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/emailservice="$REGISTRY/online-boutique/emailservice:v0.10.6-b20261007"
 oc apply -k .
 ```
 
@@ -443,9 +471,11 @@ reimplemented a multi-stage Containerfile in two BuildConfigs.
 
 ## Knobs
 
-`build-push.sh` takes the upstream version as a second argument, the engine as
-`ENGINE=docker`, and every base image from the environment — the full list, for
-both base sets, is in [`bases.env`](bases.env). `BASE=ubi` builds the same 11
+`REGISTRY`, `NAMESPACE` and `VERSION` come from [`registry.env`](registry.env);
+the engine is `ENGINE=docker`; and every base image comes from
+[`bases.env`](bases.env), which holds both base sets. All of it is overridable
+from the environment, and the registry and version can still be passed
+positionally for a one-off. `BASE=ubi` builds the same 11
 services on UBI 9 and tags them `-ubi`, from the same Containerfiles; only the
 base images change, which is what makes the comparison in
 [`cve-demo/`](cve-demo) mean anything.
@@ -470,6 +500,7 @@ Containerfile.python          emailservice, recommendationservice  (ENTRY build 
 Containerfile.loadgenerator   loadgenerator — separate because of the Locust entrypoint
 Containerfile.java            adservice
 Containerfile.dotnet          cartservice
+registry.env                  REGISTRY / NAMESPACE / VERSION, read by all four scripts
 bases.env                     the hardened and UBI base-image sets  (BASE=hardened|ubi)
 preflight.sh                  check tags, runtimes and your registry before building
 set-registry.sh               point both overlays at your registry
