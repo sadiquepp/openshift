@@ -81,9 +81,12 @@ echo "== minimal base candidates for static binaries"
 # nothing else. Which minimal images the hardened catalog actually ships is not
 # something the docs pin down, so ask the registry and report what is there.
 FOUND_MINIMAL=""
-for cand in registry.access.redhat.com/hi/ubi-micro:latest \
+# Ordered by fitness for this job, not by size: a static Go binary wants a base
+# with no libc at all, which is what a `static` image is for. The rest are
+# fallbacks in descending preference, ending with the one UBI option.
+for cand in registry.access.redhat.com/hi/static:latest \
+            registry.access.redhat.com/hi/ubi-micro:latest \
             registry.access.redhat.com/hi/ubi-minimal:latest \
-            registry.access.redhat.com/hi/static:latest \
             registry.access.redhat.com/hi/base:latest \
             registry.access.redhat.com/ubi9/ubi-micro:latest; do
   if skopeo inspect --raw "docker://$cand" >/dev/null 2>&1; then
@@ -93,8 +96,10 @@ for cand in registry.access.redhat.com/hi/ubi-micro:latest \
     printf '  --    %s (not present)\n' "$cand"
   fi
 done
-[ -n "$FOUND_MINIMAL" ] && [ "$FOUND_MINIMAL" != "$GO_RUNTIME" ] \
-  && warn "smallest available is $FOUND_MINIMAL -- set GO_RUNTIME to it if it beats your current one"
+if [ -n "$FOUND_MINIMAL" ] && [ "$FOUND_MINIMAL" != "$GO_RUNTIME" ]; then
+  warn "best fit available is $FOUND_MINIMAL, but GO_RUNTIME is $GO_RUNTIME"
+  warn "  set GO_RUNTIME=$FOUND_MINIMAL (or edit bases.env) and rerun --build-check"
+fi
 
 echo
 echo "== unknown 2: is $GO_RUNTIME usable as a runtime base?"
@@ -111,12 +116,12 @@ if skopeo inspect "docker://$GO_RUNTIME" >/dev/null 2>&1; then
   human=$(numfmt --to=iec --suffix=B "${size:-0}" 2>/dev/null || echo "${size:-0} bytes")
   if "$ENGINE" run --rm --entrypoint go "$GO_RUNTIME" version >/dev/null 2>&1; then
     warn "it carries the Go toolchain ($human compressed) -- works, but you are"
-    warn "shipping a compiler. Prefer ubi9/ubi-micro or scratch: GO_RUNTIME=..."
+    warn "shipping a compiler. Prefer hi/static or scratch -- see the probe above."
   else
     pass "no Go toolchain in it, $human compressed -- a proper runtime base"
   fi
 else
-  fail "cannot inspect it; set GO_RUNTIME=registry.access.redhat.com/ubi9/ubi-micro"
+  fail "cannot inspect it; set GO_RUNTIME to one of the candidates probed above"
 fi
 
 echo

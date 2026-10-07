@@ -55,7 +55,7 @@ them.
 | upstream base | hardened replacement | notes |
 |---|---|---|
 | `golang:1.26-alpine` | `hi/go:latest-builder` | |
-| `gcr.io/distroless/static` | `ubi9/ubi-micro` | `hi/go:latest` works but ships the toolchain — see below |
+| `gcr.io/distroless/static` | `hi/static` | the direct counterpart; `hi/go:latest` works but ships the toolchain |
 | `node:20-alpine` | `hi/nodejs:latest-builder` / `:latest` | |
 | `python:3.14-alpine` | `hi/python:3.12-builder` / `:3.12` | 3.12 so the UBI comparison is on one interpreter |
 | `eclipse-temurin:25-jre-alpine` | `hi/openjdk:21-builder` / `:21` | `build.gradle` sets `sourceCompatibility = VERSION_21` |
@@ -159,17 +159,22 @@ run:
    .NET 10 and JDK 21 are both there.
 2. **`hi/python:3.12` carries `libstdc++`**, so `grpcio`'s wheels import fine and
    nothing needs copying out of the builder stage.
-3. **`hi/go:latest` works as a runtime base but carries the Go toolchain.** A
-   static binary built on `hi/go:latest-builder` runs on it — verified end to
-   end — but using it would ship a compiler in four of eleven production images.
-   `GO_RUNTIME` therefore defaults to `ubi9/ubi-micro`, which is the one
-   deliberate non-hardened base in the set; see the comment in `bases.env`.
-   `preflight.sh` probes for a hardened minimal image (`hi/ubi-micro`,
-   `hi/static` and friends) and will name one if the catalog gains it.
+3. **`hi/static` exists, and is what the Go services use.** It is the hardened
+   counterpart of `gcr.io/distroless/static` — exactly what upstream's own
+   Dockerfile uses for these four — so `GO_RUNTIME` defaults to it and the whole
+   stack is hardened with no UBI fallback. `hi/ubi-micro`, `hi/ubi-minimal` and
+   `hi/base` are **not** in the catalog; `ubi9/ubi-micro` is the fallback if
+   `hi/static` ever disappears, and works (verified end to end), but it is UBI
+   rather than hardened and carries a libc these binaries never call.
+   `preflight.sh` probes all five and names the best fit it finds.
+4. **`hi/go:latest` works as a runtime base but carries the Go toolchain.** A
+   static binary built on `hi/go:latest-builder` does run on it — verified end to
+   end — but using it would ship a compiler in four of eleven production images,
+   so it is deliberately not the default.
 
 And one thing that is not a catalog question but broke the same way:
 
-4. **The interpreter is `python3`, not `python`.** RHEL and Fedora ship
+5. **The interpreter is `python3`, not `python`.** RHEL and Fedora ship
    `/usr/bin/python3` and only provide a bare `python` if
    `python-unversioned-command` is installed, which these images do not. Every
    Python entrypoint here — the two service images, the load generator, the

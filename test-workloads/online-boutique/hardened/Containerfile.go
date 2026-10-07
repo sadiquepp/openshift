@@ -9,10 +9,12 @@
 # cares that the build moved from Alpine/musl to a glibc-based hardened image.
 
 ARG BUILDER=registry.access.redhat.com/hi/go:latest-builder
-# The runtime stage only has to hold a static binary. The hardened `go` runtime
-# variant is the natural fit; ubi-micro or even scratch also work, since these
-# services speak plaintext gRPC in-cluster and need neither CA bundle nor tzdata.
-ARG RUNTIME=registry.access.redhat.com/hi/go:latest
+# The runtime stage only has to hold a static binary, so this is hi/static --
+# the hardened counterpart of the gcr.io/distroless/static that upstream's own
+# Dockerfile uses here. NOT hi/go:latest, which works but carries the Go
+# toolchain. ubi-micro or scratch also work; these services speak plaintext
+# gRPC in-cluster and need neither a CA bundle nor tzdata.
+ARG RUNTIME=registry.access.redhat.com/hi/static:latest
 
 FROM ${BUILDER} AS builder
 WORKDIR /src
