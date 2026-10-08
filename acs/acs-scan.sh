@@ -35,6 +35,59 @@ fi
 for t in roxctl oc jq; do command -v "$t" >/dev/null || { echo "$t not on PATH" >&2; exit 2; }; done
 
 OUT="results-acs"; mkdir -p "$OUT"
+
+# Scanner V4 loads its vulnerability store on first start and refuses matching
+# until that finishes:
+#
+#   FailedPrecondition: the matcher is not initialized: initial load for the
+#   vulnerability store is in progress
+#
+# That is a warm-up, not a fault -- the image indexes fine, only the matching
+# step is unavailable. Without this wait, every image in both namespaces is
+# attempted against an unready matcher and the run reports two dozen failures
+# that mean nothing except "too early".
+#
+# Probing with a real scan is deliberate: it tests the path the scan actually
+# takes, where a pod readiness check would not -- the matcher reports Ready
+# while the store is still loading, which is why the error reaches the client.
+wait_for_matcher() {
+  local probe="$1" waited=0 step=20 out dots=0
+  local limit="${ROX_MATCHER_TIMEOUT:-1800}"
+  while :; do
+    if out="$("${ROX[@]}" image scan --image "$probe" -o json 2>&1 >/dev/null)"; then
+      [ "$dots" -eq 1 ] && echo " ready" >&2
+      return 0
+    fi
+    case "$out" in
+      *"matcher is not initialized"*|*"vulnerability store is in progress"*) ;;
+      *) [ "$dots" -eq 1 ] && echo >&2
+         return 0 ;;   # a different error: let the per-image loop report it
+    esac
+    if [ "$waited" -ge "$limit" ]; then
+      [ "$dots" -eq 1 ] && echo >&2
+      local pretty
+      if [ "$limit" -ge 60 ]; then pretty="$((limit/60)) minutes"; else pretty="${limit}s"; fi
+      echo "Scanner V4's vulnerability store is still loading after $pretty." >&2
+      echo "  oc -n stackrox logs -l app=scanner-v4-matcher --tail=20" >&2
+      echo >&2
+      echo "On a disconnected cluster this never completes on its own: Central" >&2
+      echo "cannot reach Red Hat's definitions, so they have to be uploaded" >&2
+      echo "manually and egress.connectivityPolicy set to Offline. A Central" >&2
+      echo "that cannot load definitions runs normally and reports nothing," >&2
+      echo "which is why this waits rather than scanning into the void." >&2
+      echo >&2
+      echo "Raise the wait with ROX_MATCHER_TIMEOUT=<seconds>." >&2
+      return 1
+    fi
+    if [ "$waited" -eq 0 ]; then
+      printf '==> waiting for Scanner V4 to finish loading its vulnerability store' >&2
+      dots=1
+    fi
+    printf '.' >&2
+    sleep "$step"; waited=$((waited+step))
+  done
+}
+
 # TLS. The operator exposes Central through a passthrough route, so Central
 # presents its own self-signed certificate with SANs central.stackrox and
 # central.stackrox.svc -- not the route hostname. Verification therefore fails
@@ -170,6 +223,12 @@ report() {
     printf 'hardened images (Project Hummingbird) -- see README.md.\n'
   fi
 }
+
+# One probe before either namespace, using an image that is actually deployed.
+FIRST_IMG="$(oc get pods -n "$NS_A" -o jsonpath='{.items[0].spec.containers[0].image}' 2>/dev/null || true)"
+if [ -n "$FIRST_IMG" ]; then
+  wait_for_matcher "$FIRST_IMG" || exit 1
+fi
 
 scan_ns "$NS_A" || true
 [ -n "$NS_B" ] && { scan_ns "$NS_B" || true; }

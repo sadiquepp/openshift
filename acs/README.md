@@ -215,6 +215,31 @@ export ROX_API_TOKEN=...
 ./acs-scan.sh online-boutique online-boutique-ubi
 ```
 
+On a fresh Central the first run pauses:
+
+```
+==> waiting for Scanner V4 to finish loading its vulnerability store...
+```
+
+Scanner V4 loads its vulnerability store on first start and refuses matching
+until that finishes, with
+`FailedPrecondition: the matcher is not initialized`. The image indexes fine;
+only matching is unavailable, so this is warm-up rather than failure. The
+script probes once and waits (30 minutes by default,
+`ROX_MATCHER_TIMEOUT=<seconds>` to change it) instead of attempting two dozen
+images against an unready matcher and reporting two dozen meaningless
+failures.
+
+It probes with a real scan rather than a pod readiness check, deliberately: the
+matcher reports Ready while the store is still loading, which is exactly why
+the error reaches the client at all.
+
+**If that wait never ends, the cluster is disconnected.** Central cannot reach
+Red Hat's definitions, so they have to be uploaded manually with
+`egress.connectivityPolicy: Offline`. A Central without definitions runs
+normally and reports no vulnerabilities — so this waits rather than scanning
+into the void and handing back zeros.
+
 [`acs-scan.sh`](acs-scan.sh) reads the images the two namespaces are actually
 running, scans each with `roxctl image scan`, keeps the raw JSON under
 `results-acs/`, and writes a per-image table for both namespaces.
