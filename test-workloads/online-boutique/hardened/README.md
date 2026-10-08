@@ -85,6 +85,48 @@ Nothing in the list is a blocker. The Go services are nearly free, the Python se
 on glibc, and the two genuinely fiddly ones (`cartservice`, `adservice`) are fiddly for ordinary
 packaging reasons, not security ones.
 
+## Pin the runtime major, not `:latest`
+
+The language runtime major is an **application compatibility decision**, so it
+does not belong on a floating tag even though the whole point of these bases is
+that patches arrive under one. The two are different things: a patched openssl
+inside `hi/python:3.12` is what you want automatically; a jump from node 22 to
+node 26 is not.
+
+This was learned the hard way. `python` was pinned to 3.12, `openjdk` to 21 and
+`dotnet` to 10.0, while `nodejs` was left on `:latest` — and the build broke the
+moment `:latest` became node 26:
+
+```
+npm error node-pre-gyp ERR! install response status 404 Not Found on
+  .../pprof-nodejs/release/v4.0.0/node-v147-linux-x64-glibc.tar.gz
+npm error WARN Pre-built binaries not installable for pprof@4.0.0 and
+  node@26.10.0 (node-v147 ABI, glibc) (falling back to source compile)
+```
+
+Upstream's node services depend on `@google-cloud/profiler`, whose `pprof`
+dependency is a native addon shipping prebuilt binaries per node ABI. For an ABI
+it has no prebuilt for, it compiles `nan`-based C++ against current V8 headers,
+and fails. Nothing about the hardened base caused this; a floating major did.
+
+So `bases.env` now takes `NODE_MAJOR` (default 22), and `preflight.sh` probes
+which `hi/nodejs` majors the catalog ships and warns if the configured tag is
+floating.
+
+### …and drop the profiler while you are here
+
+`@google-cloud/profiler` reports to Google Cloud Profiler. On OpenShift it has
+nowhere to report, so it is dead weight — and it is the only reason the node
+builder stage needs a C++ toolchain at all. Upstream requires it lazily, inside
+an `if (!DISABLE_PROFILER)` branch, so [`Containerfile.node`](Containerfile.node)
+removes the dependency with `npm pkg delete` and sets `DISABLE_PROFILER=1` in
+the runtime stage, which keeps the application off the code path that would need
+it. `WITH_PROFILER=1` keeps it, for an actual GCP deployment.
+
+That removes the most ABI-fragile thing in the build rather than pinning around
+it — pinning the major is still right, but on its own it only postpones this
+until the next bump.
+
 ## The four things that are not an image swap
 
 ### 1. `loadgenerator` — shell-form entrypoint

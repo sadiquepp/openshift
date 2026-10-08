@@ -7,8 +7,8 @@
 # Modules built against musl cannot be copied into a glibc image, so npm has to
 # run again inside the hardened builder.
 
-ARG BUILDER=registry.access.redhat.com/hi/nodejs:latest-builder
-ARG RUNTIME=registry.access.redhat.com/hi/nodejs:latest
+ARG BUILDER=registry.access.redhat.com/hi/nodejs:22-builder
+ARG RUNTIME=registry.access.redhat.com/hi/nodejs:22
 
 FROM ${BUILDER} AS builder
 # The -builder variants run as a non-root user, and a directory created by
@@ -23,9 +23,29 @@ ARG ENTRY=server.js
 WORKDIR /app
 COPY package*.json ./
 # The -builder variant carries dnf and bash; the runtime variant carries neither.
-RUN dnf install -y --setopt=install_weak_deps=0 gcc-c++ make python3 \
- && npm install --omit=dev \
- && dnf clean all
+# @google-cloud/profiler sends profiles to Google Cloud Profiler. On OpenShift
+# it has nowhere to send them, so it is dead weight -- and it is the only
+# reason this stage needs a C++ toolchain at all, because its pprof dependency
+# is a native addon. It is also the single most fragile thing in the build: the
+# addon ships prebuilt binaries per node ABI, and on a node major it has no
+# prebuilt for, it falls back to compiling nan-based C++ against current V8
+# headers and fails.
+#
+# Upstream's services require it lazily, inside an `if (!DISABLE_PROFILER)`
+# branch, so removing the dependency is safe as long as that env var is set --
+# which the runtime stage below does. Set WITH_PROFILER=1 to keep it, e.g. when
+# actually deploying to GCP.
+#
+# npm pkg delete is idempotent and handles the scoped name; npm install (not
+# npm ci) then reconciles the lockfile rather than failing on the drift.
+ARG WITH_PROFILER=0
+RUN set -eux; \
+    dnf install -y --setopt=install_weak_deps=0 gcc-c++ make python3; \
+    if [ "${WITH_PROFILER}" != "1" ]; then \
+      npm pkg delete "dependencies.@google-cloud/profiler"; \
+    fi; \
+    npm install --omit=dev; \
+    dnf clean all
 COPY . ./
 # ENTRYPOINT is exec form (no shell in the runtime image) and cannot interpolate
 # a build arg, so normalise the entry file to a fixed name here instead.
@@ -35,5 +55,9 @@ RUN cp "${ENTRY}" ./main.js \
 FROM ${RUNTIME}
 WORKDIR /app
 COPY --from=builder /app /app
-ENV NODE_ENV=production
+# Set regardless of WITH_PROFILER: with the dependency removed this is what
+# keeps the application off the code path that requires it, and with the
+# dependency kept it is still the right default off GCP.
+ENV NODE_ENV=production \
+    DISABLE_PROFILER=1
 ENTRYPOINT ["node", "/app/main.js"]

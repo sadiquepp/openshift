@@ -84,6 +84,33 @@ for var in GO_BUILDER GO_RUNTIME NODE_BUILDER NODE_RUNTIME PY_BUILDER PY_RUNTIME
 done
 
 echo
+echo "== hi/nodejs majors available"
+# The node major is an application compatibility decision, not a detail to
+# leave on :latest -- a build on node 26 fails outright, because upstream's
+# @google-cloud/profiler pulls a native addon with no prebuilt for that ABI
+# that will not compile against current V8 headers. The catalog does not
+# document which majors it carries, so ask it, and say which one is configured.
+NODE_FOUND=""
+for maj in 24 22 20; do
+  if skopeo inspect --raw "docker://registry.access.redhat.com/hi/nodejs:${maj}" >/dev/null 2>&1; then
+    pass "hi/nodejs:${maj}"
+    [ -z "$NODE_FOUND" ] && NODE_FOUND="$maj"
+  else
+    printf '  --    hi/nodejs:%s (not present)\n' "$maj"
+  fi
+done
+case "$NODE_BUILDER" in
+  *:latest*|*:latest-builder*)
+    warn "NODE_BUILDER is on a floating tag: $NODE_BUILDER"
+    warn "  a node major bump can break the native addon build without warning."
+    warn "  pin it: NODE_MAJOR=${NODE_FOUND:-22}" ;;
+esac
+if [ -z "$NODE_FOUND" ]; then
+  warn "none of the probed majors resolved -- check the catalog for the tag"
+  warn "  naming scheme and set NODE_MAJOR accordingly"
+fi
+
+echo
 echo "== minimal base candidates for static binaries"
 # The Go services produce a static binary and need a base that holds it and
 # nothing else. Which minimal images the hardened catalog actually ships is not
