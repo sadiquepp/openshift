@@ -227,6 +227,14 @@ report() {
 # One probe before either namespace, using an image that is actually deployed.
 FIRST_IMG="$(oc get pods -n "$NS_A" -o jsonpath='{.items[0].spec.containers[0].image}' 2>/dev/null || true)"
 if [ -n "$FIRST_IMG" ]; then
+  # Say this BEFORE the call. The probe is a real server-side scan and can take
+  # several minutes on a first index, during which an earlier version printed
+  # nothing at all -- indistinguishable from a hang. Interrupting it there is
+  # what puts "matcher error: ... context canceled" in the matcher's log: the
+  # client left, so the server abandoned the query. It is a symptom of the
+  # Ctrl-C, not a fault to chase.
+  echo "==> checking Central is ready to match (a first scan can take several" >&2
+  echo "    minutes server-side; no output until it answers)" >&2
   wait_for_matcher "$FIRST_IMG" || exit 1
 fi
 
