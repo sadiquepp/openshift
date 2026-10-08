@@ -101,19 +101,52 @@ Three things that trip this up:
   `central init-bundles generate` it is the basic-auth password; on
   `central generate` it *sets* the admin password. The environment variable
   avoids the ambiguity.
-- **TLS.** Central's route is served with the cluster's ingress certificate,
-  which this host may not trust, and the failure looks like a connection
-  problem rather than a trust problem. Supply the CA rather than disabling
-  verification:
+- **TLS.** The operator exposes Central through a **passthrough** route, so TLS
+  is not terminated at the router: Central presents its own self-signed
+  certificate, whose SANs are `central.stackrox` and `central.stackrox.svc`
+  only. Connecting by the route hostname therefore fails twice over —
 
-  ```bash
-  oc -n openshift-ingress-operator get secret router-ca \
-    -o jsonpath='{.data.tls\.crt}' | base64 -d > router-ca.crt
-  roxctl -e "$ROX_CENTRAL_ADDRESS" --ca router-ca.crt central init-bundles generate ...
+  ```
+  x509: certificate is valid for central.stackrox, central.stackrox.svc,
+        not central-stackrox.apps.example.com
+  x509: certificate signed by unknown authority
   ```
 
-  `--insecure-skip-tls-verify` also "works", and means you are feeding
-  vulnerability decisions from a server you have not authenticated. Don't.
+  and **no CA file fixes the first half**: the hostname simply is not in the
+  certificate. Two ways to keep verification on.
+
+  *Match the hostname the certificate already has.* Nothing on the cluster
+  changes, and this is enough for the one-off init bundle:
+
+  ```bash
+  oc -n stackrox get secret central-tls \
+    -o jsonpath='{range $k,$v := .data}{$k}{"\n"}{end}'   # find the CA key
+  oc -n stackrox get secret central-tls \
+    -o jsonpath='{.data.ca\.pem}' | base64 -d > central-ca.pem
+
+  oc -n stackrox port-forward svc/central 8443:443 &
+  echo "127.0.0.1 central.stackrox" >> /etc/hosts
+
+  roxctl -e central.stackrox:8443 --ca central-ca.pem \
+    central init-bundles generate online-boutique --output-secrets init-bundle.yaml
+  ```
+
+  The port is irrelevant to validation; only the hostname is in the SAN list.
+
+  *Or give Central a certificate that matches its route*, which is the durable
+  fix and makes every later `roxctl` call work against the route — including
+  the scan below. Create a TLS secret in the Central namespace and reference it
+  from the CR as `spec.central.defaultTLSSecret.name`; the cluster's own
+  ingress wildcard certificate is a reasonable source in a lab. The
+  alternative is `spec.central.exposure.route.reencrypt`, which has the router
+  terminate TLS instead. Change the route object directly and the operator
+  reconciles it back.
+
+  `--insecure-skip-tls-verify` is the third option. For this one call, on a lab
+  network, generating a bundle you immediately apply, the exposure is narrow and
+  plenty of walkthroughs use it. It is a worse habit for the scan step, where
+  the whole point is trusting what the scanner says.
+
 - **The admin password is for getting started.** Red Hat's own docs say it is
   for testing and not for production. For the scan step below, and anything
   automated, use an API token instead — tokens need no interactive login and
