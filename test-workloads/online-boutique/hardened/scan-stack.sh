@@ -76,7 +76,9 @@ scan_ns() {
         grype "registry:$image" -o json > "$out/$SCANNER-$svc.json"
         jq -r '.matches[]
                | [(.vulnerability.severity // "Unknown" | ascii_upcase),
-                  .vulnerability.id, .artifact.name] | @tsv' \
+                  .vulnerability.id, .artifact.name,
+                  (.vulnerability.fix.state
+                     | if . == null or . == "" then "unknown" else . end)] | @tsv' \
           "$out/$SCANNER-$svc.json" | sort -u > "$out/cves-$svc.tsv" ;;
       trivy)
         trivy image --quiet --image-src remote \
@@ -84,7 +86,8 @@ scan_ns() {
         jq -r '[ .Results[]? | .Vulnerabilities[]? ]
                | .[]
                | [(.Severity // "UNKNOWN" | ascii_upcase),
-                  .VulnerabilityID, .PkgName] | @tsv' \
+                  .VulnerabilityID, .PkgName,
+                  (if (.FixedVersion // "") == "" then "not-fixed" else "fixed" end)] | @tsv' \
           "$out/$SCANNER-$svc.json" | sort -u > "$out/cves-$svc.tsv" ;;
     esac
     local c h m l t
@@ -103,6 +106,7 @@ scan_ns() {
 }
 
 col() { awk -F'\t' -v s="$2" '$1==s' "$1/cves-all.tsv" | wc -l | tr -d ' '; }
+fixable() { awk -F'\t' '$4=="fixed"' "$1/cves-all.tsv" | wc -l | tr -d ' '; }
 
 scan_ns "$NS_A"
 [ -n "$NS_B" ] && scan_ns "$NS_B"
@@ -129,6 +133,36 @@ B="$HERE/results-$NS_B"
     done
     printf '| **total** | **%s** | **%s** |\n' \
       "$(wc -l < "$A/cves-all.tsv" | tr -d ' ')" "$(wc -l < "$B/cves-all.tsv" | tr -d ' ')"
+    printf '| of which fixable now | %s | %s |\n' "$(fixable "$A")" "$(fixable "$B")"
+    echo
+    # The total is attack surface; the fixable count is work. They answer
+    # different questions and a report giving only the first invites the reply
+    # "so what do we do about it", which the second answers.
+    echo "A finding with no fix available is one to report, not to action --"
+    echo "no rebuild clears it until the distro or the dependency moves. The"
+    echo "fixable row is the part a rebuild would pick up today."
+    echo
+    # Severity totals hide the case that matters most to anyone gating on
+    # criticals: if both sides carry the same ones, the base image is not what
+    # decides that gate. Naming them is the difference between a number and a
+    # decision.
+    echo "## Critical findings, named"
+    echo
+    echo "| CVE | package | $NS_A | $NS_B | fix |"
+    echo "|---|---|---|---|---|"
+    join -t$'\t' -a1 -a2 -e '-' -o '0,1.2,2.2,1.3,2.3' \
+      <(awk -F'\t' '$1=="CRITICAL"{print $2"\t"$3"\t"$4}' "$A/cves-all.tsv" | sort -u) \
+      <(awk -F'\t' '$1=="CRITICAL"{print $2"\t"$3"\t"$4}' "$B/cves-all.tsv" | sort -u) \
+      | awk -F'\t' '{
+          pkg = ($2 != "-") ? $2 : $3;
+          a   = ($2 != "-") ? "yes" : "—";
+          b   = ($3 != "-") ? "yes" : "—";
+          fix = ($4 != "-") ? $4 : $5;
+          printf "| %s | `%s` | %s | %s | %s |\n", $1, pkg, a, b, fix }'
+    echo
+    echo "A critical present in both columns is not something the base image"
+    echo "can fix -- it is in the application or its dependencies, which are"
+    echo "identical across the two variants by construction."
     echo
     echo "## Per service"
     echo
