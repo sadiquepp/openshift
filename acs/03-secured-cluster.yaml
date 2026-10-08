@@ -1,0 +1,24 @@
+# SecuredCluster. Apply LAST, and only after the init bundle secrets exist in
+# this namespace -- it depends on certificates Central generates, so applying it
+# early leaves pods unable to authenticate.
+#
+#   oc -n stackrox get secret | grep -E 'admission-control-tls|collector-tls|sensor-tls'
+#
+# Generate and apply the bundle with roxctl before this file; the README has the
+# exact commands.
+#
+# centralEndpoint uses the in-cluster Service because Central and the secured
+# cluster are the same cluster here. For a remote Central, use its route
+# hostname and port 443.
+---
+apiVersion: platform.stackrox.io/v1alpha1
+kind: SecuredCluster
+metadata:
+  name: stackrox-secured-cluster-services
+  namespace: stackrox
+spec:
+  clusterName: <cluster-name>
+  centralEndpoint: central.stackrox.svc:443
+  admissionControl:
+    listenOnCreates: true
+    listenOnUpdates: true

@@ -1,0 +1,40 @@
+# RHACS operator. Apply first, wait for the CSV to reach Succeeded, then 02.
+#
+# Channel and catalog source are the two things to confirm against your cluster
+# before applying, because both vary by OpenShift version and by whether the
+# catalog is mirrored:
+#
+#   oc get packagemanifest rhacs-operator -n openshift-marketplace \
+#     -o jsonpath='{.status.defaultChannel}{"\n"}{range .status.channels[*]}{.name}{"\n"}{end}'
+#
+# If that returns nothing, the operator is not in the cluster's catalog. On a
+# disconnected cluster it has to be mirrored into your registry and published
+# through a CatalogSource first -- see ../disconnected/ in this repo. Change
+# `source` below to that CatalogSource's name.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rhacs-operator
+---
+# No targetNamespaces and no selector means all namespaces, which is what the
+# operator needs: it reconciles Central in one project and SecuredCluster in
+# another.
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: rhacs-operator-group
+  namespace: rhacs-operator
+spec: {}
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: rhacs-operator
+  namespace: rhacs-operator
+spec:
+  channel: stable
+  installPlanApproval: Automatic
+  name: rhacs-operator
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace

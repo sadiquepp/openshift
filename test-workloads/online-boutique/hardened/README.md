@@ -760,6 +760,16 @@ cve-demo/                     emailservice built 3 ways, scanned and diffed
 Deploy-time changes are in [`../overlays/hardened`](../overlays/hardened), and the UBI counterpart
 in [`../overlays/ubi`](../overlays/ubi).
 
+## Scanning it with ACS
+
+[`../../../acs/`](../../../acs) has the operator, Central and SecuredCluster
+manifests plus a script that scans both namespaces and writes a per-image table.
+Read [the ACS section of
+`cve-demo/README.md`](cve-demo/README.md#what-about-scanning-with-acs-instead)
+first: RHACS 4.11 is documented as not reporting vulnerabilities for Red Hat
+hardened images, so the hardened side is expected to come back thin, and that is
+a tooling-readiness finding rather than a clean result.
+
 ## Measuring it
 
 Whether this is worth doing is an empirical question, so there are two ways to answer it:
