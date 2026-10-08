@@ -472,10 +472,26 @@ oc get pods -n online-boutique -w
 oc get route frontend -n online-boutique -o jsonpath='https://{.spec.host}{"\n"}'
 ```
 
-Then, once the UBI stack is built and deployed too:
+For the UBI comparison, **build it before applying it.** The two overlays point
+at different tags — `v0.10.6` for hardened, `v0.10.6-ubi` for UBI, from
+`TAG_SUFFIX` in [`bases.env`](bases.env) — so applying the UBI overlay without
+having run the UBI build gives every pod
+
+```
+Failed to pull image ".../frontend:v0.10.6-ubi": manifest unknown
+```
+
+which is the registry correctly reporting a tag nobody pushed. Both steps:
 
 ```bash
+BASE=ubi ./build-push.sh
 oc apply -k ../overlays/ubi
+oc get pods -n online-boutique-ubi -w
+```
+
+Then, with both namespaces up:
+
+```bash
 ./scan-stack.sh online-boutique online-boutique-ubi
 ```
 
@@ -527,6 +543,7 @@ oc rollout restart deployment -n online-boutique
 
 | symptom | cause |
 |---|---|
+| `manifest unknown` on a `-ubi` tag | the UBI stack was applied without `BASE=ubi ./build-push.sh` — `BASE=hardened` pushes plain tags only |
 | frontend HTTP 500 "Can't access cart storage" | `redis-cart` rejecting clients — protected mode, see [4](#4-redis-cart--valkey-not-redis). The pod reads 1/1 Running regardless |
 | `loadgenerator` stuck `Init:0/1` | its init container waits for HTTP 200; something upstream of the home page is failing. Not itself the fault |
 | `ImagePullBackOff` | step 5 — CA not trusted, or no credentials for the registry. If you took the step 7 route instead: no pull secret on that ServiceAccount, or pods not restarted since it was linked |
