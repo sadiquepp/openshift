@@ -127,7 +127,7 @@ That removes the most ABI-fragile thing in the build rather than pinning around
 it — pinning the major is still right, but on its own it only postpones this
 until the next bump.
 
-## The four things that are not an image swap
+## The five things that are not an image swap
 
 ### 1. `loadgenerator` — shell-form entrypoint
 
@@ -207,6 +207,40 @@ oc run resp-probe --rm -i --restart=Never -n online-boutique \
 `+PONG` means the server is healthy and the problem is elsewhere. Anything beginning `-DENIED`,
 `-NOAUTH` or `-ERR` names the real cause in one line. The `--overrides` block is there because a
 plain `oc run` is rejected by the `restricted:latest` Pod Security admission policy.
+
+### 5. `cartservice` — a base image can override your port
+
+Not a hardened-image problem; found *because* two base sets are built from the
+same Containerfile. ASP.NET Core takes its listen address from
+`ASPNETCORE_URLS` in preference to `ASPNETCORE_HTTP_PORTS`, and
+`ubi9/dotnet-100-runtime` ships
+
+```
+ASPNETCORE_URLS=http://*:8080
+```
+
+so a Containerfile that sets only `ASPNETCORE_HTTP_PORTS=7070` gets quietly
+overruled. The app binds 8080, the manifest's probes stay on 7070, the kubelet
+kills the container, and the log reads:
+
+```
+Overriding HTTP_PORTS '7070' and HTTPS_PORTS ''. Binding to values defined by URLS instead 'http://*:8080'.
+Now listening on: http://[::]:8080
+Application started. Press Ctrl+C to shut down.
+Application is shutting down...
+```
+
+"Application started" immediately before "shutting down" is the signature:
+the process is healthy and being killed from outside. `hi/dotnet-runtime` does
+not set `ASPNETCORE_URLS`, so the hardened variant worked and only the UBI one
+crash-looped — which is the whole argument for building both from one
+Containerfile. A single-variant build would have shipped this latent, waiting
+for a base image update to set `URLS`.
+
+[`Containerfile.dotnet`](Containerfile.dotnet) now sets `ASPNETCORE_URLS`
+directly. The general rule: when a framework offers two settings for the same
+thing, set the one that wins, because the other only works until a base image
+disagrees.
 
 ## OpenShift-specific notes
 
@@ -543,6 +577,7 @@ oc rollout restart deployment -n online-boutique
 
 | symptom | cause |
 |---|---|
+| `CrashLoopBackOff` whose log says "Application started" then "shutting down" | the process is fine and being killed from outside — almost always a probe on a port it is not listening on. See [5](#5-cartservice--a-base-image-can-override-your-port) |
 | 500 "could not retrieve ..." in the first minute or two | a dependency had not started when the page loaded. Nothing orders these 11 services, so the frontend serves 500s until the service it needs is listening. Reload before investigating: check the dependency's log for requests being served and `oc get endpoints <svc>` for an address |
 | `manifest unknown` on a `-ubi` tag | the UBI stack was applied without `BASE=ubi ./build-push.sh` — `BASE=hardened` pushes plain tags only |
 | frontend HTTP 500 "Can't access cart storage" | `redis-cart` rejecting clients — protected mode, see [4](#4-redis-cart--valkey-not-redis). The pod reads 1/1 Running regardless |

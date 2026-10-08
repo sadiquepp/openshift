@@ -40,6 +40,14 @@ FROM ${RUNTIME}
 WORKDIR /app
 COPY --from=builder /out /app
 EXPOSE 7070
+# ASPNETCORE_URLS rather than ASPNETCORE_HTTP_PORTS, deliberately. ASP.NET Core
+# gives URLS precedence when both are set, and a runtime base image may define
+# it: ubi9/dotnet-100-runtime ships ASPNETCORE_URLS=http://*:8080, which
+# silently beat HTTP_PORTS=7070 and left the app listening on 8080 while the
+# manifest's probes stayed on 7070. The kubelet then killed it, producing a
+# crash loop whose log read "Application started." immediately before
+# "Application is shutting down...". Setting the authoritative variable here
+# makes the port independent of whatever the base image decided.
 ENV DOTNET_EnableDiagnostics=0 \
-    ASPNETCORE_HTTP_PORTS=7070
+    ASPNETCORE_URLS=http://*:7070
 ENTRYPOINT ["/app/cartservice"]
