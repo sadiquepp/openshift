@@ -61,6 +61,10 @@ while [ $# -gt 0 ]; do
 done
 
 ENGINE="${ENGINE:-podman}"
+# newer: re-pull when the registry digest differs from local storage. The
+# whole point of the rebuild loop is to pick up a new base, so a cached base
+# defeats it. See ensure_base.
+PULL="${PULL:-newer}"
 BASE="${BASE:-hardened}"
 BUILD_ID="${BUILD_ID:-b$(date -u +%Y%m%d)}"
 WORKDIR="${WORKDIR:-$(mktemp -d)}"
@@ -134,6 +138,42 @@ for s in $SERVICES; do recipe "$s"; done   # validate the list before any work
 
 digest_of() { skopeo inspect --format '{{.Digest}}' "docker://$1" 2>/dev/null || echo unknown; }
 
+# Pull the base before reading its digest, and fail if the pull fails.
+#
+# This is load-bearing, not hygiene. digest_of reads the REGISTRY, so without a
+# pull the build can use a stale base from local storage while the image gets
+# labelled with the digest of the base it did NOT use -- and check-bases.sh,
+# which compares that label against the live digest, then reports the image as
+# current. A stale image that reports current is worse than no label at all.
+#
+# `podman build --pull=<policy>` has had two different defaults across podman
+# versions and the build man page does not state the current one, so neither the
+# pull nor the policy is left implicit here.
+#
+# PULL=never skips it (air-gapped, or deliberately rebuilding on a pinned base);
+# ALLOW_STALE_BASE=1 downgrades an unreachable registry to a warning, and then
+# the digest label reads "unverified" rather than claiming something untrue.
+ensure_base() {
+  local img="$1"
+  # Return non-zero so the digest label reads "unverified". The label means
+  # "this image was built on the base that carried this registry digest", and
+  # with no pull that claim is unproven -- a pinned local base may be months
+  # behind the tag. Claiming it would make check-bases.sh call the image current.
+  [ "$PULL" = never ] && return 1
+  if ! "$ENGINE" pull --quiet "$img" >/dev/null; then
+    if [ "${ALLOW_STALE_BASE:-0}" = 1 ]; then
+      echo "    WARN  could not pull $img -- building on whatever is in local storage" >&2
+      return 1
+    fi
+    echo "ERROR: could not pull base image $img" >&2
+    echo "  The build would silently use a stale local copy and then label the" >&2
+    echo "  image with the current registry digest, which check-bases.sh reads" >&2
+    echo "  as up to date. Fix the pull, or set ALLOW_STALE_BASE=1 to accept an" >&2
+    echo "  unverified base, or PULL=never to build on a pinned local base." >&2
+    exit 1
+  fi
+}
+
 NEED_SRC=0
 for s in $SERVICES; do [ "$s" = cache ] || NEED_SRC=1; done
 SRC="$WORKDIR/microservices-demo"
@@ -156,13 +196,16 @@ build_one() {
   # what a new base image release makes stale. The two OCI annotations are the
   # standard ones for a base image; the builder has no standard annotation.
   local bdig rdig
-  bdig=$(digest_of "$BUILDER_IMG")
-  rdig=$(digest_of "$RUNTIME_IMG")
+  bdig=unverified
+  rdig=unverified
+  ensure_base "$BUILDER_IMG" && bdig=$(digest_of "$BUILDER_IMG")
+  ensure_base "$RUNTIME_IMG" && rdig=$(digest_of "$RUNTIME_IMG")
 
   echo "==> building $image"
   echo "    builder $BUILDER_IMG@$bdig"
   echo "    runtime $RUNTIME_IMG@$rdig"
   "$ENGINE" build \
+    --pull="$PULL" \
     --file "$HERE/$CF" \
     --tag "$image" \
     --build-arg "BUILDER=$BUILDER_IMG" \

@@ -65,6 +65,13 @@ compare() {
   [ -n "$name" ] || return 0
   resolve "$name"
   local live="${LIVE[$name]}"
+  case "$recorded" in
+    # build-push.sh stamps this when it could not prove which base content the
+    # build actually used (ALLOW_STALE_BASE=1, or PULL=never). Reporting it as
+    # stale is deliberate: an unprovable base must not read as current.
+    unverified|unknown)
+      printf ' %s=%s' "$role" "$recorded"; return 0 ;;
+  esac
   case "$live" in
     unreachable)  printf ' %s=unreachable' "$role" ;;
     "$recorded")  ;;

@@ -384,6 +384,26 @@ waiting on nobody, which is strictly worse than where you started.
 Red Hat ships a fixed base image under the *same tag* with a new digest. Your
 image still contains the old one, and nothing about it looks different.
 
+Note what moves and what does not. The fix arrives as a new *RPM* inside the
+image — `openssl-3.5.8-0.1.hum1` replacing an earlier release — and the image
+tag stays `hi/python:3.12`. There is no `hum1` tag to pull: the suffix is an RPM
+release, visible with a scanner or an SBOM, not a thing you can reference in a
+`FROM` line. So "am I current?" cannot be answered by looking at the tag you
+build from, which is exactly why the digest labels and `check-bases.sh` exist.
+
+Because the tag floats, the container engine's pull policy decides whether a
+rebuild picks the fix up at all. Both build paths here therefore pull
+explicitly: `build-push.sh` pulls each base and *fails* if it cannot, and both
+it and `compare.sh` pass `--pull=newer` rather than relying on a default that
+has differed between podman versions and is unstated in the `podman build` man
+page. Without that, a cached base makes the rebuild a no-op that looks like a
+success — and worse, the digest labels are read from the registry, so the image
+would be stamped with the digest of a base it was not built on, and
+`check-bases.sh` would call it current. `PULL=never` pins to local bases and
+`ALLOW_STALE_BASE=1` downgrades an unreachable registry to a warning; both make
+the digest label read `unverified`, which `check-bases.sh` reports as stale
+rather than current, because an unprovable base must not pass a staleness gate.
+
 ### Finding out what went stale
 
 `build-push.sh` stamps the builder and runtime digests onto every image it
@@ -511,7 +531,9 @@ reimplemented a multi-stage Containerfile in two BuildConfigs.
 ## Knobs
 
 `REGISTRY`, `NAMESPACE` and `VERSION` come from [`registry.env`](registry.env);
-the engine is `ENGINE=docker`; and every base image comes from
+the engine is `ENGINE=docker`; the base-image pull policy is `PULL=newer`
+(`always`, `missing` and `never` also work, and `ALLOW_STALE_BASE=1` tolerates a
+registry it cannot reach); and every base image comes from
 [`bases.env`](bases.env), which holds both base sets. All of it is overridable
 from the environment, and the registry and version can still be passed
 positionally for a one-off. `BASE=ubi` builds the same 11
