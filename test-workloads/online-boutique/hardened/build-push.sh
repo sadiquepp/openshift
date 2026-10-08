@@ -179,7 +179,10 @@ for s in $SERVICES; do [ "$s" = cache ] || NEED_SRC=1; done
 SRC="$WORKDIR/microservices-demo"
 if [ "$NEED_SRC" -eq 1 ] && [ ! -d "$SRC" ]; then
   echo "==> cloning upstream $VERSION into $SRC"
-  git clone --depth 1 --branch "$VERSION" \
+  # --branch takes a tag, so HEAD detaches by design -- that is the point,
+  # a pinned tree rather than a moving branch tip. Silence git's 15-line
+  # explanation of it, which in build output reads like a fault.
+  git -c advice.detachedHead=false clone --depth 1 --branch "$VERSION" \
     https://github.com/GoogleCloudPlatform/microservices-demo.git "$SRC"
 fi
 
