@@ -158,6 +158,8 @@ patches:
   # ── redis-cart ─────────────────────────────────────────────────────────────
   # Same flags as ../hardened passes to Valkey -- redis-server accepts them
   # identically, which is the whole reason Valkey is a drop-in over there.
+  # --protected-mode no is kept here for parity so the two variants differ only
+  # in base image; redis did not require it in this deployment, valkey did.
   - target:
       kind: Deployment
       name: redis-cart
@@ -165,6 +167,8 @@ patches:
       - op: add
         path: /spec/template/spec/containers/0/args
         value:
+          - --protected-mode
+          - "no"
           - --save
           - ""
           - --appendonly

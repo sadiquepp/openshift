@@ -170,6 +170,44 @@ Redis. It is wire-compatible, which is all `cartservice`'s `StackExchange.Redis`
 cart is ephemeral anyway (`emptyDir`), so the overlay turns off RDB and AOF rather than let the
 server try to persist.
 
+**Wire-compatible is not the same as drop-in.** Started on its built-in defaults — protected mode
+on, no password set — valkey accepts connections only from loopback and answers every other client
+with `-DENIED Running in protected mode`. Upstream's `redis:alpine` did not need anything here;
+valkey does. The overlay passes `--protected-mode no`.
+
+That one is worth knowing for how badly it hides. Nothing looks wrong:
+
+```
+redis-cart-6c9fff49c9-2kxpp   1/1   Running   0   6m54s
+```
+
+Upstream's readiness probe for `redis-cart` is a **TCP socket check**, which passes the moment
+something accepts on 6379 and never speaks the protocol, so a server rejecting every real client
+reports healthy. The failure surfaces two hops away, as a `StackExchange.Redis` connection timeout
+in `cartservice` and an HTTP 500 on the frontend's home page, against a dependency that looks fine.
+`loadgenerator` then sits in `Init:0/1` forever, because its init container waits for HTTP 200 and
+the home page is 500 — a third symptom, also not the cause.
+
+Disabling protected mode is right for this workload and is not a general recommendation: the cart is
+ephemeral, the Service is `ClusterIP` with no route, and nothing in it is sensitive. For anything
+that outlives a demo, set a password instead — `--requirepass` on the server, plus the password
+appended to `cartservice`'s `REDIS_ADDR`, which `StackExchange.Redis` parses as a configuration
+string (`redis-cart:6379,password=...`). A password satisfies protected mode on its own, so the two
+are alternatives rather than layers.
+
+To check a cache this way without a client — the hardened image is distroless and has no
+`valkey-cli` — speak RESP at it over bash's `/dev/tcp`:
+
+```bash
+oc run resp-probe --rm -i --restart=Never -n online-boutique \
+  --image=registry.access.redhat.com/ubi9/ubi-minimal \
+  --overrides='{"spec":{"securityContext":{"runAsNonRoot":true,"seccompProfile":{"type":"RuntimeDefault"}},"containers":[{"name":"resp-probe","image":"registry.access.redhat.com/ubi9/ubi-minimal","stdin":true,"tty":false,"securityContext":{"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]}},"command":["bash","-c","exec 3<>/dev/tcp/redis-cart/6379; printf \'PING\\r\\n\' >&3; timeout 3 head -c 200 <&3"]}]}}'
+```
+
+`+PONG` means the server is healthy and the problem is elsewhere. Anything beginning `-DENIED`,
+`-NOAUTH` or `-ERR` names the real cause in one line. The `--overrides` block is there because a
+plain `oc run` is rejected by the `restricted:latest` Pod Security admission policy.
+
 ## OpenShift-specific notes
 
 - **Arbitrary UIDs still win.** Hardened images default to `USER 65532`, but under `restricted-v2`
@@ -489,6 +527,8 @@ oc rollout restart deployment -n online-boutique
 
 | symptom | cause |
 |---|---|
+| frontend HTTP 500 "Can't access cart storage" | `redis-cart` rejecting clients — protected mode, see [4](#4-redis-cart--valkey-not-redis). The pod reads 1/1 Running regardless |
+| `loadgenerator` stuck `Init:0/1` | its init container waits for HTTP 200; something upstream of the home page is failing. Not itself the fault |
 | `ImagePullBackOff` | step 5 — CA not trusted, or no credentials for the registry. If you took the step 7 route instead: no pull secret on that ServiceAccount, or pods not restarted since it was linked |
 | `CrashLoopBackOff` on a Python service, `ImportError` on `grpc._cython` | `libstdc++` missing from the runtime image; see the fix `preflight.sh` prints |
 | `CreateContainerError`, `exec: "/bin/sh"` | something still has a shell-form entrypoint or a shell `command:` — the runtime images are distroless |

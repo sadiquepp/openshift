@@ -137,6 +137,26 @@ patches:
   # ── redis-cart -> valkey ───────────────────────────────────────────────────
   # The cart is ephemeral (emptyDir), so turn off RDB snapshotting rather than
   # let the server try to write dump.rdb. Exec form: no shell in the image.
+  #
+  # --protected-mode no is the one that is not housekeeping. Started with its
+  # built-in defaults -- protected mode on, no password set -- valkey accepts
+  # connections only from loopback and answers everything else with
+  #
+  #   -DENIED Running in protected mode ... connections are only accepted from
+  #   the loopback interface
+  #
+  # which surfaces nowhere useful: the pod is 1/1 Running because upstream's
+  # readiness probe is a TCP socket check that never speaks the protocol, and
+  # the failure appears only in cartservice as a StackExchange.Redis timeout
+  # against a server that looks healthy.
+  #
+  # Turning it off is right for this workload and not a general
+  # recommendation: the cart is ephemeral, the Service is ClusterIP with no
+  # route, and nothing in it is sensitive. For anything that outlives a demo,
+  # set a password instead -- --requirepass on the server, and append it to
+  # cartservice's REDIS_ADDR, which StackExchange.Redis parses as a
+  # configuration string ("redis-cart:6379,password=..."). A password also
+  # satisfies protected mode on its own, so the two are alternatives.
   - target:
       kind: Deployment
       name: redis-cart
@@ -144,6 +164,8 @@ patches:
       - op: add
         path: /spec/template/spec/containers/0/args
         value:
+          - --protected-mode
+          - "no"
           - --save
           - ""
           - --appendonly
