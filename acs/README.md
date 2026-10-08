@@ -173,6 +173,39 @@ oc -n stackrox get pods -w               # sensor, collector, admission-control
 
 ## Scan the two namespaces
 
+Scanning hits Central once per image, so the passthrough-route certificate
+problem from step 3 is worth fixing properly here rather than working around
+each time. Give Central a certificate that matches its route, reusing the
+cluster's own ingress certificate:
+
+```bash
+oc -n openshift-ingress get secret | grep -i cert        # confirm the name
+
+oc -n openshift-ingress get secret router-certs-default -o json \
+  | jq 'del(.metadata.namespace, .metadata.resourceVersion, .metadata.uid,
+             .metadata.creationTimestamp, .metadata.ownerReferences)
+        | .metadata.name = "central-default-tls-cert"' \
+  | oc -n stackrox apply -f -
+
+oc -n stackrox patch central stackrox-central-services --type=merge \
+  -p '{"spec":{"central":{"defaultTLSSecret":{"name":"central-default-tls-cert"}}}}'
+```
+
+Central restarts, then presents a certificate valid for its route hostname and
+signed by the ingress CA, so every later `roxctl` call verifies normally:
+
+```bash
+oc -n openshift-ingress-operator get secret router-ca \
+  -o jsonpath='{.data.tls\.crt}' | base64 -d > router-ca.crt
+export ROX_CA=router-ca.crt
+```
+
+Without that, pass `ROX_CA` pointing at Central's own CA and address it by a
+name its certificate carries (the port-forward arrangement in step 3), or set
+`ROX_INSECURE=1` to skip verification deliberately — which the report then
+states on its Central line, so a number never quietly comes from a server
+nobody authenticated.
+
 Create an API token in the portal under **Platform Configuration →
 Integrations → API Token**, with a role that can read vulnerability data.
 

@@ -35,10 +35,44 @@ fi
 for t in roxctl oc jq; do command -v "$t" >/dev/null || { echo "$t not on PATH" >&2; exit 2; }; done
 
 OUT="results-acs"; mkdir -p "$OUT"
-# --insecure-skip-tls-verify is NOT set: a scanner you cannot authenticate is
-# not a scanner. If Central's route uses a private CA, trust it on this host
-# rather than turning verification off.
+# TLS. The operator exposes Central through a passthrough route, so Central
+# presents its own self-signed certificate with SANs central.stackrox and
+# central.stackrox.svc -- not the route hostname. Verification therefore fails
+# on both the name and the issuer, and the earlier version of this script
+# refused --insecure-skip-tls-verify while offering no way to supply a CA,
+# which left no working option at all.
+#
+# Set ROX_CA to a CA file. Two arrangements work:
+#
+#   a) Central's own CA, addressing it by a name its certificate carries:
+#        oc -n stackrox get secret central-tls -o jsonpath='{.data.ca\.pem}' \
+#          | base64 -d > central-ca.pem
+#        oc -n stackrox port-forward svc/central 8443:443 &
+#        echo "127.0.0.1 central.stackrox" >> /etc/hosts
+#        export ROX_CENTRAL_ADDRESS=central.stackrox:8443 ROX_CA=central-ca.pem
+#
+#   b) give Central a certificate valid for its route (defaultTLSSecret, see
+#      README) and use the issuer of that -- for the cluster's own ingress
+#      certificate, the router CA. Better for repeated use.
+#
+# ROX_INSECURE=1 is the escape hatch, and it is reported in the output so a
+# number never silently comes from an unauthenticated server.
 ROX=(roxctl -e "$ROX_CENTRAL_ADDRESS")
+TLS_NOTE=""
+if [ -n "${ROX_CA:-}" ]; then
+  [ -f "$ROX_CA" ] || { echo "ROX_CA=$ROX_CA does not exist" >&2; exit 2; }
+  ROX+=(--ca "$ROX_CA")
+  TLS_NOTE="verified against \`$ROX_CA\`"
+elif [ "${ROX_INSECURE:-0}" = 1 ]; then
+  ROX+=(--insecure-skip-tls-verify)
+  TLS_NOTE="**TLS verification disabled** (ROX_INSECURE=1)"
+else
+  echo "error: no CA for Central. Set ROX_CA to a CA file, or ROX_INSECURE=1 to" >&2
+  echo "  skip verification deliberately. The operator's route is passthrough, so" >&2
+  echo "  Central presents a certificate for central.stackrox, not the route" >&2
+  echo "  hostname -- see the header of this script for the two ways to fix it." >&2
+  exit 2
+fi
 
 scan_ns() {
   local ns="$1" dir="$OUT/$1"
@@ -143,7 +177,7 @@ scan_ns "$NS_A" || true
 {
   echo "# RHACS scan — $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo
-  echo "Central: \`$ROX_CENTRAL_ADDRESS\`"
+  echo "Central: \`$ROX_CENTRAL_ADDRESS\` — $TLS_NOTE"
   report "$NS_A"
   [ -n "$NS_B" ] && report "$NS_B"
 } | tee "$OUT/report.md"
