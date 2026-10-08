@@ -158,10 +158,16 @@ if you rename it, do not commit it.
 
 ### 4. SecuredCluster
 
-Set `clusterName` in `03-secured-cluster.yaml` first, then:
+`clusterName` is a free-form label — how this cluster appears in the portal and
+in policy and report scoping — and its only hard requirement is being unique
+among clusters registered to the same Central. Renaming it later registers a
+new cluster and leaves the old entry to delete by hand, so deriving it from the
+cluster is both unique and durable, and keeps the placeholder in git:
 
 ```bash
-oc apply -f 03-secured-cluster.yaml
+sed "s/<cluster-name>/$(oc get infrastructure cluster \
+      -o jsonpath='{.status.infrastructureName}')/" 03-secured-cluster.yaml \
+  | oc apply -f -
 oc -n stackrox get pods -w               # sensor, collector, admission-control
 ```
 

@@ -10,6 +10,20 @@
 # centralEndpoint uses the in-cluster Service because Central and the secured
 # cluster are the same cluster here. For a remote Central, use its route
 # hostname and port 443.
+#
+# clusterName is a free-form label, not a reference to anything -- it is how
+# this cluster appears in the ACS portal and in policy and report scoping. The
+# only hard requirement is that it be unique among clusters registered to the
+# same Central. It is awkward to change afterwards: a rename registers as a new
+# cluster and leaves the old entry behind to delete by hand, so choose
+# something durable rather than something descriptive of today.
+#
+# Deriving it from the cluster keeps the placeholder in git and makes the
+# applied value unique and self-explanatory:
+#
+#   sed "s/<cluster-name>/$(oc get infrastructure cluster \
+#         -o jsonpath='{.status.infrastructureName}')/" 03-secured-cluster.yaml \
+#     | oc apply -f -
 ---
 apiVersion: platform.stackrox.io/v1alpha1
 kind: SecuredCluster
