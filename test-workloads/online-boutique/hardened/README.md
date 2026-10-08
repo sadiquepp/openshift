@@ -543,6 +543,7 @@ oc rollout restart deployment -n online-boutique
 
 | symptom | cause |
 |---|---|
+| 500 "could not retrieve ..." in the first minute or two | a dependency had not started when the page loaded. Nothing orders these 11 services, so the frontend serves 500s until the service it needs is listening. Reload before investigating: check the dependency's log for requests being served and `oc get endpoints <svc>` for an address |
 | `manifest unknown` on a `-ubi` tag | the UBI stack was applied without `BASE=ubi ./build-push.sh` — `BASE=hardened` pushes plain tags only |
 | frontend HTTP 500 "Can't access cart storage" | `redis-cart` rejecting clients — protected mode, see [4](#4-redis-cart--valkey-not-redis). The pod reads 1/1 Running regardless |
 | `loadgenerator` stuck `Init:0/1` | its init container waits for HTTP 200; something upstream of the home page is failing. Not itself the fault |
