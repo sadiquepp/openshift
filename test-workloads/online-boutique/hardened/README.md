@@ -343,12 +343,12 @@ cache image. Expect 20–40 minutes — `adservice` (Gradle) and `cartservice`
 (.NET restore) dominate, and both need outbound access to Maven Central and
 NuGet. Add `BASE=ubi` in a second run for the comparison stack.
 
-### 5. Let the cluster pull from your registry
+### 5. Let the cluster trust your registry
 
-Two things OpenShift needs, and the usual cause of `ImagePullBackOff` here.
-
-**A private CA.** If the registry serves a self-signed or internal certificate,
-trust it cluster-wide. Note the `..` in the key where the port's colon goes:
+**This one goes before the deploy.** If the registry serves a self-signed or
+internal certificate, trust it cluster-wide, or every pull fails on
+certificate verification regardless of credentials. Note the `..` in the key
+where the port's colon goes:
 
 ```bash
 oc create configmap registry-cas -n openshift-config \
@@ -360,25 +360,8 @@ oc patch image.config.openshift.io/cluster --type=merge \
   -p '{"spec":{"additionalTrustedCA":{"name":"registry-cas"}}}'
 ```
 
-**Credentials**, if the registry needs a login. Namespace-scoped is the lighter
-option, but this workload has 12 ServiceAccounts, so link the secret to all of
-them — and run it *after* `oc apply`, since the manifests create those accounts:
-
-```bash
-oc create secret docker-registry mirror-creds -n online-boutique \
-  --docker-server="$REGISTRY" \
-  --docker-username='<user>' --docker-password='<pass>'
-```
-
-```bash
-for sa in $(oc get sa -n online-boutique -o name); do
-  oc secrets link "${sa#*/}" mirror-creds --for=pull -n online-boutique
-done
-```
-
-Adding the credentials to the cluster-wide pull secret instead covers every
-namespace in one step, but it rolls every node through the Machine Config
-Operator — correct, and not what you want mid-demo.
+Credentials are the other half of this, and they have to wait until the
+namespace exists — see [step 7](#7-credentials-if-the-registry-needs-a-login).
 
 ### 6. Deploy and diff
 
@@ -402,11 +385,55 @@ Then set up the rebuild loop — see [Rebuilding when a base image gets a CVE
 fix](#rebuilding-when-a-base-image-gets-a-cve-fix). The first build is the
 bootstrap; the loop is the point.
 
+### 7. Credentials, if the registry needs a login
+
+**This one goes after the deploy**, and the ordering is not a preference: the
+namespace and all twelve ServiceAccounts are created by the manifests, so
+running this first fails with `namespaces "online-boutique" not found`. Pods
+sitting in `ImagePullBackOff` between step 6 and this step is expected, not a
+failed deploy.
+
+```bash
+REGISTRY_USER=robot REGISTRY_PASSWORD=... ./pull-secret.sh
+```
+
+[`pull-secret.sh`](pull-secret.sh) creates the secret, links it to every
+ServiceAccount it finds, and restarts the deployments. That last part is the
+step people miss: a pull secret resolves when a pod is **created**, so pods
+that already failed keep failing — the kubelet retries the pull, not the
+ServiceAccount lookup — and the credentials look wrong when they are merely
+late. It is idempotent, so re-run it after rotating a credential or any apply
+that adds a ServiceAccount, since linking only reaches the accounts that exist
+at the time.
+
+It takes the credentials from the environment or prompts for them, never as
+command-line arguments, which are visible in the process list and persist in
+shell history.
+
+By hand, the same thing:
+
+```bash
+oc create secret docker-registry mirror-creds -n online-boutique \
+  --docker-server="$REGISTRY" \
+  --docker-username='<user>' --docker-password='<pass>'
+
+for sa in $(oc get sa -n online-boutique -o name); do
+  oc secrets link "${sa#*/}" mirror-creds --for=pull -n online-boutique
+done
+
+oc rollout restart deployment -n online-boutique
+```
+
+Adding the credentials to the cluster-wide pull secret instead covers every
+namespace in one step, and does not depend on the namespace existing — but it
+rolls every node through the Machine Config Operator, which is correct and not
+what you want mid-demo.
+
 ### If a pod will not start
 
 | symptom | cause |
 |---|---|
-| `ImagePullBackOff` | step 5 — CA not trusted, or no pull secret on that ServiceAccount |
+| `ImagePullBackOff` | step 5 (CA not trusted) or step 7 (no pull secret on that ServiceAccount, or pods not restarted since it was linked) |
 | `CrashLoopBackOff` on a Python service, `ImportError` on `grpc._cython` | `libstdc++` missing from the runtime image; see the fix `preflight.sh` prints |
 | `CreateContainerError`, `exec: "/bin/sh"` | something still has a shell-form entrypoint or a shell `command:` — the runtime images are distroless |
 | `unable to validate against any security context constraint` | the base `runAsUser`/`runAsGroup`/`fsGroup` patch did not apply; `kustomize build` and check the pod `securityContext` is `runAsNonRoot` only |
@@ -607,11 +634,13 @@ registry.env                  REGISTRY / NAMESPACE / VERSION, read by all four s
 bases.env                     the hardened and UBI base-image sets  (BASE=hardened|ubi)
 preflight.sh                  check tags, runtimes and your registry before building
 set-registry.sh               point both overlays at your registry
+pull-secret.sh                give the deployed namespace registry credentials
 build-push.sh                 build all 11, or --only one; push immutable + floating tags
 check-bases.sh                which services a new base image release made stale
 scan-stack.sh                 scan a running namespace; diff two of them
 cve-demo/                     emailservice built 3 ways, scanned and diffed
   compare.sh                  ... as one command
+  breakdown.sh                resolve a scan's counts to individual CVEs
   manual-steps.md             ... as individual commands you run yourself
 ```
 
