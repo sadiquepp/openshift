@@ -387,11 +387,15 @@ bootstrap; the loop is the point.
 
 ### 7. Credentials, if the registry needs a login
 
-**This one goes after the deploy**, and the ordering is not a preference: the
-namespace and all twelve ServiceAccounts are created by the manifests, so
-running this first fails with `namespaces "online-boutique" not found`. Pods
-sitting in `ImagePullBackOff` between step 6 and this step is expected, not a
-failed deploy.
+Two routes. **Prefer `--global`** — it has no ordering constraint, so it can run
+at any point including before step 6, and it is covered below. The
+namespace-scoped route is lighter in blast radius but **must run after the
+deploy**: the namespace and all twelve ServiceAccounts are created by the
+manifests, so running it first fails with `namespaces "online-boutique" not
+found`. Pods sitting in `ImagePullBackOff` between step 6 and this step is
+expected, not a failed deploy.
+
+#### Namespace-scoped
 
 ```bash
 REGISTRY_USER=robot REGISTRY_PASSWORD=... ./pull-secret.sh
@@ -424,10 +428,59 @@ done
 oc rollout restart deployment -n online-boutique
 ```
 
-Adding the credentials to the cluster-wide pull secret instead covers every
-namespace in one step, and does not depend on the namespace existing — but it
-rolls every node through the Machine Config Operator, which is correct and not
-what you want mid-demo.
+#### The global pull secret is usually the better option
+
+```bash
+REGISTRY_USER=robot REGISTRY_PASSWORD=... ./pull-secret.sh --global
+```
+
+An earlier version of this document warned that this "rolls every node through
+the Machine Config Operator", and that is **out of date**: as of OpenShift
+4.7.4, changing the global pull secret no longer triggers a node drain or
+reboot. What still does is a `registries.conf` change via
+`ImageContentSourcePolicy` or `ImageDigestMirrorSet` — a different object, and
+where that cost actually belongs. The pull secret change does still propagate to
+every node, so give it a moment and watch `oc get machineconfigpool`.
+
+With that objection gone, the global route is better on the merits:
+
+- **no ordering constraint** — nothing needs to exist first, so it can run
+  before any deploy, which is what makes the namespace-scoped route awkward
+- **no ServiceAccount linking and no rollout restart** — the two steps that are
+  easy to forget and look like wrong credentials when missed
+- **covers both comparison namespaces** — the namespace-scoped route has to be
+  repeated for `online-boutique-ubi`
+- **may already be done** — for a mirror registry the cluster already pulls
+  release images from, the credential is likely in there; `--global` says so
+  instead of silently re-adding it
+
+It merges rather than replaces, which is the part to get right by hand: that
+secret holds every registry credential the cluster has, including the Red Hat
+ones it needs for its own payload, so a clobbered merge breaks the cluster in a
+way that looks unrelated to what you just did. The script asserts no registry
+key disappeared before writing anything back, and refuses if the existing secret
+is not valid JSON.
+
+By hand:
+
+```bash
+oc get secret/pull-secret -n openshift-config \
+  -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d > /tmp/ps.json
+
+# merge, do not overwrite
+REG="$REGISTRY" AUTH="$(printf '%s:%s' "$USER" "$PASS" | base64 -w0)" \
+  jq '.auths[$ENV.REG] = {auth: $ENV.AUTH}' /tmp/ps.json > /tmp/ps.new.json
+
+oc set data secret/pull-secret -n openshift-config \
+  --from-file=.dockerconfigjson=/tmp/ps.new.json
+rm -f /tmp/ps.json /tmp/ps.new.json
+```
+
+Note `$ENV.AUTH` rather than `jq --arg`: `/proc/<pid>/cmdline` is world-readable
+and `/proc/<pid>/environ` is not, so passing the credential as an argument
+publishes it to every user on the box for the life of the process. And delete
+those temp files — the first one contains the cluster's entire set of registry
+credentials.
 
 ### If a pod will not start
 

@@ -1,8 +1,23 @@
 #!/usr/bin/env bash
-# Give a deployed namespace credentials to pull from your registry.
+# Give the cluster credentials to pull from your registry, either cluster-wide
+# or in one namespace.
 #
-#   REGISTRY=registry.example.com:8443 \
-#   REGISTRY_USER=robot REGISTRY_PASSWORD=... ./pull-secret.sh [namespace]
+#   REGISTRY=registry.example.com:8443 REGISTRY_USER=robot REGISTRY_PASSWORD=... \
+#     ./pull-secret.sh --global          # every namespace, no ordering constraint
+#     ./pull-secret.sh [namespace]       # one namespace, after its deploy
+#
+# --global is usually the better choice, and not only for convenience. It needs
+# no namespace to exist, so it can run before anything is deployed; it needs no
+# ServiceAccount linking and no rollout restart; and it covers both comparison
+# namespaces at once, where the namespace-scoped route needs doing twice. For a
+# mirror registry the cluster already pulls release images from, the credential
+# may well be in there already -- this script says so rather than re-adding it.
+#
+# The reboot objection to --global is out of date: as of OpenShift 4.7.4,
+# changing the global pull secret no longer triggers a node drain or reboot.
+# (Changes to registries.conf, via ImageContentSourcePolicy or
+# ImageDigestMirrorSet, still do -- that is a different object.) The change
+# still propagates to every node, so give it a moment to land.
 #
 # Run this AFTER `oc apply -k`, not before. The ordering is not a style
 # preference: the namespace and all twelve ServiceAccounts come from the
@@ -18,6 +33,11 @@ cd "$(dirname "$0")"
 # shellcheck source=registry.env
 . ./registry.env
 
+GLOBAL=no
+case "${1:-}" in
+  --global) GLOBAL=yes; shift ;;
+  -h|--help) sed -n '2,30p' "$0" | sed 's/^# \?//'; exit 0 ;;
+esac
 NS="${1:-$NAMESPACE}"
 SECRET="${SECRET_NAME:-mirror-creds}"
 
@@ -26,7 +46,7 @@ command -v oc >/dev/null || { echo "oc not on PATH" >&2; exit 2; }
 
 # The namespace is the whole point of this check. Deploying first is cheap to
 # say and expensive to discover.
-if ! oc get namespace "$NS" >/dev/null 2>&1; then
+if [ "$GLOBAL" = no ] && ! oc get namespace "$NS" >/dev/null 2>&1; then
   cat >&2 <<EOF
 namespace "$NS" does not exist yet.
 
@@ -52,6 +72,57 @@ fi
 if [ -z "${REGISTRY_PASSWORD:-}" ]; then
   if [ -t 0 ]; then read -r -s -p "registry password for $REGISTRY_USER: " REGISTRY_PASSWORD; echo
   else echo "set REGISTRY_PASSWORD" >&2; exit 2; fi
+fi
+
+if [ "$GLOBAL" = yes ]; then
+  command -v jq >/dev/null || { echo "jq is required for --global" >&2; exit 2; }
+
+  WORK="$(umask 077; mktemp -d)"
+  trap 'rm -f "$WORK/current.json" "$WORK/merged.json"' EXIT
+  CUR="$WORK/current.json"; NEW="$WORK/merged.json"
+
+  oc get secret/pull-secret -n openshift-config \
+    -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d > "$CUR"
+  jq -e . "$CUR" >/dev/null || { echo "existing pull secret is not valid JSON -- stopping" >&2; exit 1; }
+
+  BEFORE=$(jq -r '.auths | keys | length' "$CUR")
+  if jq -e --arg r "$REGISTRY" '.auths | has($r)' "$CUR" >/dev/null; then
+    echo "==> $REGISTRY is already in the global pull secret"
+    echo "    replacing its entry (pass a different REGISTRY to add another)"
+  fi
+
+  # The credential goes through the environment, not jq's argv: /proc/<pid>/cmdline
+  # is world-readable while /proc/<pid>/environ is owner-only, so --arg would
+  # publish the password to every user on the box for the life of the process.
+  REG="$REGISTRY" \
+  AUTH="$(printf '%s:%s' "$REGISTRY_USER" "$REGISTRY_PASSWORD" | base64 -w0)" \
+    jq '.auths[$ENV.REG] = {auth: $ENV.AUTH}' "$CUR" > "$NEW"
+
+  # Never shrink. This secret holds every registry credential the cluster has,
+  # including the Red Hat ones it needs to pull its own payload, so a merge that
+  # dropped a key would break the cluster in a way that looks unrelated. Assert
+  # every previous key survived before writing anything back.
+  AFTER=$(jq -r '.auths | keys | length' "$NEW")
+  MISSING=$(jq -r --slurpfile cur "$CUR" '
+    ($cur[0].auths | keys) - (.auths | keys) | join(" ")' "$NEW")
+  if [ -n "$MISSING" ]; then
+    echo "ERROR: the merge would drop these registries: $MISSING" >&2
+    echo "  nothing was written. This is a bug -- do not retry blindly." >&2
+    exit 1
+  fi
+  echo "==> merged: $BEFORE registries before, $AFTER after"
+
+  oc set data secret/pull-secret -n openshift-config \
+    --from-file=.dockerconfigjson="$NEW" >/dev/null
+  echo "==> updated the global pull secret"
+  echo
+  echo "No node reboot or drain is triggered (OpenShift 4.7.4 and later), but the"
+  echo "change still rolls out to every node. Watch it land:"
+  echo "  oc get machineconfigpool"
+  echo
+  echo "Then deploy as usual -- no per-namespace secret and no ServiceAccount"
+  echo "linking is needed, and this covers the UBI comparison namespace too."
+  exit 0
 fi
 
 # Replace rather than patch. `oc create --dry-run -o yaml | oc apply -f -` is
