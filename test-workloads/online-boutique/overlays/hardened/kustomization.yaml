@@ -63,6 +63,35 @@ images:
     newTag: v0.10.6
 
 patches:
+  # ── always re-pull ─────────────────────────────────────────────────────────
+  # Both overlays reference a floating tag, and Kubernetes defaults
+  # imagePullPolicy to IfNotPresent for any tag that is not ":latest". So a
+  # rebuild pushed under the same floating tag is invisible to a node that
+  # already cached it: the pod keeps running the old layers under the new
+  # name, and even a `rollout restart` only recreates the pod, which finds the
+  # tag present and does not re-pull. The symptom is a fix that provably
+  # shipped and provably is not running.
+  #
+  # Always costs a registry round-trip per pod start, which is the right trade
+  # for a workload that exists to be rebuilt and re-measured. For production,
+  # deploy the immutable tag build-push.sh also pushes
+  # (<version>-<build-id>) and leave this at the default -- a digest or a
+  # unique tag makes re-pulling unnecessary rather than mandatory.
+  - target:
+      kind: Deployment
+    patch: |
+      - op: add
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: Always
+  # loadgenerator is the only deployment with an init container, and it is
+  # built from this repo too, so it needs the same treatment.
+  - target:
+      kind: Deployment
+      name: loadgenerator
+    patch: |
+      - op: add
+        path: /spec/template/spec/initContainers/0/imagePullPolicy
+        value: Always
   # ── loadgenerator: shell-form entrypoint -> Locust environment variables ────
   # Upstream's image ends with:
   #

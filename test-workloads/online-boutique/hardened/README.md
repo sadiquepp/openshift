@@ -577,6 +577,7 @@ oc rollout restart deployment -n online-boutique
 
 | symptom | cause |
 |---|---|
+| a fix that was built and pushed but is not running | the node cached the floating tag. Check the pod's `AGE` against your push time; restarts do not re-pull. Deploy the immutable tag, or re-apply the overlay now that it sets `imagePullPolicy: Always` |
 | `CrashLoopBackOff` whose log says "Application started" then "shutting down" | the process is fine and being killed from outside — almost always a probe on a port it is not listening on. See [5](#5-cartservice--a-base-image-can-override-your-port) |
 | 500 "could not retrieve ..." in the first minute or two | a dependency had not started when the page loaded. Nothing orders these 11 services, so the frontend serves 500s until the service it needs is listening. Reload before investigating: check the dependency's log for requests being served and `oc get endpoints <svc>` for an address |
 | `manifest unknown` on a `-ubi` tag | the UBI stack was applied without `BASE=ubi ./build-push.sh` — `BASE=hardened` pushes plain tags only |
@@ -656,6 +657,36 @@ A `hi/python` fix rebuilds three services; a `hi/go` fix rebuilds four; a
 `glibc`-level fix in every base rebuilds all eleven. That spread is the argument
 for the shared Containerfiles — a base image bump is a build-arg change, not
 eleven files to edit.
+
+### A rebuild under the same tag is invisible to a node that cached it
+
+The trap that catches everyone once. Kubernetes defaults `imagePullPolicy` to
+`IfNotPresent` for any tag that is not `:latest`, and both overlays reference a
+floating tag. So after a rebuild pushed under the same floating tag:
+
+- the running pod keeps the old layers, because nothing told it otherwise
+- `oc rollout restart` recreates the pod, which finds the tag already present
+  on the node and **does not re-pull**
+- a crash-looping container restarts in place, which does not re-pull either
+
+The symptom is a fix that provably shipped and provably is not running —
+`RESTARTS 57` on a pod whose `AGE` predates the rebuild is the tell. Compare the
+pod's age against when you pushed before debugging the application again.
+
+Both overlays now set `imagePullPolicy: Always`, which costs a registry
+round-trip per pod start and is the right trade for a workload whose purpose is
+to be rebuilt and re-measured.
+
+The better habit for anything beyond a demo is to deploy the immutable tag
+`build-push.sh` also pushes, which makes re-pulling unnecessary rather than
+mandatory:
+
+```bash
+oc set image deploy/<svc> \
+  server=$REGISTRY/$NAMESPACE/<svc>:v0.10.6-b<build-id> -n <namespace>
+```
+
+A tag that never moves cannot be stale in a cache.
 
 ### Tags, and why the app version is not enough
 
