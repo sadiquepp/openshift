@@ -77,25 +77,51 @@ clean cluster, and the single most likely way to get a misleading result here.
 
 ### 3. Init bundle
 
-Install `roxctl` and authenticate. Get the admin password the operator
-generated:
+`roxctl` needs credentials, and nothing has given it any yet — hence
+`no credentials found for central-...:443`. The operator generated an admin
+password; put it in the environment rather than on the command line, because an
+argument is visible in `ps` and persists in shell history:
 
 ```bash
-oc -n stackrox get route central -o jsonpath='{.spec.host}{"\n"}'
-oc -n stackrox get secret central-htpasswd -o jsonpath='{.data.password}' | base64 -d; echo
+export ROX_CENTRAL_ADDRESS="$(oc -n stackrox get route central -o jsonpath='{.spec.host}'):443"
+export ROX_ADMIN_PASSWORD="$(oc -n stackrox get secret central-htpasswd -o jsonpath='{.data.password}' | base64 -d)"
 ```
 
-Generate the bundle and apply its secrets into the secured cluster's namespace:
+`roxctl` reads `ROX_ADMIN_PASSWORD` for basic auth, so no flag is needed:
 
 ```bash
-roxctl -e "$(oc -n stackrox get route central -o jsonpath='{.spec.host}'):443" \
+roxctl -e "$ROX_CENTRAL_ADDRESS" \
   central init-bundles generate online-boutique --output-secrets init-bundle.yaml
 oc -n stackrox create -f init-bundle.yaml
 ```
 
-`init-bundle.yaml` contains cluster credentials. **Do not commit it** — it is
-covered by this directory's `.gitignore` only if you keep that name, so delete
-it once applied.
+Three things that trip this up:
+
+- **`-p` means different things on different subcommands.** On
+  `central init-bundles generate` it is the basic-auth password; on
+  `central generate` it *sets* the admin password. The environment variable
+  avoids the ambiguity.
+- **TLS.** Central's route is served with the cluster's ingress certificate,
+  which this host may not trust, and the failure looks like a connection
+  problem rather than a trust problem. Supply the CA rather than disabling
+  verification:
+
+  ```bash
+  oc -n openshift-ingress-operator get secret router-ca \
+    -o jsonpath='{.data.tls\.crt}' | base64 -d > router-ca.crt
+  roxctl -e "$ROX_CENTRAL_ADDRESS" --ca router-ca.crt central init-bundles generate ...
+  ```
+
+  `--insecure-skip-tls-verify` also "works", and means you are feeding
+  vulnerability decisions from a server you have not authenticated. Don't.
+- **The admin password is for getting started.** Red Hat's own docs say it is
+  for testing and not for production. For the scan step below, and anything
+  automated, use an API token instead — tokens need no interactive login and
+  can be scoped to a role.
+
+`init-bundle.yaml` contains cluster credentials. It is covered by this
+directory's `.gitignore` under that exact name — **delete it once applied**, and
+if you rename it, do not commit it.
 
 ### 4. SecuredCluster
 
