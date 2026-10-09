@@ -270,10 +270,16 @@ report() {
       [ .[] | .. | objects | select(has("cveId") and has("componentName")) ] as $v
       | ($v | map(select((.cveInfo // "") | test("redhat\\.com"))))        as $os
       | ($v | map(select((.cveInfo // "") | test("osv\\.dev|github\\.com")))) as $app
+      | ($v | map(select((.cveInfo // "")
+                 | (test("redhat\\.com") or test("osv\\.dev|github\\.com")) | not))) as $other
       | "os_total=\($os | map(.cveId) | unique | length) " +
         "os_fixable=\($os | map(select((.componentFixedVersion // "") != "")) | map(.cveId) | unique | length) " +
         "app_total=\($app | map(.cveId) | unique | length) " +
-        "app_fixable=\($app | map(select((.componentFixedVersion // "") != "")) | map(.cveId) | unique | length)"
+        "app_fixable=\($app | map(select((.componentFixedVersion // "") != "")) | map(.cveId) | unique | length) " +
+        "other_total=\($other | map(.cveId) | unique | length) " +
+        "other_fixable=\($other | map(select((.componentFixedVersion // "") != "")) | map(.cveId) | unique | length) " +
+        "other_srcs=\($other | map((.cveInfo // "none") | sub("^https?://";"") | split("/")[0])
+                        | unique | join(",") | if . == "" then "none" else . end)"
       ' "$dir"/*.json 2>/dev/null || true)"
     if [ -n "$split" ]; then
       eval "$split"
@@ -283,6 +289,13 @@ report() {
         "${os_total:-0}" "${os_fixable:-0}"
       printf '| application dependencies (OSV/GHSA) | %s | %s | yours, in the dependency manifest |\n' \
         "${app_total:-0}" "${app_fixable:-0}"
+      # Without this the rows above do not sum to the namespace total, and a
+      # table that does not add up casts doubt on the parts that are right.
+      # Naming the advisory hosts makes the remainder diagnosable.
+      if [ "${other_total:-0}" -gt 0 ]; then
+        printf '| other advisory sources | %s | %s | from: %s |\n' \
+          "$other_total" "${other_fixable:-0}" "${other_srcs:-unknown}"
+      fi
       printf '\nA row with a fix published is work available today. One without is a\n'
       printf 'number to report: nothing downstream of the vendor clears it.\n'
     fi
