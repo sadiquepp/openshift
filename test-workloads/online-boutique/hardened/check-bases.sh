@@ -43,6 +43,9 @@ done
 SERVICES="frontend productcatalogservice checkoutservice shippingservice
 currencyservice paymentservice emailservice recommendationservice loadgenerator
 adservice cartservice"
+if [ "${CACHE_BUILD:-0}" = 1 ]; then
+  SERVICES="$SERVICES cache"
+fi
 
 FLOAT="${VERSION}${TAG_SUFFIX}"
 
@@ -53,8 +56,13 @@ resolve() {
   [ -n "${LIVE[$img]:-}" ] && return 0
   LIVE[$img]=$(skopeo inspect --format '{{.Digest}}' "docker://$img" 2>/dev/null || echo unreachable)
 }
-for v in GO_BUILDER GO_RUNTIME NODE_BUILDER NODE_RUNTIME PY_BUILDER PY_RUNTIME \
-         JAVA_BUILDER JAVA_RUNTIME DOTNET_SDK DOTNET_RUNTIME; do
+BASE_VARS="GO_BUILDER GO_RUNTIME NODE_BUILDER NODE_RUNTIME PY_BUILDER PY_RUNTIME
+JAVA_BUILDER JAVA_RUNTIME DOTNET_SDK DOTNET_RUNTIME"
+# Only defined in the base set that builds the cache image.
+if [ "${CACHE_BUILD:-0}" = 1 ]; then
+  BASE_VARS="$BASE_VARS VALKEY_BUILDER VALKEY_RUNTIME"
+fi
+for v in $BASE_VARS; do
   resolve "${!v}"
 done
 
@@ -83,6 +91,11 @@ STALE=""
 UNKNOWN=""
 printf '%-24s %-10s %s\n' SERVICE STATUS DETAIL
 printf '%-24s %-10s %s\n' ------- ------ ------
+
+if [ "${CACHE_BUILD:-0}" != 1 ]; then
+  printf '%-24s %-10s %s\n' cache MIRRORED \
+    "copied from ${CACHE_IMAGE:-upstream} -- not built here, no base to track"
+fi
 
 for svc in $SERVICES; do
   cfg=$(skopeo inspect --format '{{json .Labels}}' "docker://$DEST/$svc:$FLOAT" 2>/dev/null)
@@ -128,11 +141,13 @@ if [ -n "$STALE" ]; then
   echo "Stale:$STALE"
   echo
   echo "Rebuild just those:"
+  PFX=""
+  if [ "${CACHE_BUILD:-0}" = 1 ]; then PFX="CACHE_BUILD=1 "; fi
   if [ "$ARGS_GIVEN" -eq 1 ]; then
-    echo "  BASE=$BASE ./build-push.sh $DEST $VERSION --only $(echo $STALE | tr ' ' ',')"
+    echo "  ${PFX}BASE=$BASE ./build-push.sh $DEST $VERSION --only $(echo $STALE | tr ' ' ',')"
   else
     # REGISTRY is already exported in this shell, so the short form is enough.
-    echo "  BASE=$BASE ./build-push.sh --only $(echo $STALE | tr ' ' ',')"
+    echo "  ${PFX}BASE=$BASE ./build-push.sh --only $(echo $STALE | tr ' ' ',')"
   fi
   exit 1
 fi

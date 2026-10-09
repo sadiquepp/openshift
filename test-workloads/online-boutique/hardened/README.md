@@ -722,6 +722,14 @@ BASE=hardened ./build-push.sh --only emailservice
 
 `check-bases.sh` prints this line for you with the right service list.
 
+It also tracks the `cache` image, but only when you build it: with
+`CACHE_BUILD=1` it is compared like any other service, and the rebuild line it
+prints carries `CACHE_BUILD=1` forward. That matters — the same command without
+it mirrors `CACHE_IMAGE` instead of building, which would quietly replace a
+UBI-built Valkey with upstream Alpine and undo the rebuild you ran it for. With
+`CACHE_BUILD` unset the image is reported as `MIRRORED`, since a copy of
+someone else's image has no base of yours to go stale.
+
 A `hi/python` fix rebuilds three services; a `hi/go` fix rebuilds four; a
 `glibc`-level fix in every base rebuilds all eleven. That spread is the argument
 for the shared Containerfiles — a base image bump is a build-arg change, not
