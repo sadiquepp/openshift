@@ -38,7 +38,26 @@ COPY requirements.txt ./
 # packages and silently left grpc behind in lib64 -- a build that succeeded and
 # then failed on `import grpc`. --target also means no python3.X directory name
 # in any path, so nothing downstream has to know the interpreter version.
-RUN python3 -m pip install --no-cache-dir --target=/app/site-packages -r requirements.txt
+# Optional constraints. The application layer is where every actionable finding
+# lives, and most of them are transitive pins in upstream's requirements.txt --
+# pyasn1 arriving via google-auth, for example. Editing that file forks
+# upstream; a constraints file does not. Put desired minimums in
+# constraints.txt next to this Containerfile:
+#
+#   urllib3>=2.7.1
+#   pyasn1>=0.6.4
+#   setuptools>=78.1.1
+#
+# and pass CONSTRAINTS=constraints.txt. pip then resolves transitive
+# dependencies subject to those floors. Absent or unset, nothing changes --
+# this is opt-in, and the build is identical without it.
+#
+# It is a floor, not a guarantee: a constraint that conflicts with what the
+# application genuinely requires fails the build, which is the correct outcome
+# and better than discovering the incompatibility at runtime.
+ARG CONSTRAINTS=
+RUN python3 -m pip install --no-cache-dir --target=/app/site-packages \
+      ${CONSTRAINTS:+-c "${CONSTRAINTS}"} -r requirements.txt
 COPY . ./
 # Exec-form ENTRYPOINT cannot interpolate a build arg, so fix the entry filename.
 RUN cp "${ENTRY}" ./main.py \

@@ -850,6 +850,89 @@ first: RHACS 4.11 is documented as not reporting vulnerabilities for Red Hat
 hardened images, so the hardened side is expected to come back thin, and that is
 a tooling-readiness finding rather than a clean result.
 
+## What the measurement showed
+
+Numbers move as vulnerability databases update, so date anything you quote and
+re-run before quoting it again. The *shape* has been stable across independent
+runs and two scanners, and the shape is the finding.
+
+**Split the findings by layer, because the two layers answer different
+questions.** RHACS reports an advisory source per finding, which is what makes
+the split possible: a distro tracker means an OS package, OSV/GHSA/go.dev means
+an application dependency.
+
+| layer | hardened | UBI | |
+|---|---|---|---|
+| **OS packages** | **8** | **228** | ~28× fewer |
+| of which a fix exists | **0** | 7 | |
+| **application dependencies** | ~131 | ~124 | the same |
+| of which a fix exists | ~127 | ~121 | |
+
+**The OS row is the attack-surface result.** 8 against 228 is what the hardened
+base buys, and it is nothing to do with being better patched — note that *zero*
+of the hardened findings have a fix available, and 221 of UBI's do not either.
+Both images are as patched as their distro allows. The difference is how much
+surface exists to have findings against at all, which is the thing a smaller
+image actually changes.
+
+That reframes the benefit. It is not a patch backlog you are clearing; it is
+**221 permanently unfixable findings you would otherwise carry in every scan,
+every audit, indefinitely** — against 8. The recurring triage cost is the saving,
+and it is a more durable argument than any one-time count.
+
+**The application row is yours, and it is identical in both.** Same
+`requirements.txt`, same `package.json`, same Gradle dependencies, so the same
+findings — which is why both scanners independently report the critical counts as
+*equal* between variants (grype 3 vs 3, RHACS 10 vs 10). No base image was ever
+going to move those.
+
+**Report the unit with the number.** `scan-stack.sh` counts distinct CVE/package
+pairs; RHACS counts distinct CVE ids. One CVE across three packages is 3 and 1
+respectively, and ratios derived from them differ by more than a factor of two.
+Both reports now state their unit, and `scan-stack.sh` prints both.
+
+### Driving the application layer toward zero
+
+The OS layer is Red Hat's to move. The application layer is yours, and it is
+where ~97% of the findings have a fix published — so it is the only layer where
+"get this to zero" is a question you can act on.
+
+Two things make it harder than bumping a version:
+
+- **Most of them are transitive.** `pyasn1 0.5.0` is not in
+  `requirements.txt`; it arrives under `google-auth`. Upgrading means
+  constraining the transitive resolution, not editing a direct dependency.
+- **The manifests are upstream's.** Editing `requirements.txt` forks
+  microservices-demo, which then has to be carried through every version bump.
+
+A constraints file avoids both. The Python Containerfiles take an optional
+`CONSTRAINTS` build arg:
+
+```bash
+cat > constraints.txt <<'EOF'
+urllib3>=2.7.1
+pyasn1>=0.6.4
+setuptools>=78.1.1
+EOF
+
+CONSTRAINTS=constraints.txt BASE=hardened ./build-push.sh --only emailservice
+```
+
+`pip -c` applies those as floors while resolving everything else normally, so
+upstream's manifest is untouched. Unset, the build is byte-for-byte what it was.
+A constraint that genuinely conflicts with the application fails the build,
+which is the right time to find out.
+
+Node and Java have equivalents — `npm overrides` in `package.json` and a Gradle
+`resolutionStrategy` — not wired up here, and worth adding the same way if those
+services turn out to carry the fixable findings.
+
+**"Zero CVEs" is not a state you reach and hold.** What is achievable is *zero
+with a fix available*, verified on a cadence: new advisories land against
+unchanged dependencies constantly, so a clean report dates immediately. Treat
+the fixable count as the number to drive to zero and the unfixable count as the
+number to report, and re-run after any dependency change.
+
 ## Measuring it
 
 Whether this is worth doing is an empirical question, so there are two ways to answer it:
