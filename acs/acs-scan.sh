@@ -141,6 +141,32 @@ scan_ns() {
            | grep -v '^$' | sort -u)
   [ -n "$images" ] || { echo "    no running images in $ns" >&2; return 1; }
 
+  # Scanning reads the images the pods are RUNNING, which is the right thing to
+  # measure and the thing that makes a rebuild invisible until it is rolled out.
+  # A rebuilt tag in the registry with an unrestarted pod means this report
+  # describes the old image while the registry holds the new one -- and the
+  # giveaway is subtle: a cache image that still reports Alpine package
+  # versions (1.3.2-r0) after being rebuilt on UBI. Compare the digest the pod
+  # is running against the digest the tag now resolves to.
+  if command -v skopeo >/dev/null; then
+    local stale=""
+    while IFS=$'\t' read -r pimg pdig; do
+      [ -n "$pimg" ] || continue
+      case "$pdig" in *@sha256:*) pdig="${pdig##*@}" ;; *) continue ;; esac
+      local now
+      now="$(skopeo inspect --format '{{.Digest}}' "docker://$pimg" 2>/dev/null || true)"
+      [ -n "$now" ] || continue
+      [ "$now" = "$pdig" ] || stale="$stale ${pimg##*/}"
+    done < <(oc get pods -n "$ns" -o jsonpath='{range .items[*]}{range .status.containerStatuses[*]}{.image}{"\t"}{.imageID}{"\n"}{end}{end}' 2>/dev/null | sort -u)
+    if [ -n "$stale" ]; then
+      echo "    WARNING: running a different digest than the tag now resolves to:" >&2
+      echo "            $stale" >&2
+      echo "            Those were rebuilt and not rolled out, so this scan" >&2
+      echo "            describes the OLD image. Fix before reading the numbers:" >&2
+      echo "              oc rollout restart deployment -n $ns" >&2
+    fi
+  fi
+
   local n=0
   while IFS= read -r img; do
     local svc="${img##*/}"; svc="${svc%%:*}"; svc="${svc%%@*}"

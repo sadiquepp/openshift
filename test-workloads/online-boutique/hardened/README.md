@@ -262,9 +262,17 @@ verified, which is tolerable in a lab and not beyond one.
 `/usr/local/bin/valkey-server`, user `1001`, and the cart works against it. A
 plain non-TLS build needs nothing beyond what `ubi-minimal` already carries.
 
-**Expect the totals not to move.** The cache is about one finding either way —
-`redis:alpine` and `ubi-minimal` are both small — so this changes the argument,
-not the arithmetic. What it buys is that the cache row compares two bases
+**Roll it out before re-scanning, or you will measure the old image.** Both
+scanners read what the pods are *running*, so a rebuilt tag in the registry is
+invisible until the deployment restarts — and the symptom is quiet: a cache
+supposedly rebuilt on UBI whose findings still cite Alpine package versions
+(`zlib 1.3.2-r0`, where the `-rN` suffix is apk, not rpm). `acs-scan.sh` now
+compares the digest each pod runs against the digest its tag resolves to and
+warns before scanning.
+
+**Then expect the totals barely to move.** The cache is about one finding either
+way — `redis:alpine` and `ubi-minimal` are both small — so this changes the
+argument, not the arithmetic. What it buys is that the cache row compares two bases
 running the same product at the same version, like every other row, instead of
 Redis-on-Alpine against Valkey-on-RHEL. Worth doing before publishing a number;
 not worth doing to improve one.
