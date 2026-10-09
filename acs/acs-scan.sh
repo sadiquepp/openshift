@@ -213,7 +213,7 @@ report() {
   fi
 
   printf '| image | distinct CVEs |\n|---|---|\n'
-  local total=0 zero=0 scanned=0
+  local total=0 zero=0 scanned=0 persum=0
   for f in "$dir"/*.json; do
     [ -e "$f" ] || continue
     local svc c; svc="$(basename "$f" .json)"; c="$(count_cves "$f")"
@@ -221,7 +221,7 @@ report() {
     scanned=$((scanned+1))
     case "$c" in
       ''|'?'|0) zero=$((zero+1)) ;;
-      *) total=$((total+c)) ;;
+      *) persum=$((persum+c)) ;;
     esac
   done
   if [ -f "$dir/.failed" ]; then
@@ -234,7 +234,18 @@ report() {
     printf '\nSeverities as Central grades them (CRITICAL/IMPORTANT/MODERATE/LOW),\n'
     printf 'summed over images so one shared CVE counts once per image: **%s**\n' "$sevs"
   fi
-  printf '\n%s scanned, %s distinct CVEs counted' "$scanned" "$total"
+  # Summing per-image counts counts a shared CVE once per image. scan-stack.sh
+  # reports pairs distinct across the whole namespace, and the two reports get
+  # read side by side, so compute the same thing here.
+  if [ "$scanned" -gt 0 ]; then
+    total="$(jq -s -r '[ .[] | .. | scalars | tostring
+                         | select(test("^(CVE-[0-9]|RHSA-[0-9]|GHSA-[0-9a-z])"; "i")) ]
+                       | unique | length' "$dir"/*.json 2>/dev/null || echo 0)"
+  fi
+  printf '\n%s scanned, %s CVEs distinct across the namespace' "$scanned" "$total"
+  printf '\n%s if each image is counted separately -- that larger figure double' "$persum"
+  printf '\ncounts anything shared, and is not the one to compare with'
+  printf '\nscan-stack.sh stack totals.'
   [ "$zero" -gt 0 ]   && printf ', %s scanned clean or unparsed' "$zero"
   [ "$failed" -gt 0 ] && printf ', %s not scanned' "$failed"
   printf '\n'
@@ -243,10 +254,17 @@ report() {
   # does not explain a scan that never ran, and offering it there sends the
   # reader to the wrong document.
   if [ "$zero" -gt 0 ]; then
-    printf '\nZero findings from a successful scan is still not proof of clean.\n'
-    printf 'Check one directly:\n    jq "." %s/<image>.json | head -40\n' "$dir"
-    printf 'RHACS 4.11 is documented as not reporting vulnerabilities for Red Hat\n'
-    printf 'hardened images (Project Hummingbird) -- see README.md.\n'
+    printf '\n%s image(s) returned no findings. Not proof of clean -- check one:\n' "$zero"
+    printf '    jq "." %s/<image>.json | head -40\n' "$dir"
+    # Only raise the known issue when the whole namespace came back empty.
+    # Firing it for one image while eleven others report hundreds points the
+    # reader at a product gap that demonstrably is not happening.
+    if [ "$zero" -eq "$scanned" ] && [ "$scanned" -gt 1 ]; then
+      printf '\nEVERY image returned nothing while scanning successfully, which is\n'
+      printf 'the pattern the RHACS 4.11 known issue describes for Red Hat hardened\n'
+      printf 'images (Project Hummingbird) -- see README.md. Compare the other\n'
+      printf 'namespace before concluding anything.\n'
+    fi
   fi
 }
 
