@@ -228,8 +228,9 @@ scan_ns() {
     if [ -n "$stale" ]; then
       echo "    WARNING: running a different digest than the tag now resolves to:" >&2
       echo "            $stale" >&2
-      echo "            Those were rebuilt and not rolled out, so this scan" >&2
-      echo "            describes the OLD image. Fix before reading the numbers:" >&2
+      echo "            The scan reads the tag, so these numbers describe the" >&2
+      echo "            NEW image in the registry -- not what the cluster runs." >&2
+      echo "            Roll out before treating them as the deployed state:" >&2
       echo "              oc rollout restart deployment -n $ns" >&2
     fi
   fi
@@ -340,6 +341,23 @@ report() {
   [ "$failed" -gt 0 ] && printf ', %s not scanned' "$failed"
   printf '\n\n**%s CVEs distinct across the namespace**, counting each CVE once.\n' "$total"
   printf '%s counting each image separately, which double counts anything shared.\n' "$persum"
+  # The headline counts any identifier appearing anywhere in the JSON, which is
+  # deliberate -- roxctl's key names move between versions. The snapshot counts
+  # the id of each finding. An advisory URL or description naming a second CVE
+  # shows up in the first and not the second, so say so rather than leave two
+  # totals for the same thing standing side by side.
+  if [ -f "$HIST/$NOW/cves.tsv" ] && [ "${total:-0}" != 0 ]; then
+    rec="$(awk -F'\t' -v ns="$ns" '$1 == ns { c[$3] = 1 }
+                                    END { n = 0; for (k in c) n++; print n }' \
+           "$HIST/$NOW/cves.tsv" 2>/dev/null || echo "")"
+    if [ -n "$rec" ] && [ "$rec" != "$total" ]; then
+      printf '\n%s of those are identifiers found in record text (an advisory URL\n' \
+        "$((total - rec))"
+      printf 'or description naming another CVE) rather than the id of a finding.\n'
+      printf 'The change report below counts the %s findings, which is why the two\n' "$rec"
+      printf 'numbers differ.\n'
+    fi
+  fi
   printf '\nNote the unit: this counts distinct CVE **ids**, while scan-stack.sh\n'
   printf 'counts distinct CVE/**package pairs** -- one CVE affecting three packages\n'
   printf 'is 1 here and 3 there. The two totals are not interchangeable, and\n'
@@ -474,9 +492,9 @@ snapshot_tsv() {
       svc="$(basename "$f" .json)"
       jq -r --arg ns "$ns" --arg img "$svc" '
         [ .. | objects
-          | (.cveId // .cve // .id // empty) as $c
+          | (.cveId // .cve // .id // .name // empty) as $c
           | select(($c | type) == "string"
-                   and ($c | test("^(CVE-|RHSA-|GHSA-)"; "i")))
+                   and ($c | test("^(CVE-[0-9]|RHSA-[0-9]|GHSA-[0-9a-z])"; "i")))
           | [ $ns, $img, $c,
               ((.cveSeverity // .severity // "") | tostring),
               ((.componentName // .name // "") | tostring),
