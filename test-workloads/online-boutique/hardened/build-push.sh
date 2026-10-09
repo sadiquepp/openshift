@@ -234,6 +234,18 @@ for service in $SERVICES; do
   if [ "$service" = cache ]; then
     # redis-cart runs a stock image -- no build, just a copy into the registry.
     echo "==> copying $CACHE_IMAGE -> $DEST/cache:$TAG"
+    # cache is mirrored, not built, so the tag suffix says which base SET this
+    # belongs to and nothing about the image's own base. Say what was actually
+    # copied, because "cache:v0.10.6-ubi" reads as a claim that it is UBI.
+    case "$CACHE_IMAGE" in
+      registry.access.redhat.com/*|registry.redhat.io/*) ;;
+      *)
+        echo "    NOTE  $CACHE_IMAGE is not a Red Hat image, and this copy will be"
+        echo "          tagged '$TAG'. For BASE=ubi that is upstream's"
+        echo "          redis:alpine -- Alpine Linux under a -ubi tag. It is one"
+        echo "          finding and moves no total, but do not describe the stack"
+        echo "          as all-UBI. Override CACHE_IMAGE for a like-for-like set." ;;
+    esac
     skopeo copy "docker://$CACHE_IMAGE" "docker://$DEST/cache:$TAG"
     skopeo copy "docker://$CACHE_IMAGE" "docker://$DEST/cache:$FLOAT"
   else
