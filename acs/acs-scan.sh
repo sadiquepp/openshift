@@ -59,6 +59,21 @@ for t in roxctl oc jq; do command -v "$t" >/dev/null || { echo "$t not on PATH" 
 
 OUT="results-acs"; mkdir -p "$OUT"
 
+# Numbers here move for three different reasons -- a rebuilt image, a refreshed
+# vulnerability store, a VEX reclassification -- and results-acs/ is overwritten
+# every run, so a shift used to be unattributable after the fact. A published
+# fix for libXtst appeared mid-measurement and was only noticed because someone
+# happened to ask why a count had changed.
+#
+# Each run therefore keeps a normalized, diffable snapshot here and reports what
+# changed since the last one. Kept outside results-acs/ so clearing scan output
+# does not throw away the history.
+HIST="${ACS_HISTORY:-acs-history}"
+NOW="$(date -u +%Y%m%dT%H%M%SZ)"
+PREV_DIR="$( { ls -1d "$HIST"/*/ 2>/dev/null || true; } | sort | tail -1)"
+PREV_DIR="${PREV_DIR%/}"
+mkdir -p "$HIST/$NOW"
+
 # Scanner V4 loads its vulnerability store on first start and refuses matching
 # until that finishes:
 #
@@ -178,6 +193,10 @@ scan_one() {
 scan_ns() {
   local ns="$1" dir="$OUT/$1"
   mkdir -p "$dir"
+  # Drop the previous run's files: an image removed from the namespace would
+  # otherwise linger as a JSON file and keep contributing to the totals. Safe
+  # to discard now that each run is snapshotted under $HIST.
+  rm -f "$dir"/*.json
   # Stale markers from a previous run would be reported as this run's failures.
   rm -f "$dir/.failed"
   echo "==> $ns"
@@ -444,8 +463,97 @@ if [ -n "$FIRST_IMG" ]; then
   wait_for_matcher "$FIRST_IMG" || exit 1
 fi
 
+# One row per namespace/image/CVE/component, tolerant about key names for the
+# same reason the counter is: roxctl's layout differs across versions.
+snapshot_tsv() {
+  local ns f svc
+  for ns in "$NS_A" ${NS_B:+"$NS_B"}; do
+    [ -d "$OUT/$ns" ] || continue
+    for f in "$OUT/$ns"/*.json; do
+      [ -e "$f" ] || continue
+      svc="$(basename "$f" .json)"
+      jq -r --arg ns "$ns" --arg img "$svc" '
+        [ .. | objects
+          | (.cveId // .cve // .id // empty) as $c
+          | select(($c | type) == "string"
+                   and ($c | test("^(CVE-|RHSA-|GHSA-)"; "i")))
+          | [ $ns, $img, $c,
+              ((.cveSeverity // .severity // "") | tostring),
+              ((.componentName // .name // "") | tostring),
+              ((.componentVersion // .version // "") | tostring),
+              (.componentFixedVersion // .fixedBy // null
+                 | if . == null or . == "" then "-" else tostring end) ]
+        ] | unique[] | @tsv' "$f" 2>/dev/null
+    done
+  done | sort -u
+}
+
+diff_section() {
+  local prev="$1" prev_ts="$2" cur="$3"
+  printf '\n## Changes since %s\n' "$prev_ts"
+  awk -F'\t' -v cap="${ACS_DIFF_CAP:-15}" -v nslist="$NS_A,${NS_B:-}" '
+    function emit(title, body,   n, lines, i, j) {
+      if (body == "") { printf "%s: none\n\n", title; return }
+      n = split(body, lines, "\n"); i = 0
+      printf "%s:\n\n```\n", title
+      for (j = 1; j <= n; j++) {
+        if (lines[j] == "") continue
+        if (++i <= cap) print lines[j]
+      }
+      if (i > cap) printf "  ... and %d more\n", i - cap
+      printf "```\n\n"
+    }
+    NR == FNR {
+      k = $1 "\t" $3 "\t" $5
+      p[k] = $7; pl[++pi] = k; pcomp[k] = $6
+      pc[$1 SUBSEP $3] = 1
+      next
+    }
+    {
+      k = $1 "\t" $3 "\t" $5
+      c[k] = $7
+      cc[$1 SUBSEP $3] = 1
+      if (!(k in p))
+        add[$1] = add[$1] sprintf("  + %-16s %s %s%s\n", $3, $5, $6,
+                                  ($7 == "-" ? "" : "   fix " $7))
+      else if (p[k] == "-" && $7 != "-")
+        nf[$1] = nf[$1] sprintf("  * %-16s %s %s   fix now published: %s\n",
+                                $3, $5, $6, $7)
+      else if (p[k] != "-" && $7 == "-")
+        lf[$1] = lf[$1] sprintf("  ! %-16s %s   fix %s no longer offered\n",
+                                $3, $5, p[k])
+    }
+    END {
+      for (i = 1; i <= pi; i++) {
+        k = pl[i]
+        if (k in c || k in seen) continue
+        seen[k] = 1; split(k, a, "\t")
+        rem[a[1]] = rem[a[1]] sprintf("  - %-16s %s %s\n", a[2], a[3], pcomp[k])
+      }
+      for (x in pc) { split(x, a, SUBSEP); pn[a[1]]++ }
+      for (x in cc) { split(x, a, SUBSEP); cn[a[1]]++ }
+      n = split(nslist, ns, ",")
+      for (i = 1; i <= n; i++) {
+        s = ns[i]; if (s == "") continue
+        printf "\n### %s\n\n", s
+        printf "distinct CVE ids: **%d -> %d**\n\n", pn[s] + 0, cn[s] + 0
+        emit("gone", rem[s])
+        emit("new", add[s])
+        emit("fix became available", nf[s])
+        emit("fix withdrawn", lf[s])
+      }
+      print "A CVE can leave without being fixed: a VEX statement reclassifying"
+      print "a package as not affected removes it, and so does a rebuild that"
+      print "drops the package. Compare against check-bases.sh before reading a"
+      print "change as patching."
+    }
+  ' "$prev" "$cur"
+}
+
 scan_ns "$NS_A" || true
 [ -n "$NS_B" ] && { scan_ns "$NS_B" || true; }
+
+snapshot_tsv > "$HIST/$NOW/cves.tsv"
 
 {
   echo "# RHACS scan — $(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -465,6 +573,21 @@ scan_ns "$NS_A" || true
   fi
   report "$NS_A"
   [ -n "$NS_B" ] && report "$NS_B"
+  if [ -n "$PREV_DIR" ] && [ -f "$PREV_DIR/cves.tsv" ]; then
+    diff_section "$PREV_DIR/cves.tsv" "$(basename "$PREV_DIR")" "$HIST/$NOW/cves.tsv"
+  else
+    printf '\n## Changes since last run\n\n'
+    printf 'No previous snapshot. This run is the baseline; the next one will\n'
+    printf 'report what moved and why it is attributable.\n'
+  fi
 } | tee "$OUT/report.md"
+cp "$OUT/report.md" "$HIST/$NOW/report.md"
+
+# Keep the history bounded; a snapshot is two small text files.
+KEEP="${ACS_HISTORY_KEEP:-20}"
+{ ls -1d "$HIST"/*/ 2>/dev/null || true; } | sort | head -n "-$KEEP" \
+  | while read -r d; do
+  rm -rf "$d"
+done
 echo
 echo "raw JSON kept under $OUT/ -- no re-scan needed to ask a follow-up question"

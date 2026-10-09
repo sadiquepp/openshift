@@ -295,6 +295,46 @@ but its namespace filter syntax and response schema are not publicly
 documented, and a report built on a guessed schema is worse than one built on a
 slower documented interface.
 
+### What changed since the last run
+
+The numbers move for at least three unrelated reasons — an image was rebuilt,
+Central refreshed its vulnerability store, or Red Hat published a VEX statement
+reclassifying a package — and none of them announce themselves. A published fix
+for `libXtst` appeared in the middle of one measurement and was noticed only
+because someone asked why a count had changed by one.
+
+So every run writes a normalized snapshot to `acs-history/<timestamp>/`
+(`cves.tsv` plus the report) and the next run reports the delta per namespace:
+
+```
+distinct CVE ids: **3 -> 3**
+
+gone:
+  - CVE-2026-94283   libX11 1.8.13-3.hum1
+new:
+  + CVE-2026-99999   expat 2.5.0-1.hum1
+fix became available:
+  * CVE-2026-94286   libXtst 1.2.5-5.hum1   fix now published: 0:1.2.5-5.1.hum1
+```
+
+Note the total: **3 → 3**, while three separate things changed underneath it.
+A flat headline number is not evidence that nothing moved, which is exactly how
+an 8/0 OS row became 7/1 unremarked.
+
+`fix became available` is the row worth watching — it is the only one that
+represents work appearing. `gone` does not mean fixed: a VEX reclassification
+removes a CVE without anything being patched, and so does a rebuild that drops
+the package. Check against `check-bases.sh` before reading a drop as progress.
+
+- `ACS_HISTORY_KEEP=20` — snapshots retained (two small text files each).
+- `ACS_DIFF_CAP=15` — lines per section before it truncates with a count.
+- `ACS_HISTORY=acs-history` — where they live. Gitignored, and deliberately
+  outside `results-acs/` so clearing scan output does not destroy the history.
+
+Each run also clears the previous run's JSON for a namespace before scanning it.
+An image removed from the namespace would otherwise linger as a file and keep
+contributing to the totals.
+
 ### A rebuilt tag reads as the old image without `--force`
 
 Central caches scan results per image **name, tag included**. Re-scan a tag
