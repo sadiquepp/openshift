@@ -252,6 +252,42 @@ report() {
   printf 'is 1 here and 3 there. The two totals are not interchangeable, and\n'
   printf 'neither are ratios derived from them.\n'
 
+  # Who has to fix it. Two signals in each record, and together they turn a
+  # count into a work list:
+  #
+  #   cveInfo -> access.redhat.com  the OS layer, Red Hat's advisory data
+  #   cveInfo -> osv.dev / github   an application dependency, ecosystem data
+  #   componentFixedVersion set     a fix exists; empty means none published
+  #
+  # expat 2.8.5-1.2.hum1 with an access.redhat.com link and no fixed version is
+  # Red Hat's to ship and nothing a rebuild reaches. pyasn1 0.5.0 with a PYSEC
+  # link and fixedVersion 0.6.4 is a line in requirements.txt. Those are
+  # different jobs for different people, and the severity table cannot tell
+  # them apart.
+  if [ "$scanned" -gt 0 ]; then
+    local split
+    split="$(jq -s -r '
+      [ .[] | .. | objects | select(has("cveId") and has("componentName")) ] as $v
+      | ($v | map(select((.cveInfo // "") | test("redhat\\.com"))))        as $os
+      | ($v | map(select((.cveInfo // "") | test("osv\\.dev|github\\.com")))) as $app
+      | "os_total=\($os | map(.cveId) | unique | length) " +
+        "os_fixable=\($os | map(select((.componentFixedVersion // "") != "")) | map(.cveId) | unique | length) " +
+        "app_total=\($app | map(.cveId) | unique | length) " +
+        "app_fixable=\($app | map(select((.componentFixedVersion // "") != "")) | map(.cveId) | unique | length)"
+      ' "$dir"/*.json 2>/dev/null || true)"
+    if [ -n "$split" ]; then
+      eval "$split"
+      printf '\n| layer | distinct CVEs | with a fix published | whose |\n'
+      printf '|---|---|---|---|\n'
+      printf '| OS packages (Red Hat advisories) | %s | %s | Red Hat ships it; a rebuild picks it up |\n' \
+        "${os_total:-0}" "${os_fixable:-0}"
+      printf '| application dependencies (OSV/GHSA) | %s | %s | yours, in the dependency manifest |\n' \
+        "${app_total:-0}" "${app_fixable:-0}"
+      printf '\nA row with a fix published is work available today. One without is a\n'
+      printf 'number to report: nothing downstream of the vendor clears it.\n'
+    fi
+  fi
+
   # The hardened-image caveat explains a SUCCESSFUL scan that found nothing. It
   # does not explain a scan that never ran, and offering it there sends the
   # reader to the wrong document.
