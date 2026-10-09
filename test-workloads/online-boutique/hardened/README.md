@@ -127,7 +127,7 @@ That removes the most ABI-fragile thing in the build rather than pinning around
 it — pinning the major is still right, but on its own it only postpones this
 until the next bump.
 
-## The five things that are not an image swap
+## The six things that are not an image swap
 
 ### 1. `loadgenerator` — shell-form entrypoint
 
@@ -207,6 +207,19 @@ oc run resp-probe --rm -i --restart=Never -n online-boutique \
 `+PONG` means the server is healthy and the problem is elsewhere. Anything beginning `-DENIED`,
 `-NOAUTH` or `-ERR` names the real cause in one line. The `--overrides` block is there because a
 plain `oc run` is rejected by the `restricted:latest` Pod Security admission policy.
+
+### 6. The UBI comparison is eleven UBI images and one Alpine one
+
+`redis-cart` in the UBI set is `docker.io/library/redis:alpine` — upstream's own
+choice, kept so that variant stays faithful to what microservices-demo actually
+deploys. It is not a UBI image, and a scan says so: an RHACS run attributed part
+of that stack to `security.alpinelinux.org`.
+
+It carries roughly one finding, so it does not move any total, but the label
+matters when the numbers are quoted. Either say "upstream's stack on UBI, with
+upstream's Alpine cache" or set `CACHE_IMAGE` to a UBI-based Redis or Valkey for
+a pure comparison. The hardened set has no equivalent gap: `hi/valkey` is a
+hardened image like the rest.
 
 ### 5. `cartservice` — a base image can override your port
 

@@ -266,12 +266,20 @@ report() {
   # them apart.
   if [ "$scanned" -gt 0 ]; then
     local split
+    # Host lists come from observed output rather than guesswork: a real run
+    # produced access.redhat.com, osv.dev, go.dev, nvd.nist.gov and
+    # security.alpinelinux.org. go.dev is the Go module advisory database, so
+    # an application dependency. The Alpine tracker is an OS source, which is
+    # how a redis:alpine image inside the UBI stack shows up. nvd.nist.gov
+    # covers every ecosystem, so it stays unattributed rather than guessed.
     split="$(jq -s -r '
       [ .[] | .. | objects | select(has("cveId") and has("componentName")) ] as $v
-      | ($v | map(select((.cveInfo // "") | test("redhat\\.com"))))        as $os
-      | ($v | map(select((.cveInfo // "") | test("osv\\.dev|github\\.com")))) as $app
+      | "redhat\\.com|security\\.alpinelinux\\.org|security-tracker\\.debian\\.org|ubuntu\\.com" as $osre
+      | "osv\\.dev|github\\.com|go\\.dev|pypi\\.org|npmjs\\.com" as $appre
+      | ($v | map(select((.cveInfo // "") | test($osre))))  as $os
+      | ($v | map(select((.cveInfo // "") | test($appre)))) as $app
       | ($v | map(select((.cveInfo // "")
-                 | (test("redhat\\.com") or test("osv\\.dev|github\\.com")) | not))) as $other
+                 | (test($osre) or test($appre)) | not))) as $other
       | "os_total=\($os | map(.cveId) | unique | length) " +
         "os_fixable=\($os | map(select((.componentFixedVersion // "") != "")) | map(.cveId) | unique | length) " +
         "app_total=\($app | map(.cveId) | unique | length) " +
@@ -285,9 +293,9 @@ report() {
       eval "$split"
       printf '\n| layer | distinct CVEs | with a fix published | whose |\n'
       printf '|---|---|---|---|\n'
-      printf '| OS packages (Red Hat advisories) | %s | %s | Red Hat ships it; a rebuild picks it up |\n' \
+      printf '| OS packages (distro advisories) | %s | %s | the distro ships it; a rebuild picks it up |\n' \
         "${os_total:-0}" "${os_fixable:-0}"
-      printf '| application dependencies (OSV/GHSA) | %s | %s | yours, in the dependency manifest |\n' \
+      printf '| application dependencies (OSV/GHSA/go.dev) | %s | %s | yours, in the dependency manifest |\n' \
         "${app_total:-0}" "${app_fixable:-0}"
       # Without this the rows above do not sum to the namespace total, and a
       # table that does not add up casts doubt on the parts that are right.
@@ -298,6 +306,9 @@ report() {
       fi
       printf '\nA row with a fix published is work available today. One without is a\n'
       printf 'number to report: nothing downstream of the vendor clears it.\n'
+      printf 'Rows can over-sum against the namespace total: one CVE can affect\n'
+      printf 'both an OS package and an application one, and counts in both layers\n'
+      printf 'because it is two pieces of work.\n'
     fi
   fi
 
