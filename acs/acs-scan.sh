@@ -367,7 +367,7 @@ report() {
       eval "$split"
       printf '\n| layer | distinct CVEs | with a fix published | whose |\n'
       printf '|---|---|---|---|\n'
-      printf '| OS packages (distro advisories) | %s | %s | the distro ships it; a rebuild picks it up |\n' \
+      printf '| OS packages (distro advisories) | %s | %s | the distro, once the base image ships it |\n' \
         "${os_total:-0}" "${os_fixable:-0}"
       printf '| application dependencies (OSV/GHSA/go.dev) | %s | %s | yours, in the dependency manifest |\n' \
         "${app_total:-0}" "${app_fixable:-0}"
@@ -378,7 +378,11 @@ report() {
         printf '| other advisory sources | %s | %s | from: %s |\n' \
           "$other_total" "${other_fixable:-0}" "${other_srcs:-unknown}"
       fi
-      printf '\nA row with a fix published is work available today. One without is a\n'
+      printf '\nA published fix is the vendor advisory, not a fix you can obtain. An\n'
+      printf 'OS-package fix reaches you only once the base image ships it, which\n'
+      printf 'can lag the advisory -- check with check-bases.sh before promising a\n'
+      printf 'rebuild clears one. An application fix is actionable immediately.\n'
+      printf 'A row without a fix is a\n'
       printf 'number to report: nothing downstream of the vendor clears it.\n'
       printf 'Rows can over-sum against the namespace total: one CVE can affect\n'
       printf 'both an OS package and an application one, and counts in both layers\n'
