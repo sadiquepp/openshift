@@ -17,8 +17,10 @@
 #   podman run --rm --entrypoint /usr/bin/valkey-server \
 #     registry.access.redhat.com/hi/valkey:latest --version
 #
-# NOT BUILT OR RUN as written -- expect to iterate on the first build. The
-# likely friction points are named in comments below.
+# Verified: built and ran on a real cluster. The resulting image reports
+# PRETTY_NAME="Red Hat Enterprise Linux 9.8", entrypoint
+# /usr/local/bin/valkey-server, user 1001 -- and the cart works against it.
+# A plain (non-TLS) build needed nothing beyond what ubi-minimal already has.
 
 ARG BUILDER=registry.access.redhat.com/ubi9/ubi:latest
 ARG RUNTIME=registry.access.redhat.com/ubi9/ubi-minimal:latest

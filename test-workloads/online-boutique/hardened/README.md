@@ -208,12 +208,22 @@ oc run resp-probe --rm -i --restart=Never -n online-boutique \
 `-NOAUTH` or `-ERR` names the real cause in one line. The `--overrides` block is there because a
 plain `oc run` is rejected by the `restricted:latest` Pod Security admission policy.
 
-### 6. The UBI comparison is eleven UBI images and one Alpine one
+### 6. The UBI cache is Alpine Redis unless you rebuild it
 
-`redis-cart` in the UBI set is `docker.io/library/redis:alpine` — upstream's own
-choice, kept so that variant stays faithful to what microservices-demo actually
-deploys. It is not a UBI image, and a scan says so: an RHACS run attributed part
-of that stack to `security.alpinelinux.org`.
+**By default** `redis-cart` in the UBI set is `docker.io/library/redis:alpine` —
+upstream's own choice, kept so that variant stays faithful to what
+microservices-demo actually deploys. It is not a UBI image, and a scan says so:
+an RHACS run attributed part of that stack to `security.alpinelinux.org`.
+`CACHE_BUILD=1` replaces it with Valkey built on UBI, below, which is what makes
+the row a base-to-base comparison — check which one you are actually running
+before quoting the stack as all-UBI:
+
+```bash
+skopeo inspect --config docker://$REGISTRY/$NAMESPACE/cache:$VERSION-ubi \
+  | jq '.config.Entrypoint'
+```
+
+`/usr/local/bin/valkey-server` is the UBI build; anything else is the mirror.
 
 It carries roughly one finding, so it does not move any total, but the label
 matters when the numbers are quoted. Either say "upstream's stack on UBI, with
@@ -247,11 +257,17 @@ would be the wrong kind of difference; add `BUILD_TLS=yes` and `openssl-libs` if
 you need it. And `VALKEY_SHA256` is optional but unset means the tarball is not
 verified, which is tolerable in a lab and not beyond one.
 
-**It has not been built.** The Containerfile is written from the upstream build
-instructions, not from a successful run, so expect to iterate — the likely
-friction is the `make PREFIX=/out install` layout and whether a plain build
-needs anything beyond glibc at runtime, which `ldd` in the builder stage
-answers.
+**It builds and runs.** Verified on a cluster: the image reports
+`PRETTY_NAME="Red Hat Enterprise Linux 9.8"`, entrypoint
+`/usr/local/bin/valkey-server`, user `1001`, and the cart works against it. A
+plain non-TLS build needs nothing beyond what `ubi-minimal` already carries.
+
+**Expect the totals not to move.** The cache is about one finding either way —
+`redis:alpine` and `ubi-minimal` are both small — so this changes the argument,
+not the arithmetic. What it buys is that the cache row compares two bases
+running the same product at the same version, like every other row, instead of
+Redis-on-Alpine against Valkey-on-RHEL. Worth doing before publishing a number;
+not worth doing to improve one.
 
 ### 5. `cartservice` — a base image can override your port
 
