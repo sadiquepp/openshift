@@ -242,17 +242,41 @@ report() {
                          | select(test("^(CVE-[0-9]|RHSA-[0-9]|GHSA-[0-9a-z])"; "i")) ]
                        | unique | length' "$dir"/*.json 2>/dev/null || echo 0)"
   fi
-  printf '\n%s scanned, %s CVEs distinct across the namespace' "$scanned" "$total"
-  printf '\n%s if each image is counted separately -- that larger figure double' "$persum"
-  printf '\ncounts anything shared, and is not the one to compare with'
-  printf '\nscan-stack.sh stack totals.'
-  [ "$zero" -gt 0 ]   && printf ', %s scanned clean or unparsed' "$zero"
+  printf '\n%s scanned' "$scanned"
+  [ "$zero" -gt 0 ]   && printf ', %s with no findings' "$zero"
   [ "$failed" -gt 0 ] && printf ', %s not scanned' "$failed"
-  printf '\n'
+  printf '\n\n**%s CVEs distinct across the namespace**, counting each CVE once.\n' "$total"
+  printf '%s counting each image separately, which double counts anything shared.\n' "$persum"
+  printf '\nNote the unit: this counts distinct CVE **ids**, while scan-stack.sh\n'
+  printf 'counts distinct CVE/**package pairs** -- one CVE affecting three packages\n'
+  printf 'is 1 here and 3 there. The two totals are not interchangeable, and\n'
+  printf 'neither are ratios derived from them.\n'
 
   # The hardened-image caveat explains a SUCCESSFUL scan that found nothing. It
   # does not explain a scan that never ran, and offering it there sends the
   # reader to the wrong document.
+  # TOTAL-COMPONENTS 0 means Central catalogued nothing in the image -- it
+  # could not read it, which is a different statement from finding nothing
+  # wrong. A self-contained .NET publish on a distroless base has no package
+  # metadata ACS recognises, and reporting that as 0 findings alongside images
+  # reporting hundreds is the exact confusion this report exists to prevent.
+  local unread=""
+  for f in "$dir"/*.json; do
+    [ -e "$f" ] || continue
+    if [ "$(jq -r '[ .. | objects | select(has("TOTAL-COMPONENTS"))
+                     | .["TOTAL-COMPONENTS"] ] | add // 1' "$f" 2>/dev/null)" = "0" ]; then
+      unread="$unread $(basename "$f" .json)"
+    fi
+  done
+  if [ -n "$unread" ]; then
+    printf '\n**No components catalogued in:**%s\n' "$unread"
+    printf 'Central read no packages at all in those, so their zero is "could not\n'
+    printf 'read" rather than "nothing found" -- they contribute nothing to the\n'
+    printf 'totals above and must not be counted as clean. A self-contained binary\n'
+    printf 'on a distroless base is the usual cause: no rpm database, no language\n'
+    printf 'manifest, nothing to enumerate.\n'
+  fi
+
   if [ "$zero" -gt 0 ]; then
     printf '\n%s image(s) returned no findings. Not proof of clean -- check one:\n' "$zero"
     printf '    jq "." %s/<image>.json | head -40\n' "$dir"

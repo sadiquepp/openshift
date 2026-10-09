@@ -134,10 +134,18 @@ B="$HERE/results-$NS_B"
     printf '| **total** | **%s** | **%s** |\n' \
       "$(wc -l < "$A/cves-all.tsv" | tr -d ' ')" "$(wc -l < "$B/cves-all.tsv" | tr -d ' ')"
     printf '| of which fixable now | %s | %s |\n' "$(fixable "$A")" "$(fixable "$B")"
+    printf '| distinct CVE ids (ignoring package) | %s | %s |\n' \
+      "$(cut -f2 "$A/cves-all.tsv" | sort -u | wc -l | tr -d ' ')" \
+      "$(cut -f2 "$B/cves-all.tsv" | sort -u | wc -l | tr -d ' ')"
     echo
     # The total is attack surface; the fixable count is work. They answer
     # different questions and a report giving only the first invites the reply
     # "so what do we do about it", which the second answers.
+    echo "The totals above count CVE/package pairs: one CVE affecting three"
+    echo "packages is three things to patch. The last row counts CVE ids instead,"
+    echo "which is the unit RHACS reports -- compare like with like, because the"
+    echo "two give materially different ratios between the same two namespaces."
+    echo
     echo "A finding with no fix available is one to report, not to action --"
     echo "no rebuild clears it until the distro or the dependency moves. The"
     echo "fixable row is the part a rebuild would pick up today."
