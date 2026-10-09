@@ -259,12 +259,49 @@ Two things about how it reports:
   file it says so instead of counting it as clean.
 - It distinguishes **zero findings** from **zero parsed findings** in the
   summary line, and points at the hardened-image caveat above when any appear.
+- It scans with **`--force`**, so Central re-pulls each image instead of
+  serving a cached result (`ROX_FORCE=0` turns that off).
 
 It uses `roxctl image scan` per image rather than Central's bulk export API
 (`/v1/export/vuln-mgmt/workloads`). That endpoint exists and would be one call,
 but its namespace filter syntax and response schema are not publicly
 documented, and a report built on a guessed schema is worse than one built on a
 slower documented interface.
+
+### A rebuilt tag reads as the old image without `--force`
+
+Central caches scan results per image **name, tag included**. Re-scan a tag
+whose digest has moved and you get the result for the image that tag used to
+point at — no error, no warning, just the old numbers.
+
+This is not hypothetical. Rebuilding the UBI `cache` image from Alpine onto
+UBI, pushing it under the same `:v0.10.6-ubi` tag and rolling the deployment
+left the report still naming `zlib 1.3.2-r0` — an `apk` version string, from
+the Alpine image that tag no longer resolved to. The tell was that *every other
+number in both namespaces was byte-identical* across the two runs; a real
+re-read of two dozen images does not reproduce to the digit.
+
+So the scan passes `--force`, which makes Central re-pull. Two things to know:
+
+- A forced re-pull needs **write** on the `Image` resource. The built-in
+  **Continuous Integration** role has it; a read-only role such as Analyst does
+  not. On a token that lacks it the script drops `--force` once, carries on, and
+  says in the report that the results may be cached — rather than failing every
+  image.
+- `ROX_FORCE=0` skips it. Faster, and fine when nothing has been rebuilt, but
+  the report then carries the cached-results caveat.
+
+To check one image by hand:
+
+```bash
+roxctl -e "$ROX_CENTRAL_ADDRESS" image scan --force \
+  --image registry.hub.mylab.com:8443/online-boutique/cache:v0.10.6-ubi \
+  -o json | jq '.result.summary'
+```
+
+A rebuilt image is also invisible to a node that already cached the tag; that
+is a separate problem, solved by `imagePullPolicy: Always` in the overlays and
+the digest-staleness warning the scan prints before it starts.
 
 TLS verification is not disabled anywhere. If Central's route uses a private CA,
 trust it on the host running the scan rather than passing

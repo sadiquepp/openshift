@@ -127,6 +127,31 @@ else
   exit 2
 fi
 
+# Central caches scan results per image NAME, tag included. Re-scanning a tag
+# whose digest has moved therefore returns the result for the image that tag
+# used to point at. That is how a cache rebuilt on UBI kept reporting Alpine
+# package versions (zlib 1.3.2-r0) through a rollout and two re-scans, with
+# every other number in the report byte-identical -- the signature of a served
+# cache rather than a re-read. --force makes Central re-pull instead.
+#
+# A forced re-pull needs write on the Image resource (the Continuous
+# Integration role has it; a read-only token does not), so a refusal falls back
+# to the cached path once and says so, rather than failing every image.
+FORCE=()
+if [ "${ROX_FORCE:-1}" = 1 ]; then FORCE=(--force); fi
+FORCE_REFUSED=0
+
+scan_one() {
+  local img="$1" out="$2" err="$3"
+  "${ROX[@]}" image scan "${FORCE[@]}" --image "$img" -o json >"$out" 2>"$err" && return 0
+  if [ "${#FORCE[@]}" -gt 0 ] \
+     && grep -qiE 'permission|not author|forbidden|denied|\b403\b' "$err"; then
+    FORCE=(); FORCE_REFUSED=1
+    "${ROX[@]}" image scan --image "$img" -o json >"$out" 2>"$err" && return 0
+  fi
+  return 1
+}
+
 scan_ns() {
   local ns="$1" dir="$OUT/$1"
   mkdir -p "$dir"
@@ -171,7 +196,7 @@ scan_ns() {
   while IFS= read -r img; do
     local svc="${img##*/}"; svc="${svc%%:*}"; svc="${svc%%@*}"
     printf '    %-28s' "$svc"
-    if "${ROX[@]}" image scan --image "$img" -o json > "$dir/$svc.json" 2>"$dir/$svc.err"; then
+    if scan_one "$img" "$dir/$svc.json" "$dir/$svc.err"; then
       printf 'ok\n'
     else
       printf 'FAILED (see %s)\n' "$dir/$svc.err"
@@ -399,6 +424,18 @@ scan_ns "$NS_A" || true
   echo "# RHACS scan — $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo
   echo "Central: \`$ROX_CENTRAL_ADDRESS\` — $TLS_NOTE"
+  echo
+  if [ "${#FORCE[@]}" -gt 0 ]; then
+    echo "Scanned with \`--force\`: Central re-pulled each image rather than"
+    echo "serving a cached result for the tag."
+  elif [ "$FORCE_REFUSED" = 1 ]; then
+    echo "**\`--force\` was refused** (needs write on the Image resource), so these"
+    echo "may be Central's cached scans — for a rebuilt tag, that means the image"
+    echo "it used to point at. Use a token with the Continuous Integration role."
+  else
+    echo "**\`ROX_FORCE=0\`**: these may be Central's cached scans — for a rebuilt"
+    echo "tag, that means the image it used to point at."
+  fi
   report "$NS_A"
   [ -n "$NS_B" ] && report "$NS_B"
 } | tee "$OUT/report.md"
