@@ -1,0 +1,75 @@
+# Valkey built on UBI, so the cache can be compared base-to-base.
+#
+# The UBI set otherwise mirrors upstream's docker.io/library/redis:alpine, which
+# makes that one row a comparison between two products on two distros rather
+# than between two bases: Redis on Alpine against Valkey on RHEL. Building
+# Valkey here removes both differences -- same product, same version, only the
+# base image changes, which is the comparison everything else in this directory
+# is set up to make.
+#
+# Red Hat does not ship Valkey in the UBI repositories, so it is built from
+# source. That is also why this is opt-in rather than the default: it adds a
+# compile to a workload otherwise assembled from vendor images.
+#
+# Match the version the hardened catalog ships, or the cache row measures the
+# version difference too:
+#
+#   podman run --rm --entrypoint /usr/bin/valkey-server \
+#     registry.access.redhat.com/hi/valkey:latest --version
+#
+# NOT BUILT OR RUN as written -- expect to iterate on the first build. The
+# likely friction points are named in comments below.
+
+ARG BUILDER=registry.access.redhat.com/ubi9/ubi:latest
+ARG RUNTIME=registry.access.redhat.com/ubi9/ubi-minimal:latest
+ARG VALKEY_VERSION=9.0.6
+# Optional. Supply it and the tarball is verified; leave it empty and it is not,
+# which is fine for a lab and not fine for anything you ship.
+ARG VALKEY_SHA256=
+
+FROM ${BUILDER} AS builder
+# ubi9/ubi runs as root already, unlike the hi/*-builder images, but being
+# explicit costs nothing and matches every other Containerfile here.
+USER 0
+RUN dnf install -y --setopt=install_weak_deps=0 \
+      gcc make tar gzip findutils \
+ && dnf clean all
+WORKDIR /src
+ARG VALKEY_VERSION
+ARG VALKEY_SHA256
+# curl rather than ADD, so the checksum can be checked before anything is built.
+RUN set -eux; \
+    curl -sSfL -o valkey.tar.gz \
+      "https://github.com/valkey-io/valkey/archive/refs/tags/${VALKEY_VERSION}.tar.gz"; \
+    if [ -n "${VALKEY_SHA256}" ]; then \
+      echo "${VALKEY_SHA256}  valkey.tar.gz" | sha256sum -c -; \
+    else \
+      echo "WARNING: VALKEY_SHA256 not set, tarball not verified" >&2; \
+    fi; \
+    tar -xzf valkey.tar.gz --strip-components=1; \
+    rm -f valkey.tar.gz
+# No BUILD_TLS: the cart talks to this over a ClusterIP with no TLS, and
+# omitting it keeps openssl out of the runtime image -- which matters here,
+# since openssl is the package the whole CVE comparison kept turning on. Add
+# BUILD_TLS=yes plus openssl-devel above and openssl-libs below if you need it.
+#
+# jemalloc is built in-tree from deps/ and links statically, so it adds no
+# runtime dependency.
+RUN make -j"$(nproc)" && make PREFIX=/out install
+# Readable by an arbitrary UID, as everything else here is: OpenShift runs the
+# container as a UID from the namespace range, not as the image's own user.
+RUN chmod -R a+rX /out
+
+FROM ${RUNTIME}
+# Deliberately installs nothing. A plain (non-TLS) build needs only glibc, which
+# ubi-minimal has. If a build ends up needing more, `ldd /usr/local/bin/
+# valkey-server` in the builder stage names it rather than guessing.
+COPY --from=builder /out/bin/valkey-server /usr/local/bin/valkey-server
+# valkey-cli ships too, which is worth having: a cache whose image contains no
+# client is a cache you cannot speak RESP to when it misbehaves, and that cost
+# a while to debug on the distroless hardened image.
+COPY --from=builder /out/bin/valkey-cli /usr/local/bin/valkey-cli
+WORKDIR /data
+EXPOSE 6379
+USER 1001
+ENTRYPOINT ["/usr/local/bin/valkey-server"]

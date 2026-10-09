@@ -95,6 +95,7 @@ SERVICES="${SERVICES:-$ALL_SERVICES}"
 # A table rather than a straight-line script, so one service can be rebuilt on
 # its own without rebuilding the other ten.
 recipe() {
+  CTX_ROOT=""
   CF=""; CTX=""; BUILDER_IMG=""; RUNTIME_IMG=""; ARGS=()
   case "$1" in
     frontend|productcatalogservice|checkoutservice|shippingservice)
@@ -126,7 +127,15 @@ recipe() {
       CF=Containerfile.dotnet; CTX="src/cartservice/src"
       BUILDER_IMG="$DOTNET_SDK";     RUNTIME_IMG="$DOTNET_RUNTIME" ;;
     cache)
-      CF="";  CTX="" ;;   # mirrored, not built
+      if [ "${CACHE_BUILD:-0}" = 1 ]; then
+        CF=Containerfile.valkey; CTX="."; CTX_ROOT="$HERE"
+        BUILDER_IMG="${VALKEY_BUILDER:?set VALKEY_BUILDER or unset CACHE_BUILD}"
+        RUNTIME_IMG="${VALKEY_RUNTIME:?set VALKEY_RUNTIME or unset CACHE_BUILD}"
+        ARGS=(--build-arg "VALKEY_VERSION=${VALKEY_VERSION:-}"
+              --build-arg "VALKEY_SHA256=${VALKEY_SHA256:-}")
+      else
+        CF=""; CTX=""       # mirrored, not built
+      fi ;;
     *)
       echo "error: unknown service '$1'" >&2
       echo "       known: $(echo $ALL_SERVICES)" >&2
@@ -221,7 +230,7 @@ build_one() {
     --label "online-boutique.build.builder-base.digest=$bdig" \
     --label "online-boutique.build.base-set=$BASE" \
     "${ARGS[@]}" \
-    "$SRC/$CTX"
+    "${CTX_ROOT:-$SRC}/$CTX"
 
   "$ENGINE" tag "$image" "$DEST/$service:$FLOAT"
   echo "==> pushing $TAG and $FLOAT"
@@ -231,8 +240,10 @@ build_one() {
 }
 
 for service in $SERVICES; do
-  if [ "$service" = cache ]; then
+  if [ "$service" = cache ] && [ "${CACHE_BUILD:-0}" != 1 ]; then
     # redis-cart runs a stock image -- no build, just a copy into the registry.
+    # CACHE_BUILD=1 takes the build path below instead, which is how the UBI
+    # set gets a Valkey built on UBI rather than upstream's Alpine Redis.
     echo "==> copying $CACHE_IMAGE -> $DEST/cache:$TAG"
     # cache is mirrored, not built, so the tag suffix says which base SET this
     # belongs to and nothing about the image's own base. Say what was actually

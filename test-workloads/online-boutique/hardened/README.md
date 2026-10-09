@@ -221,6 +221,38 @@ upstream's Alpine cache" or set `CACHE_IMAGE` to a UBI-based Redis or Valkey for
 a pure comparison. The hardened set has no equivalent gap: `hi/valkey` is a
 hardened image like the rest.
 
+**To close it, build Valkey on UBI.** Then both variants run the same product at
+the same version and only the base differs, which is the comparison the rest of
+this directory makes:
+
+```bash
+# what version does the hardened catalog ship?
+podman run --rm --entrypoint /usr/bin/valkey-server \
+  registry.access.redhat.com/hi/valkey:latest --version
+
+CACHE_BUILD=1 VALKEY_VERSION=<that version> BASE=ubi ./build-push.sh --only cache
+oc rollout restart deploy/redis-cart -n online-boutique-ubi
+```
+
+[`Containerfile.valkey`](Containerfile.valkey) builds it from source on
+`ubi9/ubi` and ships the binary on `ubi9/ubi-minimal`. Red Hat does not package
+Valkey in the UBI repositories, which is why it is a source build and why it is
+opt-in: `CACHE_BUILD` defaults to 0 and the default run still mirrors upstream's
+image, so nothing changes unless you ask for it.
+
+Two things about it worth knowing. It is built **without TLS**, which keeps
+openssl out of the runtime image — and openssl is the package this whole
+comparison kept turning on, so leaving it out of one side and not the other
+would be the wrong kind of difference; add `BUILD_TLS=yes` and `openssl-libs` if
+you need it. And `VALKEY_SHA256` is optional but unset means the tarball is not
+verified, which is tolerable in a lab and not beyond one.
+
+**It has not been built.** The Containerfile is written from the upstream build
+instructions, not from a successful run, so expect to iterate — the likely
+friction is the `make PREFIX=/out install` layout and whether a plain build
+needs anything beyond glibc at runtime, which `ldd` in the builder stage
+answers.
+
 ### 5. `cartservice` — a base image can override your port
 
 Not a hardened-image problem; found *because* two base sets are built from the
