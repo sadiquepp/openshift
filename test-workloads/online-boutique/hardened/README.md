@@ -886,6 +886,28 @@ findings — which is why both scanners independently report the critical counts
 *equal* between variants (grype 3 vs 3, RHACS 10 vs 10). No base image was ever
 going to move those.
 
+**The UBI side used the smallest variant available, not a fat base.** The
+obvious objection to a result like this is that the comparison was rigged with a
+full OS image on one side, so it was not:
+
+| service | UBI runtime | |
+|---|---|---|
+| Go × 4 | `ubi9/ubi-micro` | the smallest UBI there is |
+| Node × 2 | `ubi9/nodejs-22-minimal` | the `-minimal` variant |
+| Python × 3 | `ubi9/python-312-minimal` | the `-minimal` variant |
+| `adservice` | `ubi9/openjdk-21-runtime` | the slim variant; no `-minimal` exists |
+| `cartservice` | `ubi9/dotnet-100-runtime` | the slim variant; no `-minimal` exists |
+| `redis-cart` | `docker.io/library/redis:alpine` | upstream's own, not UBI — see [6](#6-the-ubi-comparison-is-eleven-ubi-images-and-one-alpine-one) |
+
+So 8 against 228 is UBI putting its best foot forward. Building the UBI side on
+`ubi9/ubi`, or on the s2i builder images as runtimes, would widen the gap and
+prove less.
+
+One asymmetry is inherent rather than chosen: the Go services run on
+`hi/static`, which carries no libc at all, against `ubi9/ubi-micro`, which does.
+There is no UBI equivalent of a static base, so that gap is a real property of
+the two catalogs and not an artefact of how this was set up.
+
 **Report the unit with the number.** `scan-stack.sh` counts distinct CVE/package
 pairs; RHACS counts distinct CVE ids. One CVE across three packages is 3 and 1
 respectively, and ratios derived from them differ by more than a factor of two.
