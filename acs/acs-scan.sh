@@ -230,8 +230,19 @@ scan_ns() {
       echo "            $stale" >&2
       echo "            The scan reads the tag, so these numbers describe the" >&2
       echo "            NEW image in the registry -- not what the cluster runs." >&2
-      echo "            Roll out before treating them as the deployed state:" >&2
-      echo "              oc rollout restart deployment -n $ns" >&2
+      lazy="$(oc get deploy -n "$ns" -o jsonpath='{range .items[*]}{.metadata.name}{"="}{.spec.template.spec.containers[0].imagePullPolicy}{"\n"}{end}' 2>/dev/null \
+               | grep -v '=Always$' | cut -d= -f1 | tr '\n' ' ')"
+      if [ -n "$lazy" ]; then
+        echo "            These deployments do NOT set imagePullPolicy: Always:" >&2
+        echo "              $lazy" >&2
+        echo "            A restart will not help -- the node finds the tag" >&2
+        echo "            present and keeps the cached layers. Re-apply the" >&2
+        echo "            overlay, which sets the policy and rolls out:" >&2
+        echo "              oc apply -k <overlay> -n $ns" >&2
+      else
+        echo "            Roll out before treating them as the deployed state:" >&2
+        echo "              oc rollout restart deployment -n $ns" >&2
+      fi
     fi
   fi
 
