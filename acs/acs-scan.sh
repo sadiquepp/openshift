@@ -163,16 +163,36 @@ scan_ns() {
   echo "    $n images"
 }
 
-# roxctl's JSON layout differs across versions, so find the vulnerability list
-# by shape instead of by path: any object carrying a CVE-like id and a severity.
-# When that finds nothing, the report says so rather than printing zero, because
-# zero findings and zero parsed findings are not the same claim.
+# Find CVE ids by VALUE, not by key name. An earlier version selected objects
+# carrying "cve"/"id" plus "severity" -- reasonable-looking shapes, and wrong:
+# roxctl emits cveId and cveSeverity. It therefore counted zero for every image
+# while the JSON held fourteen findings each, and the report then offered the
+# documented hardened-image caveat as the explanation. A broken counter that
+# produces plausible evidence for a hypothesis is worse than one that crashes.
+#
+# Matching the values sidesteps key names entirely: anything that looks like a
+# vulnerability identifier is one, wherever it sits. The anchor matters -- the
+# records also carry cveInfo URLs ending in the same id, and an unanchored test
+# would count those a second time.
 count_cves() {
   local f="$1"
-  jq -r '[ .. | objects
-           | select((has("cve") or has("id")) and (has("severity") or has("Severity")))
-           | ((.cve // .id) | tostring) ]
-         | map(select(test("^(CVE|GHSA|RHSA)-"; "i"))) | unique | length' "$f" 2>/dev/null || echo "?"
+  jq -r '[ .. | scalars | tostring
+           | select(test("^(CVE-[0-9]|RHSA-[0-9]|GHSA-[0-9a-z])"; "i")) ]
+         | unique | length' "$f" 2>/dev/null || echo "?"
+}
+
+# Central reports Red Hat's own severities (CRITICAL / IMPORTANT / MODERATE /
+# LOW), not grype's CRITICAL/HIGH/MEDIUM/LOW, and it publishes them in a summary
+# block per image. Those are the vendor's own numbers, so use them rather than
+# re-deriving severities from the records -- but only when the block is there.
+sev_totals() {
+  jq -s -r '[ .[] | .. | objects | select(has("IMPORTANT") or has("MODERATE")) ]
+            | if length == 0 then "" else
+                (map(.CRITICAL // 0) | add | tostring) + "/" +
+                (map(.IMPORTANT // 0) | add | tostring) + "/" +
+                (map(.MODERATE // 0) | add | tostring) + "/" +
+                (map(.LOW // 0) | add | tostring)
+              end' "$@" 2>/dev/null || echo ""
 }
 
 report() {
@@ -208,6 +228,12 @@ report() {
     while IFS= read -r svc; do printf '| %s | **scan failed** |\n' "$svc"; done < "$dir/.failed"
   fi
 
+  local sevs=""
+  if [ "$scanned" -gt 0 ]; then sevs="$(sev_totals "$dir"/*.json)"; fi
+  if [ -n "$sevs" ]; then
+    printf '\nSeverities as Central grades them (CRITICAL/IMPORTANT/MODERATE/LOW),\n'
+    printf 'summed over images so one shared CVE counts once per image: **%s**\n' "$sevs"
+  fi
   printf '\n%s scanned, %s distinct CVEs counted' "$scanned" "$total"
   [ "$zero" -gt 0 ]   && printf ', %s scanned clean or unparsed' "$zero"
   [ "$failed" -gt 0 ] && printf ', %s not scanned' "$failed"

@@ -7,22 +7,29 @@ Boutique namespaces built by
 
 ## Read this before you install
 
-**RHACS 4.11 is documented as not reporting vulnerabilities for Red Hat
-hardened images.** The [4.11 release
+**The documented gap may not apply to your version — check, do not assume.** The
+[RHACS 4.11 release
 notes](https://docs.redhat.com/en/documentation/red_hat_advanced_cluster_security_for_kubernetes/4.11/html/release_notes/release-notes-411)
-list under known issues that a data gap in the Red Hat VEX security data feed
-stopped vulnerability reporting for Red Hat hardened images (Project
-Hummingbird) as of 15 July 2026, with Product Security working to restore it.
-The same notes also carry a new-feature entry saying Clair can scan hardened
-images and cross-reference VEX metadata, and they do not reconcile the two.
+list under known issues that a data gap in the Red Hat VEX feed stopped
+vulnerability reporting for Red Hat hardened images (Project Hummingbird) as of
+15 July 2026. The same notes also carry a new-feature entry saying Clair can
+scan hardened images and cross-reference VEX metadata, and they do not reconcile
+the two.
 
-So expect the `online-boutique` side to come back thin or empty, and do not read
-that as a clean result — it is the same "unreadable looks identical to clean"
-failure that makes an unread base image the most dangerous scan outcome. That
-asymmetry is worth measuring deliberately: a scanner that reports nothing for
-one variant and hundreds for the other tells you something real about tooling
-readiness for hardened images, which is a finding, just not the one you went
-looking for.
+On at least one install it **does** report. A run here returned 14 findings for
+the hardened `emailservice`, naming `.hum1` packages directly — for example
+`CVE-2026-77214` against `expat 2.8.5-1.2.hum1`. So treat the known issue as
+something to verify rather than expect:
+
+```bash
+oc -n rhacs-operator get csv -o jsonpath='{.items[*].spec.version}{"\n"}'
+```
+
+Record that version next to any result. If your install reports nothing for the
+hardened namespace while reporting normally for the UBI one, that asymmetry is
+the known issue showing up and is worth saying so explicitly — a scanner that
+cannot read one variant is a tooling-readiness finding, not a clean bill of
+health. If both report, you have a genuine second opinion.
 
 RHACS is still worth installing for everything else — policy enforcement,
 admission control, runtime, and the application layer in both namespaces.
