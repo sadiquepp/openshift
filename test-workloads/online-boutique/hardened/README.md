@@ -922,6 +922,7 @@ for the surrounding mirror setup.
 ## Files
 
 ```
+FINDINGS.md                   the measured result, and what it does and does not show
 Containerfile.go              frontend, productcatalogservice, checkoutservice, shippingservice
 Containerfile.node            currencyservice, paymentservice      (ENTRY build arg)
 Containerfile.python          emailservice, recommendationservice  (ENTRY build arg)
@@ -956,6 +957,11 @@ hardened images, so the hardened side is expected to come back thin, and that is
 a tooling-readiness finding rather than a clean result.
 
 ## What the measurement showed
+
+> The consolidated write-up lives in [`FINDINGS.md`](FINDINGS.md): the headline
+> table, what the result does and does not support, where the hardened residue
+> comes from, the scanner disagreements, and the pitfalls that produce stable
+> wrong numbers. This section is the narrative behind it.
 
 Numbers move as vulnerability databases update, so date anything you quote and
 re-run before quoting it again. The *shape* has been stable across independent

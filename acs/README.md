@@ -375,6 +375,13 @@ trust it on the host running the scan rather than passing
 `--insecure-skip-tls-verify` — a scanner you cannot authenticate is not a
 scanner.
 
+## What the numbers mean
+
+The scan produces counts; it does not interpret them. The consolidated reading
+of this workload — the layer split, why the critical counts match, where the
+residue comes from and which conclusions the data does not support — is in
+[`test-workloads/online-boutique/hardened/FINDINGS.md`](../test-workloads/online-boutique/hardened/FINDINGS.md).
+
 ## Comparing against the other scanners
 
 [`../test-workloads/online-boutique/hardened/cve-demo/`](../test-workloads/online-boutique/hardened/cve-demo)
