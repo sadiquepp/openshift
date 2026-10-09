@@ -31,6 +31,47 @@ shell, no package manager**. Three of upstream's containers assume a shell, and 
 > and the first real preflight run already caught a wrong Python interpreter name that would
 > otherwise have surfaced as a CrashLoopBackOff.
 
+## Contents
+
+- [Why a rebuild, and what it costs](#why-a-rebuild-and-what-it-costs)
+- [Catalog mapping](#catalog-mapping)
+- [Per-service findings](#per-service-findings)
+- [Pin the runtime major, not `:latest`](#pin-the-runtime-major-not-latest)
+  - [and drop the profiler while you are here](#and-drop-the-profiler-while-you-are-here)
+- [The six things that are not an image swap](#the-six-things-that-are-not-an-image-swap)
+  - [1. `loadgenerator` — shell-form entrypoint](#1-loadgenerator--shell-form-entrypoint)
+  - [2. `adservice` — the Gradle launcher is a shell script](#2-adservice--the-gradle-launcher-is-a-shell-script)
+  - [3. `busybox` init container — no hardened equivalent](#3-busybox-init-container--no-hardened-equivalent)
+  - [4. `redis-cart` — Valkey, not Redis](#4-redis-cart--valkey-not-redis)
+  - [5. The UBI cache is Alpine Redis unless you rebuild it](#5-the-ubi-cache-is-alpine-redis-unless-you-rebuild-it)
+  - [6. `cartservice` — a base image can override your port](#6-cartservice--a-base-image-can-override-your-port)
+- [OpenShift-specific notes](#openshift-specific-notes)
+- [What a real preflight run established](#what-a-real-preflight-run-established)
+- [Getting started](#getting-started)
+  - [1. Preflight](#1-preflight)
+  - [2. Point the overlays at your registry](#2-point-the-overlays-at-your-registry)
+  - [3. Build and scan one service](#3-build-and-scan-one-service)
+  - [4. Build the full stack](#4-build-the-full-stack)
+  - [5. Let the cluster reach your registry](#5-let-the-cluster-reach-your-registry)
+  - [6. Deploy and diff](#6-deploy-and-diff)
+  - [7. Optional: a namespace-scoped pull secret instead](#7-optional-a-namespace-scoped-pull-secret-instead)
+  - [If a pod will not start](#if-a-pod-will-not-start)
+- [Rebuilding when a base image gets a CVE fix](#rebuilding-when-a-base-image-gets-a-cve-fix)
+  - [Finding out what went stale](#finding-out-what-went-stale)
+  - [Rebuilding just that service](#rebuilding-just-that-service)
+  - [A rebuild under the same tag is invisible to a node that cached it](#a-rebuild-under-the-same-tag-is-invisible-to-a-node-that-cached-it)
+  - [Tags, and why the app version is not enough](#tags-and-why-the-app-version-is-not-enough)
+  - [Rolling it out](#rolling-it-out)
+  - [Automating it](#automating-it)
+- [Does this use S2I?](#does-this-use-s2i)
+- [Knobs](#knobs)
+  - [Disconnected clusters](#disconnected-clusters)
+- [Files](#files)
+- [Scanning it with ACS](#scanning-it-with-acs)
+- [What the measurement showed](#what-the-measurement-showed)
+  - [Driving the application layer toward zero](#driving-the-application-layer-toward-zero)
+- [Measuring it](#measuring-it)
+
 ## Why a rebuild, and what it costs
 
 | | upstream v0.10.6 | on hardened images |
@@ -208,7 +249,7 @@ oc run resp-probe --rm -i --restart=Never -n online-boutique \
 `-NOAUTH` or `-ERR` names the real cause in one line. The `--overrides` block is there because a
 plain `oc run` is rejected by the `restricted:latest` Pod Security admission policy.
 
-### 6. The UBI cache is Alpine Redis unless you rebuild it
+### 5. The UBI cache is Alpine Redis unless you rebuild it
 
 **By default** `redis-cart` in the UBI set is `docker.io/library/redis:alpine` —
 upstream's own choice, kept so that variant stays faithful to what
@@ -277,7 +318,7 @@ running the same product at the same version, like every other row, instead of
 Redis-on-Alpine against Valkey-on-RHEL. Worth doing before publishing a number;
 not worth doing to improve one.
 
-### 5. `cartservice` — a base image can override your port
+### 6. `cartservice` — a base image can override your port
 
 Not a hardened-image problem; found *because* two base sets are built from the
 same Containerfile. ASP.NET Core takes its listen address from
