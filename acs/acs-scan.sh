@@ -17,20 +17,43 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# Credentials live for one shell and the route hostname changes per cluster, so
+# a run the next morning starts by rediscovering all of it. If rox.env exists
+# beside this script it is sourced first -- gitignored, and the documented place
+# to keep ROX_CENTRAL_ADDRESS/ROX_CA and one credential. Real values in the
+# environment still win over the file.
+if [ -f rox.env ]; then
+  echo "sourcing rox.env" >&2
+  # shellcheck disable=SC1091
+  . ./rox.env
+fi
+
 NS_A="${1:-}"; NS_B="${2:-}"
 [ -n "$NS_A" ] || { echo "usage: $0 <namespace> [namespace]" >&2; exit 2; }
-for v in ROX_CENTRAL_ADDRESS ROX_API_TOKEN; do
-  [ -n "${!v:-}" ] || { echo "set $v (see the header of this script)" >&2; exit 2; }
-done
+[ -n "${ROX_CENTRAL_ADDRESS:-}" ] || {
+  echo "set ROX_CENTRAL_ADDRESS, e.g." >&2
+  echo "  export ROX_CENTRAL_ADDRESS=\"\$(oc -n stackrox get route central -o jsonpath='{.spec.host}'):443\"" >&2
+  exit 2; }
 # roxctl refuses to pick between credentials: with both ROX_API_TOKEN and
 # ROX_ADMIN_PASSWORD set it fails every call with "cannot use basic and
 # token-based authentication at the same time". The password is usually left
 # over from generating the init bundle. This script's contract is token auth,
 # so drop the password for its own child processes rather than failing.
-if [ -n "${ROX_ADMIN_PASSWORD:-}" ]; then
-  echo "note: ROX_ADMIN_PASSWORD is set and would conflict with ROX_API_TOKEN;" >&2
-  echo "      ignoring it for this run (roxctl accepts only one credential)." >&2
+if [ -n "${ROX_API_TOKEN:-}" ] && [ -n "${ROX_ADMIN_PASSWORD:-}" ]; then
+  echo "note: ROX_API_TOKEN and ROX_ADMIN_PASSWORD are both set; using the" >&2
+  echo "      token (roxctl accepts only one credential)." >&2
   unset ROX_ADMIN_PASSWORD
+fi
+if [ -n "${ROX_API_TOKEN:-}" ]; then
+  AUTH_NOTE="API token"
+elif [ -n "${ROX_ADMIN_PASSWORD:-}" ]; then
+  AUTH_NOTE="admin password (basic auth)"
+else
+  echo "set a credential: ROX_API_TOKEN, or ROX_ADMIN_PASSWORD which is still" >&2
+  echo "readable off the cluster when a token has been lost:" >&2
+  echo "  read -rs ROX_ADMIN_PASSWORD < <(oc -n stackrox get secret central-htpasswd \\" >&2
+  echo "    -o jsonpath='{.data.password}' | base64 -d); export ROX_ADMIN_PASSWORD" >&2
+  exit 2
 fi
 for t in roxctl oc jq; do command -v "$t" >/dev/null || { echo "$t not on PATH" >&2; exit 2; }; done
 
@@ -423,7 +446,7 @@ scan_ns "$NS_A" || true
 {
   echo "# RHACS scan — $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo
-  echo "Central: \`$ROX_CENTRAL_ADDRESS\` — $TLS_NOTE"
+  echo "Central: \`$ROX_CENTRAL_ADDRESS\` — $TLS_NOTE, $AUTH_NOTE"
   echo
   if [ "${#FORCE[@]}" -gt 0 ]; then
     echo "Scanned with \`--force\`: Central re-pulled each image rather than"

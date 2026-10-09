@@ -214,13 +214,40 @@ states on its Central line, so a number never quietly comes from a server
 nobody authenticated.
 
 Create an API token in the portal under **Platform Configuration →
-Integrations → API Token**, with a role that can read vulnerability data.
+Integrations → API Token**. Pick **Continuous Integration** rather than a
+read-only role: scanning needs write on `Image` to force a re-pull (see below).
 
 ```bash
 export ROX_CENTRAL_ADDRESS="$(oc -n stackrox get route central -o jsonpath='{.spec.host}'):443"
 export ROX_API_TOKEN=...
 ./acs-scan.sh online-boutique online-boutique-ubi
 ```
+
+**If the token is lost**, it cannot be read back — ACS shows it once. The admin
+password still can be, so that is the way back in without re-provisioning
+anything:
+
+```bash
+read -rs ROX_ADMIN_PASSWORD < <(oc -n stackrox get secret central-htpasswd \
+  -o jsonpath='{.data.password}' | base64 -d)
+export ROX_ADMIN_PASSWORD
+```
+
+The script takes either credential and names which one it used on the report's
+Central line. It will not take both: `roxctl` fails every call with
+`cannot use basic and token-based authentication at the same time`, so when
+both are set the token wins and the script says so.
+
+Three variables and a CA file do not survive a new shell, which turns the next
+morning's run into a rediscovery exercise. Keep them in **`rox.env`** beside the
+script — sourced automatically if present, gitignored, and with
+[`rox.env.example`](rox.env.example) as the template:
+
+```bash
+cp rox.env.example rox.env && chmod 600 rox.env   # then fill it in
+```
+
+Anything already exported wins over the file, so a one-off override still works.
 
 On a fresh Central the first run pauses:
 
