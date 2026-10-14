@@ -106,6 +106,18 @@ overlays/
   default/                    namespace + labels           <- start here
   tracing/                    default + OTLP tracing env vars
   no-loadgenerator/           default minus the traffic generator
+  hardened/                   default, rebuilt on Red Hat Hardened Images
+  ubi/                        the same, rebuilt on UBI 9, for comparison
+hardened/
+  Containerfile.*             one per language, 11 services
+  bases.env                   the hardened and UBI base-image sets
+  preflight.sh                check everything before building   <- start here
+  set-registry.sh             point both overlays at your registry
+  build-push.sh               build them all, or just one, push to your registry
+  check-bases.sh              what a new base image release made stale
+  scan-stack.sh               CVE diff between two deployed namespaces
+  cve-demo/                   emailservice built 3 ways, scanned and diffed
+                              (compare.sh, or manual-steps.md by hand)
 ```
 
 ## Why the base needs patching
@@ -186,6 +198,15 @@ Add them to the `additionalImages` list in your `ImageSetConfiguration` (see
 [`../../disconnected`](../../disconnected)), then repoint them with an `images:` block in
 `overlays/default/kustomization.yaml` — there is a commented stub there. Upstream also ships a
 `container-images-registry` component that does the same job if you prefer.
+
+[`hardened/`](hardened) is the other way round: rebuild all 11 services from upstream source on
+[Red Hat Hardened Images](https://images.redhat.com/) and push them to your own registry, which
+leaves nothing to mirror but Valkey. Read its README first — it is a rebuild, not a retag, and the
+hardened runtime images are distroless, which upstream's load generator and ad service both notice.
+The same Containerfiles build the stack on UBI 9 (`BASE=ubi`) for
+[`overlays/ubi`](overlays/ubi), so the two can be deployed side by side and their CVEs diffed —
+[`hardened/cve-demo`](hardened/cve-demo) does that on one service, with the multi-stage build
+pattern written out stage by stage.
 
 ## Refreshing to a newer upstream release
 

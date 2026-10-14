@@ -1,0 +1,404 @@
+# Red Hat Advanced Cluster Security — install, and scan two namespaces
+
+Artifacts to stand up RHACS on an OpenShift cluster and scan the two Online
+Boutique namespaces built by
+[`test-workloads/online-boutique/hardened`](../test-workloads/online-boutique/hardened):
+`online-boutique` (Red Hat Hardened Images) and `online-boutique-ubi` (UBI 9).
+
+## Read this before you install
+
+**The documented gap may not apply to your version — check, do not assume.** The
+[RHACS 4.11 release
+notes](https://docs.redhat.com/en/documentation/red_hat_advanced_cluster_security_for_kubernetes/4.11/html/release_notes/release-notes-411)
+list under known issues that a data gap in the Red Hat VEX feed stopped
+vulnerability reporting for Red Hat hardened images (Project Hummingbird) as of
+15 July 2026. The same notes also carry a new-feature entry saying Clair can
+scan hardened images and cross-reference VEX metadata, and they do not reconcile
+the two.
+
+On at least one install it **does** report. A run here returned 14 findings for
+the hardened `emailservice`, naming `.hum1` packages directly — for example
+`CVE-2026-77214` against `expat 2.8.5-1.2.hum1`. So treat the known issue as
+something to verify rather than expect:
+
+```bash
+oc -n rhacs-operator get csv -o jsonpath='{.items[*].spec.version}{"\n"}'
+```
+
+Record that version next to any result. If your install reports nothing for the
+hardened namespace while reporting normally for the UBI one, that asymmetry is
+the known issue showing up and is worth saying so explicitly — a scanner that
+cannot read one variant is a tooling-readiness finding, not a clean bill of
+health. If both report, you have a genuine second opinion.
+
+RHACS is still worth installing for everything else — policy enforcement,
+admission control, runtime, and the application layer in both namespaces.
+
+## Install order
+
+The order is not stylistic. SecuredCluster depends on certificates Central
+generates, so it cannot come first.
+
+### 1. Operator
+
+```bash
+oc apply -f 01-operator.yaml
+oc -n rhacs-operator get csv -w          # wait for Succeeded
+```
+
+Confirm the channel before applying, since it varies by version and by whether
+the catalog is mirrored:
+
+```bash
+oc get packagemanifest rhacs-operator -n openshift-marketplace \
+  -o jsonpath='{.status.defaultChannel}{"\n"}'
+```
+
+Nothing returned means the operator is not in the cluster's catalog. On a
+disconnected cluster it has to be mirrored and published through a
+`CatalogSource` first — see [`../disconnected/`](../disconnected) — and then
+`source:` in `01-operator.yaml` points at that CatalogSource.
+
+### 2. Central
+
+```bash
+oc apply -f 02-central.yaml
+oc -n stackrox get pods -w
+```
+
+Then check which scanner you got, because it determines whose vulnerability
+data answers your questions:
+
+```bash
+oc -n stackrox get pods | grep -i scanner
+```
+
+`scanner-v4-*` pods mean Scanner V4, which reads Red Hat's own CSAF/VEX data and
+is the default for new installs from 4.8 onward. A lone `scanner-*` plus
+`scanner-db-*` is the older StackRox Scanner, deprecated since 4.6.
+
+**Disconnected clusters:** set `egress.connectivityPolicy: Offline` in
+`02-central.yaml` and upload vulnerability definitions manually. Without them
+Central runs normally and reports no vulnerabilities — indistinguishable from a
+clean cluster, and the single most likely way to get a misleading result here.
+
+### 3. Init bundle
+
+`roxctl` needs credentials, and nothing has given it any yet — hence
+`no credentials found for central-...:443`. The operator generated an admin
+password; put it in the environment rather than on the command line, because an
+argument is visible in `ps` and persists in shell history:
+
+```bash
+export ROX_CENTRAL_ADDRESS="$(oc -n stackrox get route central -o jsonpath='{.spec.host}'):443"
+export ROX_ADMIN_PASSWORD="$(oc -n stackrox get secret central-htpasswd -o jsonpath='{.data.password}' | base64 -d)"
+```
+
+`roxctl` reads `ROX_ADMIN_PASSWORD` for basic auth, so no flag is needed:
+
+```bash
+roxctl -e "$ROX_CENTRAL_ADDRESS" \
+  central init-bundles generate online-boutique --output-secrets init-bundle.yaml
+oc -n stackrox create -f init-bundle.yaml
+```
+
+Three things that trip this up:
+
+- **`-p` means different things on different subcommands.** On
+  `central init-bundles generate` it is the basic-auth password; on
+  `central generate` it *sets* the admin password. The environment variable
+  avoids the ambiguity.
+- **TLS.** The operator exposes Central through a **passthrough** route, so TLS
+  is not terminated at the router: Central presents its own self-signed
+  certificate, whose SANs are `central.stackrox` and `central.stackrox.svc`
+  only. Connecting by the route hostname therefore fails twice over —
+
+  ```
+  x509: certificate is valid for central.stackrox, central.stackrox.svc,
+        not central-stackrox.apps.example.com
+  x509: certificate signed by unknown authority
+  ```
+
+  and **no CA file fixes the first half**: the hostname simply is not in the
+  certificate. Two ways to keep verification on.
+
+  *Match the hostname the certificate already has.* Nothing on the cluster
+  changes, and this is enough for the one-off init bundle:
+
+  ```bash
+  oc -n stackrox get secret central-tls \
+    -o jsonpath='{range $k,$v := .data}{$k}{"\n"}{end}'   # find the CA key
+  oc -n stackrox get secret central-tls \
+    -o jsonpath='{.data.ca\.pem}' | base64 -d > central-ca.pem
+
+  oc -n stackrox port-forward svc/central 8443:443 &
+  echo "127.0.0.1 central.stackrox" >> /etc/hosts
+
+  roxctl -e central.stackrox:8443 --ca central-ca.pem \
+    central init-bundles generate online-boutique --output-secrets init-bundle.yaml
+  ```
+
+  The port is irrelevant to validation; only the hostname is in the SAN list.
+
+  *Or give Central a certificate that matches its route*, which is the durable
+  fix and makes every later `roxctl` call work against the route — including
+  the scan below. Create a TLS secret in the Central namespace and reference it
+  from the CR as `spec.central.defaultTLSSecret.name`; the cluster's own
+  ingress wildcard certificate is a reasonable source in a lab. The
+  alternative is `spec.central.exposure.route.reencrypt`, which has the router
+  terminate TLS instead. Change the route object directly and the operator
+  reconciles it back.
+
+  `--insecure-skip-tls-verify` is the third option. For this one call, on a lab
+  network, generating a bundle you immediately apply, the exposure is narrow and
+  plenty of walkthroughs use it. It is a worse habit for the scan step, where
+  the whole point is trusting what the scanner says.
+
+- **The admin password is for getting started.** Red Hat's own docs say it is
+  for testing and not for production. For the scan step below, and anything
+  automated, use an API token instead — tokens need no interactive login and
+  can be scoped to a role.
+
+`init-bundle.yaml` contains cluster credentials. It is covered by this
+directory's `.gitignore` under that exact name — **delete it once applied**, and
+if you rename it, do not commit it.
+
+### 4. SecuredCluster
+
+`clusterName` is a free-form label — how this cluster appears in the portal and
+in policy and report scoping — and its only hard requirement is being unique
+among clusters registered to the same Central. Renaming it later registers a
+new cluster and leaves the old entry to delete by hand, so deriving it from the
+cluster is both unique and durable, and keeps the placeholder in git:
+
+```bash
+sed "s/<cluster-name>/$(oc get infrastructure cluster \
+      -o jsonpath='{.status.infrastructureName}')/" 03-secured-cluster.yaml \
+  | oc apply -f -
+oc -n stackrox get pods -w               # sensor, collector, admission-control
+```
+
+## Scan the two namespaces
+
+Scanning hits Central once per image, so the passthrough-route certificate
+problem from step 3 is worth fixing properly here rather than working around
+each time. Give Central a certificate that matches its route, reusing the
+cluster's own ingress certificate:
+
+```bash
+oc -n openshift-ingress get secret | grep -i cert        # confirm the name
+
+oc -n openshift-ingress get secret router-certs-default -o json \
+  | jq 'del(.metadata.namespace, .metadata.resourceVersion, .metadata.uid,
+             .metadata.creationTimestamp, .metadata.ownerReferences)
+        | .metadata.name = "central-default-tls-cert"' \
+  | oc -n stackrox apply -f -
+
+oc -n stackrox patch central stackrox-central-services --type=merge \
+  -p '{"spec":{"central":{"defaultTLSSecret":{"name":"central-default-tls-cert"}}}}'
+```
+
+Central restarts, then presents a certificate valid for its route hostname and
+signed by the ingress CA, so every later `roxctl` call verifies normally:
+
+```bash
+oc -n openshift-ingress-operator get secret router-ca \
+  -o jsonpath='{.data.tls\.crt}' | base64 -d > router-ca.crt
+export ROX_CA=router-ca.crt
+```
+
+Without that, pass `ROX_CA` pointing at Central's own CA and address it by a
+name its certificate carries (the port-forward arrangement in step 3), or set
+`ROX_INSECURE=1` to skip verification deliberately — which the report then
+states on its Central line, so a number never quietly comes from a server
+nobody authenticated.
+
+Create an API token in the portal under **Platform Configuration →
+Integrations → API Token**. Pick **Continuous Integration** rather than a
+read-only role: scanning needs write on `Image` to force a re-pull (see below).
+
+```bash
+export ROX_CENTRAL_ADDRESS="$(oc -n stackrox get route central -o jsonpath='{.spec.host}'):443"
+export ROX_API_TOKEN=...
+./acs-scan.sh online-boutique online-boutique-ubi
+```
+
+**If the token is lost**, it cannot be read back — ACS shows it once. The admin
+password still can be, so that is the way back in without re-provisioning
+anything:
+
+```bash
+read -rs ROX_ADMIN_PASSWORD < <(oc -n stackrox get secret central-htpasswd \
+  -o jsonpath='{.data.password}' | base64 -d)
+export ROX_ADMIN_PASSWORD
+```
+
+The script takes either credential and names which one it used on the report's
+Central line. It will not take both: `roxctl` fails every call with
+`cannot use basic and token-based authentication at the same time`, so when
+both are set the token wins and the script says so.
+
+Three variables and a CA file do not survive a new shell, which turns the next
+morning's run into a rediscovery exercise. Keep them in **`rox.env`** beside the
+script — sourced automatically if present, gitignored, and with
+[`rox.env.example`](rox.env.example) as the template:
+
+```bash
+cp rox.env.example rox.env && chmod 600 rox.env   # then fill it in
+```
+
+Anything already exported wins over the file, so a one-off override still works.
+
+On a fresh Central the first run pauses:
+
+```
+==> waiting for Scanner V4 to finish loading its vulnerability store...
+```
+
+Scanner V4 loads its vulnerability store on first start and refuses matching
+until that finishes, with
+`FailedPrecondition: the matcher is not initialized`. The image indexes fine;
+only matching is unavailable, so this is warm-up rather than failure. The
+script probes once and waits (30 minutes by default,
+`ROX_MATCHER_TIMEOUT=<seconds>` to change it) instead of attempting two dozen
+images against an unready matcher and reporting two dozen meaningless
+failures.
+
+It probes with a real scan rather than a pod readiness check, deliberately: the
+matcher reports Ready while the store is still loading, which is exactly why
+the error reaches the client at all.
+
+**If that wait never ends, the cluster is disconnected.** Central cannot reach
+Red Hat's definitions, so they have to be uploaded manually with
+`egress.connectivityPolicy: Offline`. A Central without definitions runs
+normally and reports no vulnerabilities — so this waits rather than scanning
+into the void and handing back zeros.
+
+[`acs-scan.sh`](acs-scan.sh) reads the images the two namespaces are actually
+running, scans each with `roxctl image scan`, keeps the raw JSON under
+`results-acs/`, and writes a per-image table for both namespaces.
+
+Two things about how it reports:
+
+- It finds the vulnerability list **by shape** rather than by a fixed JSON path,
+  because `roxctl`'s layout differs across versions and a hard-coded path that
+  misses prints zero — which reads as a clean image. Where it cannot parse a
+  file it says so instead of counting it as clean.
+- It distinguishes **zero findings** from **zero parsed findings** in the
+  summary line, and points at the hardened-image caveat above when any appear.
+- It scans with **`--force`**, so Central re-pulls each image instead of
+  serving a cached result (`ROX_FORCE=0` turns that off).
+
+It uses `roxctl image scan` per image rather than Central's bulk export API
+(`/v1/export/vuln-mgmt/workloads`). That endpoint exists and would be one call,
+but its namespace filter syntax and response schema are not publicly
+documented, and a report built on a guessed schema is worse than one built on a
+slower documented interface.
+
+### What changed since the last run
+
+The numbers move for at least three unrelated reasons — an image was rebuilt,
+Central refreshed its vulnerability store, or Red Hat published a VEX statement
+reclassifying a package — and none of them announce themselves. A published fix
+for `libXtst` appeared in the middle of one measurement and was noticed only
+because someone asked why a count had changed by one.
+
+So every run writes a normalized snapshot to `acs-history/<timestamp>/`
+(`cves.tsv` plus the report) and the next run reports the delta per namespace:
+
+```
+distinct CVE ids: **3 -> 3**
+
+gone:
+  - CVE-2026-94283   libX11 1.8.13-3.hum1
+new:
+  + CVE-2026-99999   expat 2.5.0-1.hum1
+fix became available:
+  * CVE-2026-94286   libXtst 1.2.5-5.hum1   fix now published: 0:1.2.5-5.1.hum1
+```
+
+Note the total: **3 → 3**, while three separate things changed underneath it.
+A flat headline number is not evidence that nothing moved, which is exactly how
+an 8/0 OS row became 7/1 unremarked.
+
+`fix became available` is the row worth watching — it is the only one that
+represents work appearing. `gone` does not mean fixed: a VEX reclassification
+removes a CVE without anything being patched, and so does a rebuild that drops
+the package. Check against `check-bases.sh` before reading a drop as progress.
+
+- `ACS_HISTORY_KEEP=20` — snapshots retained (two small text files each).
+- `ACS_DIFF_CAP=15` — lines per section before it truncates with a count.
+- `ACS_HISTORY=acs-history` — where they live. Gitignored, and deliberately
+  outside `results-acs/` so clearing scan output does not destroy the history.
+
+Each run also clears the previous run's JSON for a namespace before scanning it.
+An image removed from the namespace would otherwise linger as a file and keep
+contributing to the totals.
+
+### A rebuilt tag reads as the old image without `--force`
+
+Central caches scan results per image **name, tag included**. Re-scan a tag
+whose digest has moved and you get the result for the image that tag used to
+point at — no error, no warning, just the old numbers.
+
+This is not hypothetical. Rebuilding the UBI `cache` image from Alpine onto
+UBI, pushing it under the same `:v0.10.6-ubi` tag and rolling the deployment
+left the report still naming `zlib 1.3.2-r0` — an `apk` version string, from
+the Alpine image that tag no longer resolved to. The tell was that *every other
+number in both namespaces was byte-identical* across the two runs; a real
+re-read of two dozen images does not reproduce to the digit.
+
+So the scan passes `--force`, which makes Central re-pull. Two things to know:
+
+- A forced re-pull needs **write** on the `Image` resource. The built-in
+  **Continuous Integration** role has it; a read-only role such as Analyst does
+  not. On a token that lacks it the script drops `--force` once, carries on, and
+  says in the report that the results may be cached — rather than failing every
+  image.
+- `ROX_FORCE=0` skips it. Faster, and fine when nothing has been rebuilt, but
+  the report then carries the cached-results caveat.
+
+To check one image by hand:
+
+```bash
+roxctl -e "$ROX_CENTRAL_ADDRESS" image scan --force \
+  --image registry.hub.mylab.com:8443/online-boutique/cache:v0.10.6-ubi \
+  -o json | jq '.result.summary'
+```
+
+A rebuilt image is also invisible to a node that already cached the tag; that
+is a separate problem, solved by `imagePullPolicy: Always` in the overlays and
+the digest-staleness warning the scan prints before it starts.
+
+TLS verification is not disabled anywhere. If Central's route uses a private CA,
+trust it on the host running the scan rather than passing
+`--insecure-skip-tls-verify` — a scanner you cannot authenticate is not a
+scanner.
+
+## What the numbers mean
+
+The scan produces counts; it does not interpret them. The consolidated reading
+of this workload — the layer split, why the critical counts match, where the
+residue comes from and which conclusions the data does not support — is in
+[`test-workloads/online-boutique/hardened/FINDINGS.md`](../test-workloads/online-boutique/hardened/FINDINGS.md).
+
+## Comparing against the other scanners
+
+[`../test-workloads/online-boutique/hardened/cve-demo/`](../test-workloads/online-boutique/hardened/cve-demo)
+runs grype and trivy over the same images and documents how the two disagree.
+Read those results alongside these rather than subtracting them: **advisory
+identifiers do not line up between scanners** — the same urllib3 advisory comes
+back as `GHSA-…` from grype and `CVE-…` from trivy — so a cross-scanner set
+difference is noise. Compare the tables, not the id sets.
+
+## Removing it
+
+```bash
+oc delete -f 03-secured-cluster.yaml
+oc delete -f 02-central.yaml
+oc delete -f 01-operator.yaml
+oc delete namespace stackrox rhacs-operator
+```
+
+Delete the SecuredCluster before Central, or the sensor spends its shutdown
+retrying against a Central that is already gone.

@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: online-boutique-ubi
+  labels:
+    app.kubernetes.io/part-of: online-boutique
+    app.kubernetes.io/instance: online-boutique-ubi

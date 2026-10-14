@@ -1,0 +1,72 @@
+# Online Boutique Python gRPC services (emailservice, recommendationservice) on
+# Red Hat Hardened Images. Build context is src/<service> in an upstream checkout.
+#
+# Moving off Alpine actually helps here: grpcio, protobuf and the OpenTelemetry
+# stack all publish manylinux wheels but no musl wheels, so upstream compiles
+# grpcio from source (hence the g++/linux-headers in its builder stage) while a
+# glibc builder just downloads them.
+#
+# Dependencies go to a prefix and the resulting site-packages is moved to a fixed
+# path, so nothing here is pinned to a particular python3.X directory name and
+# there is no venv whose interpreter path has to exist in the runtime image.
+
+# 3.12 rather than upstream's 3.14: UBI 9 tops out at 3.12, and cve-demo/ needs
+# both sides of its comparison on the same interpreter. Nothing in these two
+# services needs 3.14. Override PY_BUILDER/PY_RUNTIME to track upstream instead.
+ARG BUILDER=registry.access.redhat.com/hi/python:3.12-builder
+# Must be the same Python minor version as the builder -- the wheels installed
+# below are built for one ABI.
+ARG RUNTIME=registry.access.redhat.com/hi/python:3.12
+
+FROM ${BUILDER} AS builder
+# The -builder variants run as a non-root user, and a directory created by
+# WORKDIR is owned by root, so an unprivileged RUN cannot write into it --
+# installs, dnf, chmod and the compiler all fail with EACCES. Build stages
+# therefore run as root. Nothing from this stage ships: the runtime stage below
+# keeps its base image's non-root user, and OpenShift assigns its own UID from
+# the namespace range regardless.
+USER 0
+# email_server.py for emailservice, recommendation_server.py for
+# recommendationservice.
+ARG ENTRY
+WORKDIR /app
+COPY requirements.txt ./
+# --target puts every package, pure-Python and compiled alike, into one flat
+# directory. NOT --prefix: RHEL and Fedora patch sysconfig so that a prefix
+# install splits purelib into lib/ and platlib into lib64/, and grpcio is a
+# compiled extension, so `mv .../lib/python*/site-packages` moved the pure
+# packages and silently left grpc behind in lib64 -- a build that succeeded and
+# then failed on `import grpc`. --target also means no python3.X directory name
+# in any path, so nothing downstream has to know the interpreter version.
+# Optional constraints. The application layer is where every actionable finding
+# lives, and most of them are transitive pins in upstream's requirements.txt --
+# pyasn1 arriving via google-auth, for example. Editing that file forks
+# upstream; a constraints file does not. Put desired minimums in
+# constraints.txt next to this Containerfile:
+#
+#   urllib3>=2.7.1
+#   pyasn1>=0.6.4
+#   setuptools>=78.1.1
+#
+# and pass CONSTRAINTS=constraints.txt. pip then resolves transitive
+# dependencies subject to those floors. Absent or unset, nothing changes --
+# this is opt-in, and the build is identical without it.
+#
+# It is a floor, not a guarantee: a constraint that conflicts with what the
+# application genuinely requires fails the build, which is the correct outcome
+# and better than discovering the incompatibility at runtime.
+ARG CONSTRAINTS=
+RUN python3 -m pip install --no-cache-dir --target=/app/site-packages \
+      ${CONSTRAINTS:+-c "${CONSTRAINTS}"} -r requirements.txt
+COPY . ./
+# Exec-form ENTRYPOINT cannot interpolate a build arg, so fix the entry filename.
+RUN cp "${ENTRY}" ./main.py \
+ && chmod -R a+rX /app
+
+FROM ${RUNTIME}
+WORKDIR /app
+COPY --from=builder /app /app
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app/site-packages
+ENTRYPOINT ["python3", "/app/main.py"]

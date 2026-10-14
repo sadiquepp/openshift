@@ -1,0 +1,206 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# The same deploy as ../hardened, rebuilt on UBI 9 instead, in its own namespace
+# so the two stacks can run side by side and be compared:
+#
+#   export REGISTRY=registry.example.com:8443
+#   BASE=ubi ../../hardened/build-push.sh
+#   oc apply -k overlays/hardened      -> namespace online-boutique
+#   oc apply -k overlays/ubi           -> namespace online-boutique-ubi
+#   ../../hardened/scan-stack.sh online-boutique online-boutique-ubi
+#
+# Replace registry.example.com:8443/online-boutique below with your registry.
+#
+# The deploy-time patches are IDENTICAL to ../hardened. That is deliberate: the
+# UBI runtime images do have a shell, so upstream's shell-form loadgenerator
+# entrypoint and Gradle launcher script would in fact still work here -- but
+# holding the manifests constant means a CVE diff between the two namespaces
+# measures the base images and nothing else. It also means one deployment
+# recipe covers both, which is worth more than the shell.
+#
+# Builds on ../../base rather than ../default because ../default pins the
+# `online-boutique` namespace and ships that Namespace object.
+
+namespace: online-boutique-ubi
+
+resources:
+  - ../../base
+  - namespace.yaml
+
+labels:
+  - includeSelectors: false
+    pairs:
+      app.kubernetes.io/instance: online-boutique-ubi
+
+images:
+  # The 11 services, rebuilt from upstream source on hardened base images.
+  - name: us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/frontend
+    newName: registry.example.com:8443/online-boutique/frontend
+    newTag: v0.10.6-ubi
+  - name: us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/adservice
+    newName: registry.example.com:8443/online-boutique/adservice
+    newTag: v0.10.6-ubi
+  - name: us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/cartservice
+    newName: registry.example.com:8443/online-boutique/cartservice
+    newTag: v0.10.6-ubi
+  - name: us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/checkoutservice
+    newName: registry.example.com:8443/online-boutique/checkoutservice
+    newTag: v0.10.6-ubi
+  - name: us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/currencyservice
+    newName: registry.example.com:8443/online-boutique/currencyservice
+    newTag: v0.10.6-ubi
+  - name: us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/emailservice
+    newName: registry.example.com:8443/online-boutique/emailservice
+    newTag: v0.10.6-ubi
+  - name: us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/loadgenerator
+    newName: registry.example.com:8443/online-boutique/loadgenerator
+    newTag: v0.10.6-ubi
+  - name: us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/paymentservice
+    newName: registry.example.com:8443/online-boutique/paymentservice
+    newTag: v0.10.6-ubi
+  - name: us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/productcatalogservice
+    newName: registry.example.com:8443/online-boutique/productcatalogservice
+    newTag: v0.10.6-ubi
+  - name: us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/recommendationservice
+    newName: registry.example.com:8443/online-boutique/recommendationservice
+    newTag: v0.10.6-ubi
+  - name: us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/shippingservice
+    newName: registry.example.com:8443/online-boutique/shippingservice
+    newTag: v0.10.6-ubi
+
+  # redis-cart: UBI ships neither Redis nor Valkey, so on this side build-push.sh
+  # mirrors upstream's redis:alpine unchanged. Worth noticing -- an all-UBI stack
+  # still leaves one Docker Hub image in the deployment, and it is the one image
+  # here that no Red Hat errata stream covers.
+  - name: redis
+    newName: registry.example.com:8443/online-boutique/cache
+    newTag: v0.10.6-ubi
+
+  # The busybox init container is replaced wholesale below; this only stops
+  # kustomize from leaving a Docker Hub reference in the rendered output.
+  - name: busybox
+    newName: registry.example.com:8443/online-boutique/loadgenerator
+    newTag: v0.10.6-ubi
+
+patches:
+  # ── always re-pull ─────────────────────────────────────────────────────────
+  # Both overlays reference a floating tag, and Kubernetes defaults
+  # imagePullPolicy to IfNotPresent for any tag that is not ":latest". So a
+  # rebuild pushed under the same floating tag is invisible to a node that
+  # already cached it: the pod keeps running the old layers under the new
+  # name, and even a `rollout restart` only recreates the pod, which finds the
+  # tag present and does not re-pull. The symptom is a fix that provably
+  # shipped and provably is not running.
+  #
+  # Always costs a registry round-trip per pod start, which is the right trade
+  # for a workload that exists to be rebuilt and re-measured. For production,
+  # deploy the immutable tag build-push.sh also pushes
+  # (<version>-<build-id>) and leave this at the default -- a digest or a
+  # unique tag makes re-pulling unnecessary rather than mandatory.
+  - target:
+      kind: Deployment
+    patch: |
+      - op: add
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: Always
+  # loadgenerator is the only deployment with an init container, and it is
+  # built from this repo too, so it needs the same treatment.
+  - target:
+      kind: Deployment
+      name: loadgenerator
+    patch: |
+      - op: add
+        path: /spec/template/spec/initContainers/0/imagePullPolicy
+        value: Always
+  # ── loadgenerator: shell-form entrypoint -> Locust environment variables ────
+  # Upstream's image ends with:
+  #
+  #   ENTRYPOINT locust --host="http://${FRONTEND_ADDR}" --headless \
+  #              -u "${USERS:-10}" -r "${RATE:-1}" 2>&1
+  #
+  # Shell form, so the container needs /bin/sh to expand those variables. The
+  # hardened Python runtime is distroless and has none. ../../hardened/
+  # Containerfile.loadgenerator uses an exec-form `python3 -m locust` entrypoint
+  # instead and relies on Locust's own LOCUST_* environment variables, which do
+  # exactly what those flags did. LOCUST_LOCUSTFILE and LOCUST_HEADLESS are baked
+  # into the image; the three that encode deployment intent are set here.
+  #
+  # FRONTEND_ADDR is left in place -- the init container below still reads it.
+  - target:
+      kind: Deployment
+      name: loadgenerator
+    patch: |
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: LOCUST_HOST
+          value: "http://frontend:80"
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: LOCUST_USERS
+          value: "10"
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: LOCUST_SPAWN_RATE
+          value: "1"
+
+  # ── loadgenerator init container: busybox -> the loadgenerator image ───────
+  # Upstream gates the load generator behind a busybox container running a
+  # /bin/sh retry loop around wget, so Locust does not start against a frontend
+  # that is not up yet (it exits rather than retrying).
+  #
+  # busybox has no hardened equivalent: it is a Docker Hub image, and the
+  # hardened catalog is language runtimes, servers and UBI bases. Rather than
+  # keep one unhardened image in an otherwise hardened deployment -- and a second
+  # anonymous Docker Hub pull to mirror -- the same wait is expressed as an
+  # exec-form Python command on the loadgenerator image we already build. Same
+  # 12 attempts, same 10s interval, no shell, no extra image.
+  - target:
+      kind: Deployment
+      name: loadgenerator
+    patch: |
+      - op: replace
+        path: /spec/template/spec/initContainers/0/command
+        value:
+          - python3
+          - -c
+          - |
+            import os, sys, time, urllib.request
+            addr = os.environ["FRONTEND_ADDR"]
+            for attempt in range(1, 13):
+                print(f"Attempt {attempt}: pinging frontend: {addr}...", flush=True)
+                try:
+                    with urllib.request.urlopen(f"http://{addr}", timeout=5) as r:
+                        if r.status == 200:
+                            print("Frontend is reachable.", flush=True)
+                            sys.exit(0)
+                        print(f"Error: unexpected status {r.status}", flush=True)
+                except Exception as exc:
+                    print(f"Error: could not reach frontend - {exc}", flush=True)
+                time.sleep(10)
+            print("Failed to reach frontend after 12 attempts.", flush=True)
+            sys.exit(1)
+
+  # ── redis-cart ─────────────────────────────────────────────────────────────
+  # Same flags as ../hardened passes to Valkey -- redis-server accepts them
+  # identically, which is the whole reason Valkey is a drop-in over there.
+  # --protected-mode no is kept here for parity so the two variants differ only
+  # in base image; redis did not require it in this deployment, valkey did.
+  - target:
+      kind: Deployment
+      name: redis-cart
+    patch: |
+      - op: add
+        path: /spec/template/spec/containers/0/args
+        value:
+          - --protected-mode
+          - "no"
+          - --save
+          - ""
+          - --appendonly
+          - "no"
+          - --dir
+          - /data

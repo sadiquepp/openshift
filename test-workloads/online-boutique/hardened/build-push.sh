@@ -1,0 +1,289 @@
+#!/usr/bin/env bash
+#
+# Rebuild Online Boutique service images on Red Hat Hardened Images (or UBI) and
+# push them to a local registry.
+#
+# Red Hat Hardened Images are BASE images, not application images -- there is no
+# hardened "online boutique" to repoint at. Google publishes the 11 service
+# images prebuilt from Alpine, distroless and Ubuntu-chiseled bases, so putting
+# this workload on hardened images means rebuilding each service from upstream
+# source. That is what this script does.
+#
+#   export REGISTRY=registry.example.com:8443
+#   ./build-push.sh                           # all 11 services
+#   ./build-push.sh --only emailservice        # just one
+#   SERVICES="emailservice adservice" ./build-push.sh
+#   VERSION=v0.10.7 ./build-push.sh
+#
+# REGISTRY, NAMESPACE and VERSION come from the environment (see registry.env);
+# a <registry>/<namespace> [version] argument pair still overrides them.
+#
+# This is NOT a one-time bootstrap. The reason to take on the rebuild is that
+# patching stops being somebody else's release cadence -- which only pays off if
+# you can rerun it. --only rebuilds one service when its base image moves;
+# check-bases.sh tells you which ones those are.
+#
+# BASE selects the base-image set from bases.env:
+#
+#   BASE=hardened ./build-push.sh ...   Red Hat Hardened Images (the default)
+#   BASE=ubi      ./build-push.sh ...   UBI 9, pushed with a -ubi tag suffix
+#
+# Build both and you have two complete stacks in one registry to compare --
+# see cve-demo/ for the per-image CVE diff and scan-stack.sh for the whole-stack
+# one. The Containerfiles are shared: only the base images differ.
+#
+# Every image is pushed under TWO tags:
+#
+#   <version>-<build-id><suffix>   immutable; what you deploy
+#   <version><suffix>              floating convenience pointer
+#
+# Deploy the immutable one. The app version alone cannot identify a rebuild --
+# a CVE fix in the base image changes the image without changing the app -- and
+# these manifests set no imagePullPolicy, so a moved tag may never be re-pulled
+# on a node that has it cached.
+#
+# Requires: podman (or docker, see ENGINE), skopeo, git, network access to
+# GitHub, to the base-image registry, and to whatever each language's package
+# manager pulls from. Log in to the destination first: podman login <registry>.
+
+set -euo pipefail
+
+ARG_DEST=""
+ARG_VERSION=""
+ONLY=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --only) ONLY="${2:?--only needs a comma- or space-separated service list}"; shift 2 ;;
+    -*) echo "unknown option: $1" >&2; exit 2 ;;
+    *) if [ -z "$ARG_DEST" ]; then ARG_DEST="$1"
+       elif [ -z "$ARG_VERSION" ]; then ARG_VERSION="$1"; fi; shift ;;
+  esac
+done
+
+ENGINE="${ENGINE:-podman}"
+# newer: re-pull when the registry digest differs from local storage. The
+# whole point of the rebuild loop is to pick up a new base, so a cached base
+# defeats it. See ensure_base.
+PULL="${PULL:-newer}"
+BASE="${BASE:-hardened}"
+BUILD_ID="${BUILD_ID:-b$(date -u +%Y%m%d)}"
+WORKDIR="${WORKDIR:-$(mktemp -d)}"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# shellcheck source=registry.env
+. "$HERE/registry.env"
+[ -n "$ARG_DEST" ] && DEST="$ARG_DEST"           # positional still wins
+[ -n "$ARG_VERSION" ] && VERSION="$ARG_VERSION"
+require_registry "$0" || exit 1
+
+# Every base image comes from here, and every one is overridable from the
+# environment. Confirm what the catalogs actually ship -- https://images.redhat.com
+# for hardened, catalog.redhat.com for UBI -- before the first run, or just run
+# ./preflight.sh.
+# shellcheck source=bases.env
+. "$HERE/bases.env"
+
+ALL_SERVICES="frontend productcatalogservice checkoutservice shippingservice
+currencyservice paymentservice emailservice recommendationservice loadgenerator
+adservice cartservice cache"
+
+SERVICES="${SERVICES:-}"
+[ -n "$ONLY" ] && SERVICES="${ONLY//,/ }"
+SERVICES="${SERVICES:-$ALL_SERVICES}"
+
+# service -> Containerfile, build context, base images, extra build args.
+# A table rather than a straight-line script, so one service can be rebuilt on
+# its own without rebuilding the other ten.
+recipe() {
+  CTX_ROOT=""
+  CF=""; CTX=""; BUILDER_IMG=""; RUNTIME_IMG=""; ARGS=()
+  case "$1" in
+    frontend|productcatalogservice|checkoutservice|shippingservice)
+      CF=Containerfile.go;   CTX="src/$1"
+      BUILDER_IMG="$GO_BUILDER";     RUNTIME_IMG="$GO_RUNTIME" ;;
+    currencyservice)
+      CF=Containerfile.node; CTX="src/$1"
+      BUILDER_IMG="$NODE_BUILDER";   RUNTIME_IMG="$NODE_RUNTIME"
+      ARGS=(--build-arg "ENTRY=server.js") ;;
+    paymentservice)
+      CF=Containerfile.node; CTX="src/$1"
+      BUILDER_IMG="$NODE_BUILDER";   RUNTIME_IMG="$NODE_RUNTIME"
+      ARGS=(--build-arg "ENTRY=index.js") ;;
+    emailservice)
+      CF=Containerfile.python; CTX="src/$1"
+      BUILDER_IMG="$PY_BUILDER";     RUNTIME_IMG="$PY_RUNTIME"
+      ARGS=(--build-arg "ENTRY=email_server.py") ;;
+    recommendationservice)
+      CF=Containerfile.python; CTX="src/$1"
+      BUILDER_IMG="$PY_BUILDER";     RUNTIME_IMG="$PY_RUNTIME"
+      ARGS=(--build-arg "ENTRY=recommendation_server.py") ;;
+    loadgenerator)
+      CF=Containerfile.loadgenerator; CTX="src/$1"
+      BUILDER_IMG="$PY_BUILDER";     RUNTIME_IMG="$PY_RUNTIME" ;;
+    adservice)
+      CF=Containerfile.java; CTX="src/$1"
+      BUILDER_IMG="$JAVA_BUILDER";   RUNTIME_IMG="$JAVA_RUNTIME" ;;
+    cartservice)
+      CF=Containerfile.dotnet; CTX="src/cartservice/src"
+      BUILDER_IMG="$DOTNET_SDK";     RUNTIME_IMG="$DOTNET_RUNTIME" ;;
+    cache)
+      if [ "${CACHE_BUILD:-0}" = 1 ]; then
+        CF=Containerfile.valkey; CTX="."; CTX_ROOT="$HERE"
+        BUILDER_IMG="${VALKEY_BUILDER:?set VALKEY_BUILDER or unset CACHE_BUILD}"
+        RUNTIME_IMG="${VALKEY_RUNTIME:?set VALKEY_RUNTIME or unset CACHE_BUILD}"
+        ARGS=(--build-arg "VALKEY_VERSION=${VALKEY_VERSION:-}"
+              --build-arg "VALKEY_SHA256=${VALKEY_SHA256:-}")
+      else
+        CF=""; CTX=""       # mirrored, not built
+      fi ;;
+    *)
+      echo "error: unknown service '$1'" >&2
+      echo "       known: $(echo $ALL_SERVICES)" >&2
+      exit 2 ;;
+  esac
+}
+
+for s in $SERVICES; do recipe "$s"; done   # validate the list before any work
+
+digest_of() { skopeo inspect --format '{{.Digest}}' "docker://$1" 2>/dev/null || echo unknown; }
+
+# Pull the base before reading its digest, and fail if the pull fails.
+#
+# This is load-bearing, not hygiene. digest_of reads the REGISTRY, so without a
+# pull the build can use a stale base from local storage while the image gets
+# labelled with the digest of the base it did NOT use -- and check-bases.sh,
+# which compares that label against the live digest, then reports the image as
+# current. A stale image that reports current is worse than no label at all.
+#
+# `podman build --pull=<policy>` has had two different defaults across podman
+# versions and the build man page does not state the current one, so neither the
+# pull nor the policy is left implicit here.
+#
+# PULL=never skips it (air-gapped, or deliberately rebuilding on a pinned base);
+# ALLOW_STALE_BASE=1 downgrades an unreachable registry to a warning, and then
+# the digest label reads "unverified" rather than claiming something untrue.
+ensure_base() {
+  local img="$1"
+  # Return non-zero so the digest label reads "unverified". The label means
+  # "this image was built on the base that carried this registry digest", and
+  # with no pull that claim is unproven -- a pinned local base may be months
+  # behind the tag. Claiming it would make check-bases.sh call the image current.
+  [ "$PULL" = never ] && return 1
+  if ! "$ENGINE" pull --quiet "$img" >/dev/null; then
+    if [ "${ALLOW_STALE_BASE:-0}" = 1 ]; then
+      echo "    WARN  could not pull $img -- building on whatever is in local storage" >&2
+      return 1
+    fi
+    echo "ERROR: could not pull base image $img" >&2
+    echo "  The build would silently use a stale local copy and then label the" >&2
+    echo "  image with the current registry digest, which check-bases.sh reads" >&2
+    echo "  as up to date. Fix the pull, or set ALLOW_STALE_BASE=1 to accept an" >&2
+    echo "  unverified base, or PULL=never to build on a pinned local base." >&2
+    exit 1
+  fi
+}
+
+NEED_SRC=0
+for s in $SERVICES; do [ "$s" = cache ] || NEED_SRC=1; done
+SRC="$WORKDIR/microservices-demo"
+if [ "$NEED_SRC" -eq 1 ] && [ ! -d "$SRC" ]; then
+  echo "==> cloning upstream $VERSION into $SRC"
+  # --branch takes a tag, so HEAD detaches by design -- that is the point,
+  # a pinned tree rather than a moving branch tip. Silence git's 15-line
+  # explanation of it, which in build output reads like a fault.
+  git -c advice.detachedHead=false clone --depth 1 --branch "$VERSION" \
+    https://github.com/GoogleCloudPlatform/microservices-demo.git "$SRC"
+fi
+
+TAG="${VERSION}-${BUILD_ID}${TAG_SUFFIX}"
+FLOAT="${VERSION}${TAG_SUFFIX}"
+
+build_one() {
+  local service="$1"
+  recipe "$service"
+  local image="$DEST/$service:$TAG"
+
+  # Record which base images went in, as labels on the image itself. State in a
+  # registry outlives any laptop, and check-bases.sh reads it back to work out
+  # what a new base image release makes stale. The two OCI annotations are the
+  # standard ones for a base image; the builder has no standard annotation.
+  local bdig rdig
+  bdig=unverified
+  rdig=unverified
+  ensure_base "$BUILDER_IMG" && bdig=$(digest_of "$BUILDER_IMG")
+  ensure_base "$RUNTIME_IMG" && rdig=$(digest_of "$RUNTIME_IMG")
+
+  echo "==> building $image"
+  echo "    builder $BUILDER_IMG@$bdig"
+  echo "    runtime $RUNTIME_IMG@$rdig"
+  "$ENGINE" build \
+    --pull="$PULL" \
+    --file "$HERE/$CF" \
+    --tag "$image" \
+    --build-arg "BUILDER=$BUILDER_IMG" \
+    --build-arg "RUNTIME=$RUNTIME_IMG" \
+    --label "org.opencontainers.image.base.name=$RUNTIME_IMG" \
+    --label "org.opencontainers.image.base.digest=$rdig" \
+    --label "org.opencontainers.image.version=$VERSION" \
+    --label "org.opencontainers.image.revision=$BUILD_ID" \
+    --label "online-boutique.build.builder-base.name=$BUILDER_IMG" \
+    --label "online-boutique.build.builder-base.digest=$bdig" \
+    --label "online-boutique.build.base-set=$BASE" \
+    "${ARGS[@]}" \
+    "${CTX_ROOT:-$SRC}/$CTX"
+
+  "$ENGINE" tag "$image" "$DEST/$service:$FLOAT"
+  echo "==> pushing $TAG and $FLOAT"
+  "$ENGINE" push "$image"
+  "$ENGINE" push "$DEST/$service:$FLOAT"
+  printf '    %s@%s\n' "$DEST/$service" "$(digest_of "$image")"
+}
+
+for service in $SERVICES; do
+  if [ "$service" = cache ] && [ "${CACHE_BUILD:-0}" != 1 ]; then
+    # redis-cart runs a stock image -- no build, just a copy into the registry.
+    # CACHE_BUILD=1 takes the build path below instead, which is how the UBI
+    # set gets a Valkey built on UBI rather than upstream's Alpine Redis.
+    echo "==> copying $CACHE_IMAGE -> $DEST/cache:$TAG"
+    # cache is mirrored, not built, so the tag suffix says which base SET this
+    # belongs to and nothing about the image's own base. Say what was actually
+    # copied, because "cache:v0.10.6-ubi" reads as a claim that it is UBI.
+    case "$CACHE_IMAGE" in
+      registry.access.redhat.com/*|registry.redhat.io/*) ;;
+      *)
+        echo "    NOTE  $CACHE_IMAGE is not a Red Hat image, and this copy will be"
+        echo "          tagged '$TAG'. For BASE=ubi that is upstream's"
+        echo "          redis:alpine -- Alpine Linux under a -ubi tag. It is one"
+        echo "          finding and moves no total, but do not describe the stack"
+        echo "          as all-UBI. Override CACHE_IMAGE for a like-for-like set." ;;
+    esac
+    skopeo copy "docker://$CACHE_IMAGE" "docker://$DEST/cache:$TAG"
+    skopeo copy "docker://$CACHE_IMAGE" "docker://$DEST/cache:$FLOAT"
+  else
+    build_one "$service"
+  fi
+done
+
+echo
+echo "Built on BASE=$BASE and pushed under $DEST:"
+echo "  immutable  $TAG   <- deploy this"
+echo "  floating   $FLOAT"
+echo
+case "$BASE" in
+  hardened) OVERLAY=overlays/hardened ;;
+  ubi)      OVERLAY=overlays/ubi ;;
+esac
+# `kustomize edit set image` keys on the ORIGINAL image name -- the one the
+# vendored manifests reference -- not on the rewritten one. Keying on the new
+# name silently appends a second entry that matches nothing.
+UPSTREAM=us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo
+echo "To roll it out, point the overlay at the immutable tag and apply:"
+echo "  cd ../$OVERLAY && kustomize edit set image \\"
+for service in $SERVICES; do
+  if [ "$service" = cache ]; then
+    echo "      redis=$DEST/cache:$TAG \\"
+  else
+    echo "      $UPSTREAM/$service=$DEST/$service:$TAG \\"
+  fi
+done
+echo "   && oc apply -k ."
