@@ -1,0 +1,31 @@
+# KRaft: no ZooKeeper. One dual-role pool is the simplest shape that still gives
+# you a replicated cluster - every node is both a controller and a broker.
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaNodePool
+metadata:
+  name: dual-role
+  namespace: {{ kafka_namespace }}
+  labels:
+    strimzi.io/cluster: {{ kafka_cluster_name }}
+spec:
+  replicas: {{ kafka_cluster_replicas }}
+  roles:
+    - controller
+    - broker
+  storage:
+{% if kafka_storage_type == 'ephemeral' %}
+    # Deliberate. This is a bus to prove the wiring with; the data that matters
+    # is whatever your off-cluster consumers have already read. A pod restart
+    # losing an unconsumed buffer here is not a loss worth a PVC.
+    type: ephemeral
+{% else %}
+    type: jbod
+    volumes:
+      - id: 0
+        type: persistent-claim
+        size: {{ kafka_storage_size }}
+        deleteClaim: true
+{% if kafka_storage_class | length > 0 %}
+        class: {{ kafka_storage_class }}
+{% endif %}
+{% endif %}

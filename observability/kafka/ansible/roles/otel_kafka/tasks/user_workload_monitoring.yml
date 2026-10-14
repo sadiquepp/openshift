@@ -1,0 +1,52 @@
+---
+# Federation reads /federate on TWO Prometheus instances: the platform one in
+# openshift-monitoring, and the user workload one. The second does not exist
+# until user workload monitoring is switched on, and a scrape against a Service
+# with no endpoints is a connection refused every interval rather than a clear
+# error - so it is enabled here rather than left as a prerequisite.
+#
+# Note what this is NOT for. ../../ansible enables user workload monitoring so a
+# ServiceMonitor can scrape the collector into the cluster's own Prometheus.
+# Here nothing is scraped INTO the cluster; user workload monitoring is enabled
+# only so there is a user-workload /federate endpoint to pull FROM.
+
+- name: Read the existing cluster monitoring config
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: ConfigMap
+    name: cluster-monitoring-config
+    namespace: openshift-monitoring
+  register: _cmc
+
+- name: Merge enableUserWorkload into the cluster monitoring config
+  vars:
+    _raw: "{{ (_cmc.resources | first | default({})).get('data', {}).get('config.yaml', '') }}"
+    _current: "{{ (_raw | from_yaml) if (_raw | length > 0) else {} }}"
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: cluster-monitoring-config
+        namespace: openshift-monitoring
+      data:
+        # Read-modify-write rather than overwrite: this ConfigMap frequently
+        # already carries alertmanager, prometheusK8s retention or node
+        # placement settings that must survive.
+        config.yaml: "{{ ((_current | default({}, true)) | combine({'enableUserWorkload': true})) | to_nice_yaml }}"
+
+- name: Wait for the user workload Prometheus
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: StatefulSet
+    name: prometheus-user-workload
+    namespace: openshift-user-workload-monitoring
+  register: _uwm
+  retries: 40
+  delay: 10
+  until: >-
+    _uwm.resources | length > 0
+    and (_uwm.resources[0].status.readyReplicas | default(0)) > 0
+  # The StatefulSet, not the operator Deployment: the operator being up says
+  # nothing about there being a /federate endpoint to scrape yet.

@@ -1,0 +1,68 @@
+---
+# ═══════════════════════════════════════════════════════════════════════════════
+# Every signal off the cluster and onto Kafka, in one command.
+#
+#   ansible-playbook site.yml -e @kafka-credentials.yml
+#
+# There is no AWS phase and no second playbook, because nothing here has an
+# object store behind it: no LokiStack, no TempoStack, no bucket, no IAM user.
+# The only external dependency is the Kafka cluster you point it at.
+#
+# Tags let you run one layer at a time:
+#   --tags kafka | logs | flows | otel | workload
+# ═══════════════════════════════════════════════════════════════════════════════
+- name: Stream OpenShift observability to Kafka
+  hosts: localhost
+  gather_facts: false
+
+  # Connection settings for every kubernetes.core module, without repeating them
+  # on each task. Both `omit` when empty, so the modules fall back to KUBECONFIG
+  # and then ~/.kube/config exactly as they would otherwise.
+  #
+  # k8s_json_patch is listed separately because its membership of the `k8s`
+  # action group is version-dependent: it is absent in kubernetes.core 3.3.1
+  # (the legacy pin) and 6.1.0, and present from 6.5.0. The explicit entry is
+  # correct either way - a module-level default simply wins over a group one.
+  module_defaults:
+    group/kubernetes.core.k8s: &k8s_connection
+      kubeconfig: "{{ kubeconfig if (kubeconfig | default('') | length > 0) else omit }}"
+      context: "{{ kube_context if (kube_context | default('') | length > 0) else omit }}"
+    kubernetes.core.k8s_json_patch: *k8s_connection
+    kubernetes.core.k8s_log: *k8s_connection
+
+  roles:
+    - role: preflight
+      tags: always
+
+    # The topics have to exist before anything produces to them. Auto-creation
+    # is off on most brokers, and where it is on it gives you the broker's
+    # default partition count and retention rather than the ones set here.
+    - role: kafka_platform
+      tags: [kafka]
+
+    - role: logs_kafka
+      when: logging_enabled | bool
+      tags: [logs]
+
+    - role: netflows_kafka
+      when: netobserv_enabled | bool
+      tags: [flows]
+
+    - role: otel_kafka
+      when: (tracing_enabled | bool) or (metrics_federation_enabled | bool)
+      tags: [otel, traces, metrics]
+
+    - role: test_workload
+      when: workload_enabled | bool
+      tags: [workload]
+
+  post_tasks:
+    - name: What to do next
+      ansible.builtin.debug:
+        msg:
+          - "Producing to {{ kafka_bootstrap_effective | join(',') }}:"
+          - "{{ kafka_topics | selectattr('enabled', 'true') | map(attribute='name') | list }}"
+          - "Give the load generator a few minutes, then run:
+             ansible-playbook verify.yml   - it reads the end offsets on every
+             topic, which is the shortest proof that data is actually arriving."
+      tags: always

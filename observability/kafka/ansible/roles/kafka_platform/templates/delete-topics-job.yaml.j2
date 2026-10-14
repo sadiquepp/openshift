@@ -1,0 +1,68 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kafka-delete-topics
+  namespace: {{ kafka_namespace }}
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app: kafka-delete-topics
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: kafka-topics
+          image: {{ kafka_admin_image }}
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -o pipefail
+              CFG=/etc/kafka-admin/client.properties
+              BS={{ kafka_bootstrap_effective | join(',') }}
+              rc=0
+{% for t in kafka_topics if t.enabled | bool %}
+              echo "==> deleting {{ t.name }}"
+              bin/kafka-topics.sh --bootstrap-server "$BS" --command-config "$CFG" \
+                --delete --topic {{ t.name }} || rc=1
+{% endfor %}
+              echo
+              echo "==> topics remaining on the broker"
+              bin/kafka-topics.sh --bootstrap-server "$BS" --command-config "$CFG" --list || rc=1
+              exit $rc
+              # Deletion is asynchronous and needs delete.topic.enable=true on
+              # the broker, which is the default but is sometimes turned off
+              # precisely so this cannot happen by accident.
+          volumeMounts:
+            - name: admin-config
+              mountPath: /etc/kafka-admin
+              readOnly: true
+{% if (kafka_tls_effective | bool) and not (kafka_tls_insecure_skip_verify | bool) %}
+            - name: kafka-ca
+              mountPath: /etc/kafka-ca
+              readOnly: true
+{% endif %}
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+      volumes:
+        - name: admin-config
+          secret:
+            secretName: kafka-admin-config
+{% if (kafka_tls_effective | bool) and not (kafka_tls_insecure_skip_verify | bool) %}
+        - name: kafka-ca
+          secret:
+            secretName: {{ kafka_ca_secret_name }}
+{% endif %}

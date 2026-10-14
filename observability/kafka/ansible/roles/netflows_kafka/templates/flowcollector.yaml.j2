@@ -1,0 +1,79 @@
+apiVersion: flows.netobserv.io/v1beta2
+kind: FlowCollector
+metadata:
+  name: cluster
+spec:
+  namespace: {{ netobserv_namespace }}
+  deploymentModel: Direct
+  agent:
+    type: eBPF
+    ebpf:
+      sampling: {{ netobserv_sampling }}
+      logLevel: info
+      privileged: false
+      resources:
+        requests:
+          cpu: 100m
+          memory: 50Mi
+        limits:
+          memory: 800Mi
+  processor:
+    logTypes: Flows
+    logLevel: info
+    resources:
+      requests:
+        cpu: 100m
+        memory: 100Mi
+      limits:
+        memory: 800Mi
+  loki:
+    # No flow store on the cluster. Without Loki there is no Traffic flows
+    # table in the console - the raw per-flow records are on the topic instead,
+    # which is the point.
+    enable: false
+  prometheus:
+    querier:
+      enable: {{ 'true' if (netobserv_console_enabled | bool) else 'false' }}
+      mode: Auto
+  exporters:
+    # The enriched flows - after the processor has attached pod, namespace,
+    # owner and zone identity - leaving the cluster.
+    - type: Kafka
+      kafka:
+        address: {{ kafka_bootstrap_effective | first }}
+        topic: {{ kafka_topic_flows }}
+{% if kafka_tls_effective | bool %}
+        tls:
+          enable: true
+{% if kafka_tls_insecure_skip_verify | bool %}
+          insecureSkipVerify: true
+{% else %}
+          caCert:
+            type: secret
+            name: {{ kafka_ca_secret_name }}
+            certFile: {{ kafka_ca_secret_key }}
+            namespace: {{ netobserv_namespace }}
+{% endif %}
+{% endif %}
+{% if kafka_sasl_effective | bool %}
+        sasl:
+          # This API spells the mechanism differently from every other producer
+          # here: Plain / ScramSHA512, not PLAIN / SCRAM-SHA-512.
+          type: {{ 'Plain' if kafka_sasl_mechanism == 'PLAIN' else 'ScramSHA512' }}
+          clientIDReference:
+            type: secret
+            name: {{ kafka_sasl_secret_name }}
+            file: {{ kafka_sasl_username_key }}
+            namespace: {{ netobserv_namespace }}
+          clientSecretReference:
+            type: secret
+            name: {{ kafka_sasl_secret_name }}
+            file: {{ kafka_sasl_password_key }}
+            namespace: {{ netobserv_namespace }}
+{% endif %}
+{#
+  SCRAM-SHA-256 is not offered by this API - only Plain and ScramSHA512. A
+  broker that only accepts SHA-256 needs a second SASL user for the flow
+  exporter, or the flows exported through the OpenTelemetry exporter type
+  instead.
+#}

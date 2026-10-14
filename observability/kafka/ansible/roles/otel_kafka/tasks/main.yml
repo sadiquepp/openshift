@@ -1,0 +1,58 @@
+---
+# ── otel_kafka ────────────────────────────────────────────────────────────────
+# One OpenTelemetry Collector, three Kafka topics:
+#
+#   otlp receiver        -> kafka/traces       -> {{ kafka_topic_traces }}
+#   spanmetrics connector-> kafka/spanmetrics  -> {{ kafka_topic_spanmetrics }}
+#   prometheus receiver  -> kafka/metrics      -> {{ kafka_topic_metrics }}
+#     (scraping /federate on both Prometheus instances)
+#
+# No Tempo, no TempoStack, no S3 secret, no DistributedTracing UIPlugin and no
+# tempostack-traces-write RBAC - there is no gateway to authenticate to. The
+# collector's own ServiceAccount still needs two things: read access to the pod
+# metadata the k8sattributes processor stamps onto every record, and
+# cluster-monitoring-view so the federation scrapes are authorised.
+
+- name: Create the {{ otel_namespace }} namespace
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ otel_namespace }}"
+
+- name: Install the OpenTelemetry Operator
+  ansible.builtin.include_role:
+    name: olm_operator
+  vars:
+    olm_namespace: openshift-opentelemetry-operator
+    olm_operator_group_name: openshift-opentelemetry-operator
+    olm_subscription_name: opentelemetry-product
+    olm_channel: "{{ otel_channel }}"
+    olm_wait_for_crds:
+      - opentelemetrycollectors.opentelemetry.io
+      - instrumentations.opentelemetry.io
+
+- name: Create the Kafka client Secrets
+  ansible.builtin.include_role:
+    name: kafka_client_secrets
+  vars:
+    kafka_secret_namespace: "{{ otel_namespace }}"
+
+- name: Create the collector ServiceAccount and RBAC
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition: "{{ item }}"
+  loop: "{{ lookup('ansible.builtin.template', 'otel-rbac.yaml.j2') | from_yaml_all | list }}"
+  loop_control:
+    label: "{{ item.kind }}/{{ item.metadata.name }}"
+
+- name: Enable user workload monitoring
+  ansible.builtin.include_tasks: user_workload_monitoring.yml
+  when: metrics_federation_enabled | bool
+
+- name: Create the OpenTelemetryCollector
+  ansible.builtin.include_tasks: collector.yml

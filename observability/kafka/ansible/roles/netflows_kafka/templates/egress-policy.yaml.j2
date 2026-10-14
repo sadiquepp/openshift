@@ -1,0 +1,51 @@
+# Supplementary egress policy for the flow processor.
+#
+# The FlowCollector installs its own NetworkPolicy on this namespace, selecting
+# the same pods, with policyTypes [Ingress, Egress]. Its egress rules allow only
+# same-namespace pods, the API server, openshift-dns and openshift-monitoring -
+# so the connection to Kafka is dropped, and the only sign of it is
+# `encodeKafka error: dial tcp <ip>:{{ kafka_broker_ports | first }}: i/o timeout`
+# in the flowlogs-pipeline log.
+#
+# Network policies are ADDITIVE: traffic allowed by any policy selecting the pod
+# is allowed. So this does not have to modify, replace or race the policy
+# NetObserv manages - it only has to allow the one thing that policy omits.
+#
+# The pod selector matches NetObserv's own, so it covers the flow processor
+# wherever the operator puts it: a DaemonSet in `Direct` mode, a Deployment
+# behind Kafka transport.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: netobserv-egress-kafka
+  namespace: {{ netobserv_namespace }}
+  labels:
+    app.kubernetes.io/managed-by: observability-kafka
+spec:
+  podSelector:
+    matchLabels:
+      part-of: netobserv-operator
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+{% for port in kafka_broker_ports %}
+        - port: {{ port | int }}
+          protocol: TCP
+{% endfor %}
+{% if kafka_mode == 'incluster' %}
+      to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ kafka_namespace }}
+{% elif netobserv_kafka_egress_cidrs | length > 0 %}
+      to:
+{% for cidr in netobserv_kafka_egress_cidrs %}
+        - ipBlock:
+            cidr: {{ cidr }}
+{% endfor %}
+{% else %}
+      # No `to`, so any destination - on the broker port only. Resolving an
+      # external broker's hostname to a CIDR is not something this can do for
+      # you; set netobserv_kafka_egress_cidrs to narrow it.
+{% endif %}

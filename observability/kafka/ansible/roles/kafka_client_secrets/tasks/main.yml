@@ -1,0 +1,46 @@
+---
+- name: Require a namespace
+  ansible.builtin.assert:
+    that:
+      - kafka_secret_namespace | default('') | length > 0
+    fail_msg: "kafka_client_secrets needs kafka_secret_namespace."
+    quiet: true
+
+- name: "{{ kafka_secret_namespace }}: create the Kafka CA Secret"
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: "{{ kafka_ca_secret_name }}"
+        namespace: "{{ kafka_secret_namespace }}"
+      type: Opaque
+      stringData:
+        "{{ kafka_ca_secret_key }}": "{{ kafka_ca_cert }}"
+  when:
+    - kafka_tls_effective | bool
+    - kafka_ca_cert | default('') | length > 0
+  no_log: true
+
+- name: "{{ kafka_secret_namespace }}: create the Kafka SASL Secret"
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: "{{ kafka_sasl_secret_name }}"
+        namespace: "{{ kafka_secret_namespace }}"
+      type: Opaque
+      stringData:
+        "{{ kafka_sasl_username_key }}": "{{ kafka_sasl_username }}"
+        "{{ kafka_sasl_password_key }}": "{{ kafka_sasl_password }}"
+  when: kafka_sasl_effective | bool
+  no_log: true
+  # These are the same credentials in three namespaces rather than one Secret
+  # and cross-namespace references, because only the FlowCollector API supports
+  # naming a namespace on a secret reference - the ClusterLogForwarder and the
+  # collector both read from their own. Rotating means re-running the playbook.
