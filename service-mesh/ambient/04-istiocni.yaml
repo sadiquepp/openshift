@@ -1,0 +1,23 @@
+# The istio-cni node agent. In sidecar mode it is optional -- it only replaces
+# the privileged istio-init container. In ambient mode it is the thing that puts
+# pods into the mesh: when a pod in an ambient namespace starts (or a namespace
+# is labelled), the agent enters that pod's network namespace, installs the
+# iptables rules that redirect its traffic, and hands ztunnel a file descriptor
+# for the network namespace so ztunnel can open listening sockets INSIDE it.
+#
+#   oc wait --for=condition=Ready istiocni/default --timeout=5m
+#
+# The operator detects OpenShift and applies its platform profile itself: the
+# plugin is registered through Multus (/etc/cni/multus/net.d) rather than
+# chained onto the primary CNI config, binaries go to /var/lib/cni/bin, and the
+# pods run with the spc_t SELinux type so they can enter other pods' network
+# namespaces.
+apiVersion: sailoperator.io/v1
+kind: IstioCNI
+metadata:
+  name: default
+spec:
+  namespace: istio-cni
+  profile: ambient
+  # Must match the Istio resource. See 03-istio.yaml.
+  # version: v1.28-latest

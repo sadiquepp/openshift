@@ -105,6 +105,7 @@ base/
 overlays/
   default/                    namespace + labels           <- start here
   tracing/                    default + OTLP tracing env vars
+  ambient/                    default, enrolled in an Istio ambient mesh
   no-loadgenerator/           default minus the traffic generator
   hardened/                   default, rebuilt on Red Hat Hardened Images
   ubi/                        the same, rebuilt on UBI 9, for comparison
@@ -181,6 +182,19 @@ is the `OpenTelemetryCollector` built in [`../../observability`](../../observabi
 The instrumentation emits **traces only** — no service exposes a Prometheus endpoint. Metrics for
 this workload come either from the platform (cAdvisor / kube-state-metrics) or are derived from
 spans by the collector's `spanmetrics` connector; both are covered in the observability README.
+
+## Service mesh (ambient mode)
+
+```bash
+oc apply -k test-workloads/online-boutique/overlays/ambient
+```
+
+This puts the shop in an OpenShift Service Mesh 3 **ambient** mesh: mTLS between every
+service with no sidecars and no change to the Deployments. The overlay labels the
+namespace, adds a Gateway API ingress gateway, and points the `frontend` Route at that
+gateway instead of the frontend pods. The mesh must be installed first. The full walkthrough
+is [`../../service-mesh/ambient`](../../service-mesh/ambient), which covers installing the
+mesh, adding L4 and L7 policy step by step, and how ambient differs from sidecar mode.
 
 ## Load generator
 

@@ -1,0 +1,78 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# The default deploy, enrolled in an Istio ambient mesh, with ingress through an
+# Istio gateway instead of straight to the frontend pods.
+#
+# Needs the mesh from service-mesh/ambient/ (01 to 05) installed first.
+# Walkthrough: service-mesh/ambient/README.md.
+#
+# What this overlay changes, and why each change is needed:
+#
+#   1. Two labels on the Namespace. That is ALL it takes to put the workload in
+#      the mesh -- no sidecar injection, no pod template changes, no restart.
+#   2. A Gateway + HTTPRoute (gateway.yaml). istiod sees the Gateway and
+#      deploys an Envoy for it into this namespace.
+#   3. The base Route is repointed from the frontend Service to that gateway.
+#
+# (3) is the one that is not obvious. The OpenShift router is not in the mesh,
+# so a Route straight to `frontend` delivers plaintext to a meshed pod. ztunnel
+# allows that while the namespace is PERMISSIVE -- and rejects it the moment you
+# apply STRICT mTLS (service-mesh/ambient/online-boutique/10-*). The gateway is
+# a mesh-native Envoy: it accepts the router's plaintext on its own port and
+# speaks HBONE (mTLS) onward to frontend, so STRICT holds end to end inside the
+# cluster. istiod labels gateway pods `istio.io/dataplane-mode: none`, which is
+# why ztunnel does not also intercept the gateway's inbound traffic.
+#
+# Builds on ../default so the namespace, labels and any image overrides stay
+# defined in exactly one place.
+
+namespace: online-boutique
+
+resources:
+  - ../default
+  - gateway.yaml
+
+# ../default's labels apply only to what ../default renders; gateway.yaml is
+# added here, so it needs them restated.
+labels:
+  - includeSelectors: false
+    pairs:
+      app.kubernetes.io/part-of: online-boutique
+      app.kubernetes.io/instance: online-boutique
+
+patches:
+  # ── enrol the namespace ────────────────────────────────────────────────────
+  #   istio.io/dataplane-mode: ambient  -> istio-cni redirects every pod's
+  #                                         traffic to this node's ztunnel
+  #   istio-discovery: enabled          -> matches the Istio resource's
+  #                                         discoverySelectors; without it istiod
+  #                                         ignores the namespace and ztunnel
+  #                                         never learns these workloads exist
+  # A strategic merge, not JSON 6902 `add /metadata/labels`: that would
+  # replace the whole map and drop the labels ../default already set.
+  - patch: |
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: online-boutique
+        labels:
+          istio.io/dataplane-mode: ambient
+          istio-discovery: enabled
+
+  # ── send the Route to the ingress gateway ──────────────────────────────────
+  # Same Route name as the default overlay, so
+  #   oc get route frontend -n online-boutique
+  # still finds the shop. The Service is the one istiod creates for the Gateway
+  # in gateway.yaml: <gateway name>-istio, with one port per listener, named
+  # after the listener.
+  - target:
+      kind: Route
+      name: frontend
+    patch: |
+      - op: replace
+        path: /spec/to/name
+        value: boutique-gateway-istio
+      - op: replace
+        path: /spec/port/targetPort
+        value: http

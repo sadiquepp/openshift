@@ -1,0 +1,22 @@
+# Step 1 -- STRICT mTLS for the namespace. Enforced by ztunnel.
+#
+# Ambient pods already talk mTLS (HBONE) to each other with no configuration at
+# all. What PERMISSIVE (the default) still allows is PLAINTEXT arriving from
+# outside the mesh -- a pod in a namespace without the ambient label, a
+# hostNetwork pod, the OpenShift router. STRICT makes ztunnel refuse that.
+#
+# This is exactly what breaks a Route pointed straight at the frontend Service,
+# and why the ambient overlay routes through an Istio gateway instead. The
+# gateway pod is opted out of ztunnel (istio.io/dataplane-mode: none) and
+# originates HBONE itself, so the shop keeps working.
+#
+# Unlike sidecar mode, `mode: DISABLE` is ignored in ambient: ztunnel never
+# sends plaintext between two meshed pods, so there is nothing to disable.
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: default
+  namespace: online-boutique
+spec:
+  mtls:
+    mode: STRICT

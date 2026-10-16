@@ -1,0 +1,35 @@
+# Step 4 -- an L7 AuthorizationPolicy. Enforced by the waypoint.
+#
+# Only checkoutservice may call paymentservice, and only the Charge RPC.
+# gRPC is HTTP/2, and every RPC is a POST to /<package>.<Service>/<Method>, so
+# an RPC is just a path to the waypoint.
+#
+# `targetRefs` naming the Service (not `selector`) is what attaches this to the
+# waypoint serving that Service. The waypoint sees the original caller's
+# identity, because the source ztunnel's HBONE connection to the waypoint is
+# authenticated as the caller.
+#
+# Upstream names the port `grpc`, which tells the waypoint to parse it as
+# HTTP/2. Declare the protocol like that (port name prefix or appProtocol) on
+# anything you want L7 policy for -- if the waypoint handles a port as opaque
+# TCP, there is no method or path for a rule like this one to match.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: paymentservice-charge-from-checkout-only
+  namespace: online-boutique
+spec:
+  targetRefs:
+    - kind: Service
+      group: ""
+      name: paymentservice
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - cluster.local/ns/online-boutique/sa/checkoutservice
+      to:
+        - operation:
+            methods: ["POST"]
+            paths: ["/hipstershop.PaymentService/Charge"]

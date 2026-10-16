@@ -1,0 +1,30 @@
+# Step 2 -- an L4 AuthorizationPolicy. Enforced by ztunnel, no waypoint needed.
+#
+# Only cartservice may open a connection to redis-cart. Everything ztunnel can
+# decide is in here: WHO the peer is (the SPIFFE identity proved by the mTLS
+# handshake -- here, a Kubernetes service account), which namespace, IP and
+# port. Nothing about the bytes inside the connection.
+#
+# `selector` (not `targetRefs`) is what makes this a ztunnel policy: it binds to
+# the destination PODS, and the destination pod's ztunnel enforces it on the
+# inbound HBONE connection.
+#
+# Rules with L7 fields -- methods, paths, headers -- cannot be enforced by
+# ztunnel. If you put one in a `selector` policy, ztunnel drops the L7 parts and
+# an ALLOW rule then matches nothing, so the policy DENIES everything. Use a
+# waypoint for those (step 3).
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: redis-cart-from-cartservice-only
+  namespace: online-boutique
+spec:
+  selector:
+    matchLabels:
+      app: redis-cart
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - cluster.local/ns/online-boutique/sa/cartservice

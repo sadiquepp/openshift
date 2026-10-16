@@ -1,0 +1,26 @@
+# ztunnel: the per-node L4 proxy. A DaemonSet, one pod per node, written in
+# Rust -- not Envoy. It terminates and originates mTLS (HBONE) for every meshed
+# pod on its node and enforces L4 AuthorizationPolicy.
+#
+#   oc wait --for=condition=Ready ztunnel/default --timeout=5m
+#
+# Cluster-scoped and a singleton: the name must be `default`.
+#
+# Written against the v1 API with no `targetRef`, the form every ambient-GA
+# release understands (Service Mesh 3.2 onward). Newer operators also accept
+#
+#   targetRef:
+#     kind: Istio
+#     name: default
+#
+# which makes ZTunnel inherit global/meshConfig values from the Istio resource.
+# `oc explain ztunnel.spec.targetRef` tells you whether yours does.
+apiVersion: sailoperator.io/v1
+kind: ZTunnel
+metadata:
+  name: default
+spec:
+  # Must equal Istio's values.pilot.trustedZtunnelNamespace.
+  namespace: ztunnel
+  # Must match the Istio resource. See 03-istio.yaml.
+  # version: v1.28-latest

@@ -24,6 +24,7 @@ Each top-level directory is a self-contained use case with its own `README.md` d
 | `assisted-installer/` | Assisted Installer cluster creation manifest. |
 | `logging/` | OpenShift Logging (Loki on S3 + Cluster Observability Operator UIPlugin) setup runbook. |
 | `networking/` | Two-VLAN ingress/MetalLB/UDN/CUDN networking guides. |
+| `service-mesh/ambient/` | OpenShift Service Mesh 3 in Istio ambient mode — operator, `Istio`/`IstioCNI`/`ZTunnel` manifests in apply order, step-by-step L4 (ztunnel) and L7 (waypoint) policy demos on Online Boutique, and a README explaining ambient vs sidecar and how ztunnel works. The workload side is `test-workloads/online-boutique/overlays/ambient`. |
 | `acs/` | Advanced Cluster Security — RHACS operator, Central and SecuredCluster manifests in apply order, plus a script that scans the Online Boutique namespaces and diffs them. |
 | `quay/` | Quay registry admin/config/registry manifests. |
 | `collections/requirements.yml` | Ansible Galaxy collections required across playbooks (`amazon.aws`, `community.aws`, `community.general`). |
