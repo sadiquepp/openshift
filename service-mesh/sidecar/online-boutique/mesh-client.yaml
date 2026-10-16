@@ -1,0 +1,54 @@
+# A throwaway client inside the mesh, with its OWN service account -- so it has
+# its own SPIFFE identity (spiffe://cluster.local/ns/online-boutique-sidecar/sa/mesh-client)
+# that the policies in this directory can allow or deny.
+#
+# The namespace's injection label gives this pod an istio-proxy sidecar like
+# every other pod there, so it shows as 2/2. Exec into the `curl` container:
+#
+#   oc -n online-boutique-sidecar exec mesh-client -c curl -- ...
+#
+# None of the shop's own images can do this job: frontend and friends are
+# distroless or have no curl, and borrowing one of their identities would test
+# the wrong thing.
+#
+# quay.io/curl/curl is the image the upstream ambient docs use. It runs as a
+# non-root user and needs nothing beyond restricted-v2. Mirror it on a
+# disconnected cluster, and pin a digest if you keep this around.
+#
+#   oc apply -f mesh-client.yaml
+#   oc -n online-boutique-sidecar wait --for=condition=Ready pod/mesh-client
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mesh-client
+  namespace: online-boutique-sidecar
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: mesh-client
+  namespace: online-boutique-sidecar
+  labels:
+    app: mesh-client
+spec:
+  serviceAccountName: mesh-client
+  terminationGracePeriodSeconds: 1
+  securityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: curl
+      image: quay.io/curl/curl:latest
+      command: ["sleep", "infinity"]
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+      resources:
+        requests:
+          cpu: 10m
+          memory: 16Mi
+        limits:
+          memory: 64Mi

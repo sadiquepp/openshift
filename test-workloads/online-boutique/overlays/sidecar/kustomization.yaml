@@ -1,0 +1,80 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Online Boutique in a classic Istio SIDECAR mesh: an Envoy container injected
+# into every pod. The counterpart of ../ambient, for comparison.
+#
+# Needs a Service Mesh 3 control plane -- either service-mesh/sidecar/ (01 to
+# 04) or the ambient one from service-mesh/ambient/, whose istiod injects
+# sidecars too. Walkthrough: service-mesh/sidecar/README.md.
+#
+# Deploys into online-boutique-sidecar, not online-boutique, so it can run
+# beside the ambient variant. Builds on ../../base rather than ../default for
+# that reason: ../default pins the online-boutique namespace and ships that
+# Namespace object (the same choice ../ubi makes).
+#
+# What this overlay changes:
+#
+#   1. The namespace is labelled for sidecar injection (namespace.yaml). Unlike
+#      ambient, that label acts only when a pod is CREATED: the webhook rewrites
+#      the pod spec on its way into the API server. Label a namespace with pods
+#      already running and nothing happens until you restart them.
+#   2. Ingress through an Istio gateway, and the Route repointed to it -- the
+#      same as ../ambient and for the same reason: under STRICT mTLS a meshed
+#      pod refuses the OpenShift router's plaintext.
+#   3. loadgenerator's init container is made to run AFTER its sidecar. See the
+#      patch below; it is the classic sidecar-mode pitfall, and Online Boutique
+#      hits it.
+
+namespace: online-boutique-sidecar
+
+resources:
+  - ../../base
+  - namespace.yaml
+  - gateway.yaml
+
+labels:
+  - includeSelectors: false
+    pairs:
+      app.kubernetes.io/instance: online-boutique-sidecar
+
+patches:
+  # ── send the Route to the ingress gateway ──────────────────────────────────
+  # See ../ambient/kustomization.yaml. Service name is <gateway name>-istio,
+  # port named after the listener.
+  - target:
+      kind: Route
+      name: frontend
+    patch: |
+      - op: replace
+        path: /spec/to/name
+        value: boutique-gateway-istio
+      - op: replace
+        path: /spec/port/targetPort
+        value: http
+
+  # ── loadgenerator: start the sidecar before the init container ─────────────
+  # loadgenerator has an init container (frontend-check) that polls
+  # http://frontend:80 before Locust starts. istio-cni installs the pod's
+  # redirect rules when the pod's network is set up -- before ANY container,
+  # init containers included. A classic sidecar is a regular container, so it
+  # only starts after every init container has finished. frontend-check's
+  # connection is therefore redirected to port 15001 with no Envoy behind it,
+  # all 12 attempts fail, and the pod never starts.
+  #
+  # Native sidecars fix the ordering: the proxy is injected as an init container
+  # with restartPolicy: Always, which Kubernetes starts (and waits on) before
+  # the next init container. istiod turns this on by itself only when the
+  # node's kubelet is 1.33 or later (OpenShift 4.20+), so before 4.20 this
+  # annotation is what makes loadgenerator start. On 4.20+ it changes nothing.
+  #
+  # The other services have no init containers. They are left on whatever the
+  # cluster default is, so you can see both shapes:
+  #   oc get pod -l app=loadgenerator -o jsonpath='{.items[0].spec.initContainers[*].name}'
+  - target:
+      kind: Deployment
+      name: loadgenerator
+    patch: |
+      - op: add
+        path: /spec/template/metadata/annotations/sidecar.istio.io~1nativeSidecar
+        value: "true"

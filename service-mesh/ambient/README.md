@@ -10,6 +10,10 @@ The first half is the runbook. The second half
 [How ztunnel works](#how-ztunnel-works)) explains what you just built. Read it in either
 order; every step in the runbook points at the part of the explanation it shows.
 
+The traditional sidecar variant of the same walkthrough is in [`../sidecar`](../sidecar).
+It can run beside this one on the same cluster, in namespace `online-boutique-sidecar`,
+so you can compare the two directly.
+
 ## Contents
 
 - [Requirements](#requirements)
@@ -608,6 +612,9 @@ apply as written.
 
 Remove the app from the mesh **before** you remove the mesh. Pods still enrolled in a
 mesh that has no ztunnel lose connectivity.
+If you also deployed the [sidecar variant](../sidecar), tear that down first
+([its tear down](../sidecar/README.md#tear-down)), because its sidecars depend on this
+control plane.
 
 ```bash
 M=service-mesh/ambient

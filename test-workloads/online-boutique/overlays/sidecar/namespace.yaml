@@ -1,0 +1,17 @@
+# Its own namespace, so this can run beside the ambient variant
+# (online-boutique) on one cluster and the two can be compared directly.
+#
+#   istio-injection: enabled  -> istiod's mutating webhook adds an istio-proxy
+#                                container to every pod created here. Pods that
+#                                already exist are NOT changed -- injection
+#                                happens only at pod creation.
+#   istio-discovery: enabled  -> matches the Istio resource's discoverySelectors
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: online-boutique-sidecar
+  labels:
+    app.kubernetes.io/part-of: online-boutique
+    app.kubernetes.io/instance: online-boutique-sidecar
+    istio-injection: enabled
+    istio-discovery: enabled

@@ -106,6 +106,7 @@ overlays/
   default/                    namespace + labels           <- start here
   tracing/                    default + OTLP tracing env vars
   ambient/                    default, enrolled in an Istio ambient mesh
+  sidecar/                    the same in a sidecar mesh, namespace online-boutique-sidecar
   no-loadgenerator/           default minus the traffic generator
   hardened/                   default, rebuilt on Red Hat Hardened Images
   ubi/                        the same, rebuilt on UBI 9, for comparison
@@ -183,7 +184,7 @@ The instrumentation emits **traces only** — no service exposes a Prometheus en
 this workload come either from the platform (cAdvisor / kube-state-metrics) or are derived from
 spans by the collector's `spanmetrics` connector; both are covered in the observability README.
 
-## Service mesh (ambient mode)
+## Service mesh (ambient and sidecar)
 
 ```bash
 oc apply -k test-workloads/online-boutique/overlays/ambient
@@ -195,6 +196,17 @@ namespace, adds a Gateway API ingress gateway, and points the `frontend` Route a
 gateway instead of the frontend pods. The mesh must be installed first. The full walkthrough
 is [`../../service-mesh/ambient`](../../service-mesh/ambient), which covers installing the
 mesh, adding L4 and L7 policy step by step, and how ambient differs from sidecar mode.
+
+```bash
+oc apply -k test-workloads/online-boutique/overlays/sidecar
+```
+
+This is the same shop in a classic **sidecar** mesh: an Envoy container injected into every
+pod. It deploys into `online-boutique-sidecar`, so it can run next to the ambient copy and
+the two can be compared under the same load. It needs one patch that ambient does not:
+loadgenerator's init container would run before its sidecar exists, so the proxy is made a
+native sidecar. Walkthrough:
+[`../../service-mesh/sidecar`](../../service-mesh/sidecar).
 
 ## Load generator
 
