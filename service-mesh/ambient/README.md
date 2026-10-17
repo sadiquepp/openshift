@@ -278,25 +278,58 @@ mc() { oc -n online-boutique exec mesh-client -- "$@"; }
 
 ### 5.1 STRICT mTLS
 
+Ambient pods already use mTLS with each other. What STRICT changes is whether a pod still
+accepts **plaintext from outside the mesh**. To see that, you need a client outside the
+mesh: a curl pod in a namespace without the ambient label.
+
+**1. Create the outside client.** It stays running, so you can repeat the same request
+before and after the change:
+
+```bash
+oc new-project not-in-mesh
+oc run probe -n not-in-mesh --image=quay.io/curl/curl:latest --command -- sleep infinity
+oc -n not-in-mesh wait --for=condition=Ready pod/probe
+out() { oc -n not-in-mesh exec probe -- curl -sS -m 5 -o /dev/null -w '%{http_code}\n' http://frontend.online-boutique:80/; }
+```
+
+**2. Before: plaintext is accepted.** The namespace is still PERMISSIVE, so the frontend
+pod's ztunnel passes the plaintext request through:
+
+```bash
+out
+# 200
+```
+
+**3. Apply STRICT:**
+
 ```bash
 oc apply -f $D/10-peerauthentication-strict.yaml
 ```
 
-Ambient pods already used mTLS with each other before this step. What STRICT removes
-is **plaintext from outside the mesh**. To see it, make a request from a pod in a
-namespace that is not in the mesh:
+**4. After: plaintext is refused.** Give istiod a few seconds to push the change to
+ztunnel, then repeat the exact same request:
 
 ```bash
-oc new-project not-in-mesh
-oc run -n not-in-mesh probe --rm -it --restart=Never --image=quay.io/curl/curl:latest -- \
-  curl -sS -m 5 -o /dev/null -w '%{http_code}\n' http://frontend.online-boutique:80/
+out
+# 000
+# curl: (56) Recv failure: Connection reset by peer
 ```
 
-Before step 5.1 this prints `200`. Now it fails with a connection reset: the frontend
-pod's ztunnel refuses plaintext. The shop still loads through its Route, because the
-OpenShift router sends traffic to the gateway, the gateway is not captured, and the
-gateway forwards it as HBONE. This is why the overlay routes ingress through a gateway.
-If the Route still pointed straight at `frontend`, this step would take the shop down.
+The frontend pod's ztunnel now requires HBONE, and the outside pod can't provide it. If
+you still get `200`, wait a few seconds and run it again.
+
+**5. Inside the mesh it still works.** The same request from `mesh-client` succeeds,
+because the request leaves mesh-client's pod through its ztunnel, as HBONE:
+
+```bash
+mc curl -sS -m 5 -o /dev/null -w '%{http_code}\n' http://frontend:80/
+# 200
+```
+
+The shop also still loads through its Route, because the OpenShift router sends traffic
+to the gateway, the gateway is not captured, and the gateway forwards it as HBONE. This
+is why the overlay routes ingress through a gateway. If the Route still pointed straight
+at `frontend`, this step would take the shop down.
 
 ```bash
 oc delete project not-in-mesh

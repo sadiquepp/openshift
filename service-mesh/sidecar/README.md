@@ -207,21 +207,61 @@ sends plaintext to its own sidecar, and the sidecar handles mTLS.
 
 ### 4.1 STRICT mTLS
 
+Sidecars already use mTLS with each other. What STRICT changes is whether a pod still
+accepts **plaintext from outside the mesh**. To see that, you need a client outside the
+mesh: a curl pod in a namespace without injection.
+
+**1. Create the outside client.** It stays running, so you can repeat the same request
+before and after the change:
+
+```bash
+oc new-project not-in-mesh
+oc run probe -n not-in-mesh --image=quay.io/curl/curl:latest --command -- sleep infinity
+oc -n not-in-mesh wait --for=condition=Ready pod/probe
+out() { oc -n not-in-mesh exec probe -- curl -sS -m 5 -o /dev/null -w '%{http_code}\n' http://frontend.online-boutique-sidecar:80/; }
+```
+
+**2. Before: plaintext is accepted.** The namespace is still PERMISSIVE, so the frontend
+pod's sidecar accepts the request even though it is plaintext:
+
+```bash
+out
+# 200
+```
+
+**3. Apply STRICT:**
+
 ```bash
 oc apply -f $D/10-peerauthentication-strict.yaml
 ```
 
+**4. After: plaintext is refused.** Give istiod a few seconds to push the change, then
+repeat the exact same request:
+
 ```bash
-oc new-project not-in-mesh
-oc run -n not-in-mesh probe --rm -it --restart=Never --image=quay.io/curl/curl:latest -- \
-  curl -sS -m 5 -o /dev/null -w '%{http_code}\n' http://frontend.online-boutique-sidecar:80/
-oc delete project not-in-mesh
+out
+# 000
+# curl: (56) Recv failure: Connection reset by peer
 ```
 
-Before this step the command prints `200`. After it, the frontend pod's sidecar refuses
-the plaintext connection. The shop still loads through its Route, because the router
-sends traffic to the gateway and the gateway forwards it with mTLS. The behaviour is the
-same as in ambient; only the component that enforces it is different.
+The frontend sidecar now requires mTLS, and the outside pod can't provide it. If you
+still get `200`, wait a few seconds and run it again.
+
+**5. Inside the mesh it still works.** The same request from `mesh-client` succeeds,
+because mesh-client's own sidecar wraps it in mTLS:
+
+```bash
+mc curl -sS -m 5 -o /dev/null -w '%{http_code}\n' http://frontend:80/
+# 200
+```
+
+The shop also still loads through its Route, because the router sends traffic to the
+gateway and the gateway forwards it with mTLS. The behaviour is the same as in ambient;
+only the component that enforces it is different.
+
+```bash
+oc delete project not-in-mesh
+```
 
 ### 4.2 Identity policy on Redis
 
