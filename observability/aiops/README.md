@@ -147,10 +147,60 @@ a wrong analyzer:
    protocol, port name and tenant path. Phase 3's MCP server is built directly
    on this.
 
-Run:
+### What the cluster needs
+
+One standalone OpenShift cluster. There is no hub-and-spoke anywhere in this
+directory — if you are thinking of `../../acm`, that is a different use case.
+
+The probe reads only the tracing pipeline and the workload, so the other two
+layers can stay off:
 
 ```bash
-export KUBECONFIG=~/clusters/lab/auth/kubeconfig   # if not already pointing here
+ansible-playbook site.yml -e suffix=xipio \
+  -e logging_enabled=false -e netobserv_enabled=false
+```
+
+That is enough for phases 1 to 3: TempoStack on S3, the collector with the
+spanmetrics connector, user workload monitoring with both `ServiceMonitor`s,
+and Online Boutique on the `tracing` overlay. With those layers off,
+`observability_backends` enables only the tempo entry, so one S3 bucket is
+created instead of three and both LokiStacks are skipped — worth having on a
+cluster sized by [`../ansible/README.md`](../ansible/README.md#prerequisites).
+
+| Layer | Needed by the probe | Needed for the demo |
+|---|---|---|
+| `tracing` | yes | yes — beat B |
+| `workload` | yes | yes — both beats |
+| `netobserv` | no | **yes — beat A is the flows beat** |
+| `logging` | no | optional |
+
+> **Decide `netobserv_use_loki` before you provision.** Per-flow RTT in the
+> Traffic flows tab is Path B only. If beat A is a 45-second presenter walk over
+> Topology and Overview, Path A (`-e netobserv_use_loki=false`) does it without
+> a second LokiStack. Changing your mind later means re-running that layer.
+
+> **Logging is optional even for beat B.** The log line that names the flag is
+> emitted at startup, and `oc set env` restarts the pod, so `oc logs` has it.
+> Loki reads better on screen — queryable over a window, with a timestamp that
+> lines up with the latency onset — but it is not required.
+
+### Run it
+
+The probe needs a **bearer token**, and the kubeconfig written by
+`openshift-install` is certificate-based — `oc whoami -t` returns nothing with
+it, and both the Thanos and Tempo HTTP APIs need a token. So log in first:
+
+```bash
+oc login -u kubeadmin -p "$(cat ~/clusters/lab/auth/kubeadmin-password)" \
+  --insecure-skip-tls-verify
+```
+
+This is the inverse of the automation's requirement and therefore easy to miss:
+the playbooks never contact the cluster with `oc` at all, so `oc login` is not a
+prerequisite *there*. The probe fails fast with this message rather than
+returning empty results that look like a broken pipeline.
+
+```bash
 ./scripts/verify-baseline.sh
 ```
 
