@@ -123,7 +123,7 @@ rather than metrics.
 | ~~1~~ | ~~Ground truth and scaffold~~ | **done** — see [Measured baseline](#measured-baseline) |
 | **2** | Signal path, no agent: histogram buckets, `PrometheusRule`, Alertmanager → Slack, beat B's fault and its revert | Inject → Slack in ~3-5 min; revert → resolves |
 | 2b | Beat A's `cartservice → redis-cart` network fault (presenter-driven, no alert path) | Flows localise it; traces cannot |
-| **3a** | `trace-analyze.py` as a plain script | **done** — see [The analyzer](#the-analyzer) |
+| ~~3a~~ | `trace-analyze.py` as a plain script | **done** — verified against the cluster, see [The analyzer](#the-analyzer) |
 | 3b | the same analyzer wrapped as an MCP server | the agent can call it |
 | 4 | Agent layer: sandbox, hooks, Slack **app** over Socket Mode (replacing phase 2's one-way webhook), the investigate skill | Agent posts the diagnosis in-thread, and reads the human's confirmation |
 | 5 | Remediation job behind a confirmation gate, then timed rehearsals | 10 consecutive runs inside the slot |
@@ -598,6 +598,29 @@ time physically is, opaque spans, the payment ordering and the suspect — then
 states plainly that the root cause is *not in the trace* and names the second
 signal to check.
 
+### Verified against the cluster
+
+One live run, `EXTRA_LATENCY=800ms`, seven-item cart:
+
+```
+REQUEST   frontend POST  10461.9ms  (41 spans)
+BASELINE  31.5ms  ->  332.1x slower
+REPEATED  checkoutservice called ProductCatalogService/GetProduct 7x
+          5609.8ms total, 54% of the request (801.4ms each), serial
+REPEATED  frontend called ProductCatalogService/GetProduct 5x
+          4005.7ms total, 38% of the request (801.1ms each), serial
+LOCATION  in-process: productcatalogservice
+          client 802.1ms vs server 801.2ms, a 0.9ms gap (99.9% inside the callee)
+ORDERING  charge completed at 5626.8ms; the request continued 4835.1ms - 46%
+SUSPECT   productcatalogservice - 10407.2ms of self time, 99% of the request
+```
+
+That run also **confirms the fixed-post-charge model** the cart-size ceiling
+depends on: six sleeps after the charge predicts 6 × 800ms = 4800ms, and the
+trace measured 4835.1ms. So the ceiling table above can be trusted, and the
+post-charge share is arithmetic rather than luck — 4.8s fixed over a total that
+grows with the cart.
+
 ### Three bugs worth recording, because each would have been said on stage
 
 Tested against the real faulted trace, the first version got its three
@@ -618,6 +641,22 @@ what is nested inside it — which finds where a request actually terminates
 rather than who contains it. The third by a tolerance: spans are
 nanosecond-stamped across processes, so sequential calls routinely overlap by
 microseconds, and "serial" is a claim the narrative rests on.
+
+A fourth only appeared against the real cluster: **`kind` arrives as
+`"SPAN_KIND_SERVER"`**, because protobuf's JSON mapping serialises enums by
+name. The fixtures were hand-built with integers, so the parser had only ever
+been tested against an encoding Tempo does not use — the one place synthetic
+data was certain to mislead. It raised rather than misreading, which was luck:
+had it decoded to zero, every finding would have been confident noise. Hence
+the guard that refuses a trace with no client or server spans instead of
+reporting on one.
+
+The lesson generalises past this script. The analysis was covered thoroughly
+and the plumbing not at all, because the plumbing needs a cluster — so three
+separate integration failures (a raced port-forward, the enum encoding, and a
+stale `TEMPO_BASE` suppressing the forward) were all found by running it for
+real rather than by testing. Every network failure now prints one actionable
+line instead of a traceback, with the hint picked from what actually broke.
 
 A clean trace is the regression test that matters: the analyzer must not invent
 findings when nothing is wrong. On the baseline trace it reports no location
