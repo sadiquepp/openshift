@@ -158,9 +158,28 @@ The probe reads only the tracing pipeline and the workload, so the other two
 layers can stay off:
 
 ```bash
+# Which cluster. ocp-onpremise writes the hub's kubeconfig under its
+# download_dir — hub_install for a connected build, hubd_install disconnected.
+export KUBECONFIG=/var/lib/libvirt/images/hub_install/auth/kubeconfig
+
+cd observability/ansible
 ansible-playbook site.yml -e suffix=xipio \
   -e logging_enabled=false -e netobserv_enabled=false
 ```
+
+`KUBECONFIG` is the loose way in: `cluster.yml` passes `kubeconfig` and
+`context` to every `kubernetes.core` module but `omit`s them when unset, so the
+modules fall back to the environment and then `~/.kube/config`. Pass
+`-e kubeconfig=…` or `-e kube_context=…` instead if you juggle several clusters
+and would rather not rely on an export — see
+[`../ansible/README.md`](../ansible/README.md#pointing-at-the-right-cluster).
+
+> **Copy it somewhere writable first if you are on the lab host.** That path is
+> under `/var/lib/libvirt/images` and root-owned, and the `oc login` in
+> [Run it](#run-it) *writes* a new context into whatever `KUBECONFIG` names. The
+> playbook only reads it, so it is fine as-is for this step, but the probe's
+> login is not — `cp` it to `~/.kube/config` and export that instead, and both
+> steps work without sudo.
 
 That is enough for phases 1 to 3: TempoStack on S3, the collector with the
 spanmetrics connector, user workload monitoring with both `ServiceMonitor`s,
@@ -241,7 +260,9 @@ The probe needs a **bearer token**, and the kubeconfig written by
 it, and both the Thanos and Tempo HTTP APIs need a token. So log in first:
 
 ```bash
-oc login -u kubeadmin -p "$(cat ~/clusters/lab/auth/kubeadmin-password)" \
+export KUBECONFIG=~/.kube/config     # a writable copy — see the note above
+oc login -u kubeadmin \
+  -p "$(sudo cat /var/lib/libvirt/images/hub_install/auth/kubeadmin-password)" \
   --insecure-skip-tls-verify
 ```
 
