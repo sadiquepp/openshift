@@ -149,8 +149,10 @@ a wrong analyzer:
 
 ### What the cluster needs
 
-One standalone OpenShift cluster. There is no hub-and-spoke anywhere in this
-directory — if you are thinking of `../../acm`, that is a different use case.
+**One cluster.** If you build it with
+[`sadiquepp/ocp-onpremise`](https://github.com/sadiquepp/ocp-onpremise) that is
+its hub cluster, which is all you need — nothing here is hub-and-spoke, so no
+second or managed cluster is involved.
 
 The probe reads only the tracing pipeline and the workload, so the other two
 layers can stay off:
@@ -164,8 +166,42 @@ That is enough for phases 1 to 3: TempoStack on S3, the collector with the
 spanmetrics connector, user workload monitoring with both `ServiceMonitor`s,
 and Online Boutique on the `tracing` overlay. With those layers off,
 `observability_backends` enables only the tempo entry, so one S3 bucket is
-created instead of three and both LokiStacks are skipped — worth having on a
-cluster sized by [`../ansible/README.md`](../ansible/README.md#prerequisites).
+created instead of three and both LokiStacks are skipped.
+
+### An on-premise cluster with S3 on AWS
+
+That combination needs no change to `../ansible`: the cluster layer never cares
+where the cluster runs, and `aws-prereqs.yml` mints the buckets and keys exactly
+as it does for a cluster on EC2. Four things are worth checking that do not come
+up when both sides are in AWS.
+
+**Egress to S3 must actually work from the cluster.** The Loki and Tempo
+operators write straight to `https://s3.<region>.amazonaws.com`, so the
+on-premise nodes need outbound HTTPS to it. If the lab reaches the internet
+through a proxy, set the cluster-wide `Proxy` resource before deploying rather
+than debugging a TempoStack that will not go Ready — the operators honour it,
+but only if it is configured.
+
+**Headroom is fixed, unlike on AWS.** A three-node compact cluster takes the
+tracing layer and the workload comfortably; the squeeze is two more LokiStacks
+on top. That is the same argument for leaving `logging` and `netobserv` off for
+phases 1 to 3, except that on bare metal you cannot resize your way out of
+getting it wrong. See
+[`../ansible/README.md`](../ansible/README.md#prerequisites) for what the full
+stack expects.
+
+**A default StorageClass is still needed**, separately from S3 — the
+TempoStack's own PVCs come from it. The LVM Storage Operator that
+`ocp-onpremise` installs (`roles/setup-lvm-storage`,
+`gitops-manifests/lvm-storage`) provides one, and `storage_class_name` in
+`../ansible/group_vars/all.yml` is empty by default, meaning "use the cluster
+default" — so there is nothing to set if LVM Storage is it.
+
+**A disconnected build is a different exercise.** The Online Boutique images
+come from `us-central1-docker.pkg.dev` and every operator from the
+`redhat-operators` catalog, so an air-gapped cluster needs all of it mirrored
+first — see [`../../disconnected`](../../disconnected). Reaching AWS S3 at all
+implies a connected cluster, so this only matters if that changes.
 
 | Layer | Needed by the probe | Needed for the demo |
 |---|---|---|
