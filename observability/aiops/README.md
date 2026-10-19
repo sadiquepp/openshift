@@ -123,7 +123,7 @@ rather than metrics.
 | **2** | Signal path, no agent: histogram buckets, `PrometheusRule`, Alertmanager → Slack, beat B's fault and its revert | Inject → Slack in ~3-5 min; revert → resolves |
 | 2b | Beat A's `cartservice → redis-cart` network fault (presenter-driven, no alert path) | Flows localise it; traces cannot |
 | 3 | `trace_analyze` as a plain script, then wrapped as an MCP server | Deterministic verdict against a real slow trace, repeatably |
-| 4 | Agent layer: sandbox, hooks, Slack, the investigate skill | Agent posts the diagnosis in-thread |
+| 4 | Agent layer: sandbox, hooks, Slack **app** over Socket Mode (replacing phase 2's one-way webhook), the investigate skill | Agent posts the diagnosis in-thread, and reads the human's confirmation |
 | 5 | Remediation job behind a confirmation gate, then timed rehearsals | 10 consecutive runs inside the slot |
 
 **Phase 2 is a complete, demoable segment on its own.** If phase 4 is blocked
@@ -409,11 +409,44 @@ a credential; anyone holding it can post to that channel.
 > against, so the `channel:` field only satisfies Alertmanager's schema. A
 > second channel needs a second webhook.
 
-Two things worth doing early. **Add the bot and app tokens to the same Slack
-app** while you are in there — phase 4's agent needs them, and one app covers
-both. And **start any approval request now** if the workspace restricts app
-creation, which many do; it is the kind of lead time that becomes the blocker
-days before a slot.
+### This webhook is scaffolding, and phase 4 throws it away
+
+Worth being explicit, because it diverges from the upstream reference: that
+project uses **no incoming webhook at all**. Slack is reached by a Slack *app* —
+`xoxb-` bot token plus `xapp-` app token over **Socket Mode** — and the agent
+posts through it. The only webhook in their chain is Grafana to their own
+in-cluster bridge, which is plain HTTP and nothing to do with Slack.
+
+The divergence is not cosmetic. **An incoming webhook cannot receive anything.**
+The governance beat of this demo is a human typing confirmation in the thread
+and the agent reading it, which needs inbound events (`app_mention` plus channel
+history) over Socket Mode. A webhook physically cannot carry them. So phase 2
+posts one-way to prove the signal path, and phase 4 *replaces* this receiver
+rather than extending it.
+
+Socket Mode also suits an on-premise cluster better than anything else on
+offer: it is an outbound WebSocket, so Slack reaches the agent with no inbound
+ingress to the lab at all.
+
+Which changes what to request now — the tokens are the real ask, and the
+webhook is a convenience for this phase only. One app covers both if you set it
+up in full while you are there:
+
+| Setting | Value |
+|---|---|
+| Socket Mode | on |
+| App-level token | scope `connections:write` → `xapp-…` |
+| Event Subscriptions | on, subscribed to `app_mention` |
+| Bot token scopes | `app_mentions:read`, `chat:write`, `channels:read`, `channels:history`, `groups:read`, `groups:history`, `im:read`, `im:history`, `mpim:read`, `mpim:history` |
+| Channel | bot invited; note the **ID** (`C…`), not the name |
+
+`chat:write` and not `calls:write` — the upstream runbook calls that out
+specifically, which reads like someone lost an afternoon to it. Reinstall the
+app to the workspace after changing scopes or the new ones do not take effect.
+
+**Start any approval request now** if the workspace restricts app creation,
+which many do. It is the kind of lead time that becomes the blocker days before
+a slot.
 
 ### Finishing phase 2 without Slack
 
