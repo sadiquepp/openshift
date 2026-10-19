@@ -399,7 +399,37 @@ TraceQL that finds the offending requests. That is deliberately the same
 handover phase 4's agent receives.
 
 The webhook URL is read from `$SLACK_WEBHOOK_URL` into a Secret and never
-written to this repository.
+written to this repository. Create it at
+[api.slack.com/apps](https://api.slack.com/apps): new app → **Incoming
+Webhooks** → **Add New Webhook to Workspace** → choose the channel. Treat it as
+a credential; anyone holding it can post to that channel.
+
+> **The channel is fixed by the webhook, not by this manifest.** Slack does not
+> allow a request to override the channel an Incoming Webhook was installed
+> against, so the `channel:` field only satisfies Alertmanager's schema. A
+> second channel needs a second webhook.
+
+Two things worth doing early. **Add the bot and app tokens to the same Slack
+app** while you are in there — phase 4's agent needs them, and one app covers
+both. And **start any approval request now** if the workspace restricts app
+creation, which many do; it is the kind of lead time that becomes the blocker
+days before a slot.
+
+### Finishing phase 2 without Slack
+
+The webhook is only the last hop, so a delay there does not block the phase.
+Skip the `slack` stage and read the alert state directly:
+
+```bash
+./scripts/setup-alerting.sh buckets
+./scripts/setup-alerting.sh alertmanager
+./scripts/setup-alerting.sh rules
+./scripts/demo-fault.sh loadgen && ./scripts/demo-fault.sh inject
+./scripts/setup-alerting.sh status      # alertstate=pending, then firing
+```
+
+That proves the buckets, the rule, the threshold and the fault. Adding the
+Secret later turns delivery on with nothing else to change.
 
 ### Timing
 

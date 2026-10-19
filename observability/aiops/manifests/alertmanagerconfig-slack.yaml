@@ -13,6 +13,11 @@
 # The webhook URL is NOT in this file. It comes from the
 # aiops-slack-webhook Secret, created by setup-alerting.sh from
 # $SLACK_WEBHOOK_URL so it is never committed.
+#
+# Create the URL at https://api.slack.com/apps: new app -> Incoming Webhooks ->
+# Add New Webhook to Workspace -> pick the channel. The same app can later carry
+# the bot and app tokens phase 4's agent needs, which saves a second round of
+# workspace approvals.
 apiVersion: monitoring.coreos.com/v1beta1
 kind: AlertmanagerConfig
 metadata:
@@ -41,6 +46,10 @@ spec:
         - apiURL:
             name: aiops-slack-webhook
             key: url
+          # Satisfies Alertmanager's schema and nothing more: Slack fixes the
+          # destination channel when the Incoming Webhook is installed and
+          # refuses to let a request override it. Editing this does not move the
+          # messages — generate a second webhook for a second channel.
           channel: '#aiops-demo'
           sendResolved: true
           title: '{{ if eq .Status "firing" }}:rotating_light:{{ else }}:white_check_mark:{{ end }} {{ .CommonLabels.alertname }}'
