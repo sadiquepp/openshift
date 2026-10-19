@@ -1,0 +1,73 @@
+# Beat B's trigger: the checkout request span is taking longer than usual.
+#
+# Alerts on CheckoutService/PlaceOrder and NOT on the frontend's root span.
+# Online Boutique's Go HTTP instrumentation names root spans by method alone, so
+# span_name="POST" on service_name="frontend" aggregates place-order with
+# add-to-cart and set-currency — the p99 would be polluted by two unrelated
+# routes. PlaceOrder is uniquely named.
+#
+# The alert therefore reports only the latency inside checkout, which under the
+# catalog fault is about 430ms. The customer's actual wait is nearer 2.9s,
+# because most of the injected delay lands after PlaceOrder returns, in the
+# confirmation page's product lookups. That gap is deliberate: it is the
+# difference between what a metric can see and what a trace can explain, and it
+# is the agent's job to find it.
+#
+# Thresholds assume the finer histogram boundaries from
+# group_vars/all.yml:spanmetrics_histogram_buckets. With the coarse upstream
+# default the alert still fires, but the value it reports is a bucket edge
+# rather than a measurement.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: aiops-checkout-latency
+  namespace: tracing-system
+  labels:
+    app.kubernetes.io/part-of: observability-aiops
+spec:
+  groups:
+    - name: aiops-checkout-latency
+      # Shorter than the 5m rate window on purpose: the window smooths, this
+      # only controls how often the smoothed value is reconsidered.
+      interval: 30s
+      rules:
+        - alert: CheckoutPlaceOrderSlow
+          # The `and` clause is a sample-count guard. At the stock load
+          # generator rate (~0.09 rps) a 5m window holds very few samples, and
+          # histogram_quantile over a nearly empty histogram is noise that can
+          # fire on a single outlier. Requiring a floor on the observed rate
+          # means the alert only speaks when it has something to speak about.
+          # ./scripts/demo-fault.sh loadgen raises the rate for a demo.
+          expr: |
+            histogram_quantile(0.99,
+              sum by (le) (
+                rate(traces_span_metrics_duration_milliseconds_bucket{
+                  service_name="checkoutservice",
+                  span_name="hipstershop.CheckoutService/PlaceOrder"
+                }[5m])
+              )
+            ) > 250
+            and
+            sum(
+              rate(traces_span_metrics_duration_milliseconds_count{
+                service_name="checkoutservice",
+                span_name="hipstershop.CheckoutService/PlaceOrder"
+              }[5m])
+            ) > 0.02
+          for: 2m
+          labels:
+            severity: warning
+            service: checkoutservice
+            signal: traces
+          annotations:
+            summary: >-
+              Checkout is taking longer than usual — PlaceOrder p99 is
+              {{ $value | printf "%.0f" }}ms against a 250ms threshold.
+            description: >-
+              The p99 duration of hipstershop.CheckoutService/PlaceOrder has
+              exceeded 250ms for 2 minutes. This measures only the work inside
+              checkoutservice; the customer-visible wait may be considerably
+              longer if the request continues after PlaceOrder returns.
+              Investigate with the trace, not the metric.
+            traceql: '{ resource.service.name = "checkoutservice" && duration > 250ms }'
+            runbook_url: https://github.com/sadiquepp/openshift/blob/main/observability/aiops/README.md

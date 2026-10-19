@@ -45,7 +45,13 @@ spec:
         metrics_flush_interval: 15s
         histogram:
           explicit:
-            buckets: [10ms, 50ms, 100ms, 250ms, 500ms, 1s, 5s]
+            # Resolution matters more than it looks. Online Boutique's
+            # CheckoutService/PlaceOrder sits around 29ms, so with the coarse
+            # default of [10ms, 50ms, ...] every sample lands in one bucket and
+            # histogram_quantile reports the boundary rather than a measurement
+            # - a real p99 of 49.58ms against a 50ms edge. Override with
+            # spanmetrics_histogram_buckets to trade cardinality for accuracy.
+            buckets: {{ spanmetrics_histogram_buckets | to_json }}
         dimensions:
           - name: http.method
           - name: http.status_code

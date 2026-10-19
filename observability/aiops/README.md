@@ -10,9 +10,9 @@ This directory is the demo-day layer on top of
 (the walkthrough). It adds nothing to the observability stack itself — it
 consumes the Tempo, spanmetrics and Loki pipelines that are already there.
 
-> **Status: phase 1 of 5.** Nothing here deploys an agent yet. What exists today
-> is the design below and a read-only probe that pins down the facts the later
-> phases are built on. See [Phases](#phases).
+> **Status: phase 2 of 5.** No agent yet. What works today is the full signal
+> path without one — inject the fault, and Slack gets the alert. See
+> [Phases](#phases).
 
 ## Contents
 - [The argument](#the-argument)
@@ -20,6 +20,8 @@ consumes the Tempo, spanmetrics and Loki pipelines that are already there.
 - [Why these two faults](#why-these-two-faults)
 - [Phases](#phases)
 - [Phase 1 — ground truth](#phase-1--ground-truth)
+- [Measured baseline](#measured-baseline)
+- [Phase 2 — the signal path, without an agent](#phase-2--the-signal-path-without-an-agent)
 - [Design decisions already made](#design-decisions-already-made)
 - [Known blockers](#known-blockers)
 - [Upstream reference](#upstream-reference)
@@ -117,8 +119,9 @@ rather than metrics.
 
 | Phase | What | Exit gate |
 |---|---|---|
-| **1** | Ground truth and scaffold. No cluster changes. | Real numbers for the four unknowns below |
-| 2 | Signal path, no agent: histogram buckets, `PrometheusRule`, Alertmanager → Slack, both fault scripts and their reverts | Inject → Slack within ~2 min; revert → resolves |
+| ~~1~~ | ~~Ground truth and scaffold~~ | **done** — see [Measured baseline](#measured-baseline) |
+| **2** | Signal path, no agent: histogram buckets, `PrometheusRule`, Alertmanager → Slack, beat B's fault and its revert | Inject → Slack in ~3-5 min; revert → resolves |
+| 2b | Beat A's `cartservice → redis-cart` network fault (presenter-driven, no alert path) | Flows localise it; traces cannot |
 | 3 | `trace_analyze` as a plain script, then wrapped as an MCP server | Deterministic verdict against a real slow trace, repeatably |
 | 4 | Agent layer: sandbox, hooks, Slack, the investigate skill | Agent posts the diagnosis in-thread |
 | 5 | Remediation job behind a confirmation gate, then timed rehearsals | 10 consecutive runs inside the slot |
@@ -285,9 +288,130 @@ phase.
 > flushes every 15s and Prometheus scrapes every 30s, so a cold cluster reports
 > empty and you will think something is broken.
 
+## Measured baseline
+
+Phase 1's probe, run against the cluster. These replace the inferences the
+design was first written from.
+
+| | Measured |
+|---|---|
+| metric base | `traces_span_metrics_duration_milliseconds` (ms) |
+| PlaceOrder span | `hipstershop.CheckoutService/PlaceOrder` |
+| GetProduct span | `hipstershop.ProductCatalogService/GetProduct` |
+| PlaceOrder p50 / p99 | 29.1ms / 49.6ms |
+| PlaceOrder rate | 0.089 rps |
+| GetProduct p50 (server) | 5ms |
+| Tempo query base | `https://tempo-tempo-gateway.tracing-system.svc.cluster.local:8080/api/traces/v1/dev/tempo` |
+
+Four things came out differently from the design's assumptions, and all four
+changed something.
+
+**The N+1 is in the confirmation page, not inside `PlaceOrder`.** The trace
+shows one `GetProduct` inside `PlaceOrder` on a single-item cart, then after
+`PlaceOrder` returns the frontend fires **five** more plus a `ListProducts`
+through `recommendationservice`. `EXTRA_LATENCY` sleeps in `ListProducts` too,
+so at 400ms the delay lands roughly 0.4s inside checkout, 0.4s in
+recommendations and 2.0s in the confirmation page. The charge completes 13.5ms
+into a 25.4ms request, so **about 2.4 of the 2.9 added seconds fall after the
+customer's card was charged.** The post-charge beat is real and larger than the
+design projected.
+
+**The alert understates the incident by roughly sevenfold, and that is the
+point.** `PlaceOrder` p99 moves 49.6ms → ~430ms, while the customer's wait moves
+25ms → ~2.9s. No metric can find the remaining 2.4s: it is spread across six
+spans in another service, after checkout returned success. So the alert says
+430ms and the trace explains 2.9s — which is the demo's whole argument, handed
+over by the alert itself rather than asserted by a presenter.
+
+**`p99 = 49.58ms` against a `50ms` bucket edge** is the coarse-histogram problem
+caught in the act. The alert fires either way, but every number it quotes is a
+boundary. Hence the finer boundaries in
+[`../ansible/group_vars/all.yml`](../ansible/group_vars/all.yml).
+
+**Span names follow three conventions, by language.** Go emits
+`hipstershop.X/Y`, Python `/hipstershop.X/Y`, Node `grpc.hipstershop.X/Y`.
+Phase 3's analyzer must match with `=~`, never `=`.
+
+> **One correction belongs upstream of here.**
+> [`../demo/README.md`](../demo/README.md) Part 3 says `paymentservice` "is not
+> extracting the inbound `traceparent`, so each one starts a separate trace".
+> The measured trace shows `paymentservice`'s span nested under the
+> `checkoutservice` client span, so propagation works and that caveat is stale —
+> what actually differs is the `grpc.` prefix on its span name. Worth fixing
+> before saying it out loud on stage.
+
+## Phase 2 — the signal path, without an agent
+
+Fault → spanmetrics → `PrometheusRule` → the user-workload Alertmanager →
+Slack. No agent and no custom code, which is the point: the path is provable on
+its own, and phase 4 swaps the receiver for the webhook bridge without touching
+the rule, the thresholds or the fault.
+
+```bash
+export KUBECONFIG=~/.kube/config
+export SLACK_WEBHOOK_URL='https://hooks.slack.com/services/...'
+
+./scripts/setup-alerting.sh all      # buckets, Alertmanager, Secret, rule, route
+./scripts/demo-fault.sh loadgen      # raise the request rate
+./scripts/demo-fault.sh inject       # EXTRA_LATENCY=400ms
+./scripts/demo-fault.sh watch        # poll p99 until it crosses 250ms
+./scripts/demo-fault.sh revert       # unset, and loadgen back to 1
+```
+
+`setup-alerting.sh` also takes `status` and `revert`, and each stage
+(`buckets`, `alertmanager`, `slack`, `rules`) runs alone.
+
+### What it sets up, and why each part is there
+
+**Finer histogram boundaries**, patched onto the live collector *and* set in
+`../ansible/group_vars/all.yml` so the next ansible run does not quietly revert
+them. Fourteen boundaries from 1ms to 10s, bracketing the 29ms baseline, the
+~430ms in-checkout fault and the ~2.9s customer wait.
+
+> **Wait about five minutes after changing buckets before reading a p99.**
+> Series carrying the old `le` values stay in Prometheus until they age out of
+> the 5m rate window, and a query spanning both is averaging two different
+> histograms. It reads as nonsense rather than as an error, so it is easy to
+> mistake for a broken rule.
+
+**The dedicated user-workload Alertmanager**, with `enableAlertmanagerConfig`.
+`../ansible` only sets `enableUserWorkload`, which routes user alerts to the
+*platform* Alertmanager and leaves `AlertmanagerConfig` objects unhonoured. The
+script does a read-modify-write on `user-workload-monitoring-config`, so
+existing retention or placement settings there survive.
+
+> **This is the failure worth knowing in advance.** Without
+> `enableAlertmanagerConfig: true` the `AlertmanagerConfig` is **accepted and
+> silently ignored** — the rule fires, the alert is visible in the console, and
+> Slack stays quiet with nothing anywhere reporting an error.
+> `setup-alerting.sh status` checks for the StatefulSet precisely because
+> nothing else will tell you.
+
+**An alert on `PlaceOrder` with a sample-count guard.** At 0.089 rps a 5m window
+holds ~11 samples, and `histogram_quantile` over a nearly empty histogram can
+fire on one outlier. The expression requires a floor on the observed rate before
+it will speak, and `demo-fault.sh loadgen` raises the rate so the percentile
+sits still on stage.
+
+**A Slack message that does not name a cause.** It reports what was measured,
+says plainly that it only covers the work inside checkout, and hands over the
+TraceQL that finds the offending requests. That is deliberately the same
+handover phase 4's agent receives.
+
+The webhook URL is read from `$SLACK_WEBHOOK_URL` into a Secret and never
+written to this repository.
+
+### Timing
+
+Roughly 3-5 minutes from inject to Slack: the 5m rate window has to fill with
+slow samples, then the rule's `for: 2m` has to elapse. Resolution takes
+about as long, for the same reason, and `sendResolved` is on so the all-clear
+arrives rather than silence. Rehearse with that in mind — it is too slow to
+inject live in an 8-minute slot, so inject before you start talking.
+
 ## Design decisions already made
 
-Recorded here so phase 2 does not relitigate them.
+Recorded here so later phases do not relitigate them.
 
 **Alert on `CheckoutService/PlaceOrder`, never on the frontend root span.**
 Part 3 of the demo README documents that root spans are named by HTTP method

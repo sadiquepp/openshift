@@ -1,0 +1,64 @@
+# Routes CheckoutPlaceOrderSlow to Slack.
+#
+# Phase 2 posts to Slack directly from Alertmanager, with no agent and no code.
+# That is the whole point of building it this way round: the signal path is
+# provable on its own, and phase 4 swaps this receiver for the webhook bridge
+# without touching the PrometheusRule, the thresholds or the fault.
+#
+# Requires the dedicated user-workload Alertmanager with AlertmanagerConfig
+# support — ./scripts/setup-alerting.sh alertmanager does that. Without
+# `enableAlertmanagerConfig: true` this object is accepted and then silently
+# ignored, which is the single most confusing way for this to fail.
+#
+# The webhook URL is NOT in this file. It comes from the
+# aiops-slack-webhook Secret, created by setup-alerting.sh from
+# $SLACK_WEBHOOK_URL so it is never committed.
+apiVersion: monitoring.coreos.com/v1beta1
+kind: AlertmanagerConfig
+metadata:
+  name: aiops-slack
+  namespace: tracing-system
+  labels:
+    app.kubernetes.io/part-of: observability-aiops
+spec:
+  route:
+    receiver: slack-aiops
+    # Group everything in this namespace into one thread-worth of message
+    # rather than one per series.
+    groupBy: [alertname]
+    # 10s rather than the usual 30s: on a timed demo the wait between injecting
+    # the fault and seeing Slack light up is dead air in front of an audience.
+    groupWait: 10s
+    groupInterval: 1m
+    repeatInterval: 1h
+    matchers:
+      - name: signal
+        value: traces
+        matchType: '='
+  receivers:
+    - name: slack-aiops
+      slackConfigs:
+        - apiURL:
+            name: aiops-slack-webhook
+            key: url
+          channel: '#aiops-demo'
+          sendResolved: true
+          title: '{{ if eq .Status "firing" }}:rotating_light:{{ else }}:white_check_mark:{{ end }} {{ .CommonLabels.alertname }}'
+          # Deliberately does not name a cause. The message says what was
+          # measured and hands over the TraceQL that finds the offending
+          # requests — the diagnosis is the investigation's job, and in phase 4
+          # the agent picks up from exactly this much information.
+          text: |-
+            {{ range .Alerts }}{{ .Annotations.summary }}
+
+            *Service:* `{{ .Labels.service }}`  *Severity:* `{{ .Labels.severity }}`
+            *Since:* {{ .StartsAt.Format "15:04:05 MST" }}
+
+            This measures the work *inside* checkout only. If the request does
+            more after PlaceOrder returns, the customer waited longer than this.
+
+            Find the slow requests:
+            ```
+            {{ .Annotations.traceql }}
+            ```
+            {{ end }}

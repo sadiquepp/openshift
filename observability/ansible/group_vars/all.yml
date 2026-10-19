@@ -122,6 +122,12 @@ tempo_tenant_name: dev
 # TempoStack is never rewritten with a fresh tenant id on the second run.
 tempo_tenant_id: "{{ (suffix ~ '-tempo-' ~ tempo_tenant_name) | to_uuid }}"
 otel_collector_name: otel
+# spanmetrics duration histogram boundaries. Finer than the upstream default
+# around the 20-50ms band where this workload's request spans actually sit, and
+# out to 10s so an injected fault is still measurable rather than saturating the
+# top bucket. See observability/aiops/README.md.
+spanmetrics_histogram_buckets:
+  [1ms, 2ms, 5ms, 10ms, 20ms, 30ms, 50ms, 100ms, 250ms, 500ms, 1s, 2500ms, 5s, 10s]
 
 # The console Logging plugin has to agree with the data model the
 # ClusterLogForwarder writes, or the namespace dropdown comes up empty. This
