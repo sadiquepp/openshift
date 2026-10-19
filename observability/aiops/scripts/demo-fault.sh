@@ -28,8 +28,9 @@
 #   loadgen [n]   scale the load generator (default 5) for a stable p99
 #   inject [ms]   set EXTRA_LATENCY (default 400ms)
 #   revert        unset it, and restore the load generator
-#   status        current fault state and live p99
+#   status        fault state, live p99, router 5xx, and the timeout headroom
 #   watch         poll the p99 until it crosses the alert threshold
+#   route-timeout [dur]  raise the frontend Route's HAProxy timeout (default 120s)
 #
 # Usage:
 #   export KUBECONFIG=~/.kube/config
@@ -51,6 +52,15 @@ LOADGEN_DEPLOY="loadgenerator"
 LATENCY="${LATENCY:-400ms}"
 LOADGEN_REPLICAS="${LOADGEN_REPLICAS:-5}"
 THRESHOLD_MS=250
+ROUTE_NAME="${ROUTE_NAME:-frontend}"
+# OpenShift Routes default to a 30s HAProxy timeout. Past it the router closes
+# the client connection and returns 504 — and crucially the TRACE STILL LOOKS
+# HEALTHY, because HAProxy drops the caller while the frontend handler runs on
+# and its span completes normally. So the customer sees an error, the waterfall
+# shows a merely slow request, and nothing in the telemetry disagrees. On a
+# stage that is the worst failure available: the agent narrates latency while
+# the audience watched a 504.
+ROUTER_TIMEOUT_MS=30000
 
 c_red=$'\033[1;31m'; c_green=$'\033[1;32m'; c_yellow=$'\033[1;33m'
 c_blue=$'\033[1;34m'; c_dim=$'\033[2m'; c_reset=$'\033[0m'
@@ -86,6 +96,35 @@ try:
 except Exception:
     print("?")
 '
+}
+
+promql_scalar() {
+  local thanos token
+  thanos="$("$OC" get route thanos-querier -n openshift-monitoring -o jsonpath='{.spec.host}' 2>/dev/null)"
+  token="$("$OC" whoami -t 2>/dev/null)"
+  [[ -n "$thanos" && -n "$token" ]] || { echo "?"; return; }
+  curl -sSk --max-time 25 -H "Authorization: Bearer ${token}" \
+    -G --data-urlencode "query=$1" "https://${thanos}/api/v1/query" 2>/dev/null \
+    | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    r = d["data"]["result"]
+    print("%g" % float(r[0]["value"][1]) if r else "0")
+except Exception:
+    print("?")
+'
+}
+
+# 5xx seen by the router, not by the application. A HAProxy timeout never
+# reaches the app, so this is the only place it is visible.
+router_5xx() {
+  promql_scalar "sum(rate(haproxy_server_http_responses_total{route=\"${ROUTE_NAME}\",code=\"5xx\"}[5m]))"
+}
+
+route_timeout_now() {
+  "$OC" get route "$ROUTE_NAME" -n "$APP_NAMESPACE" \
+    -o jsonpath='{.metadata.annotations.haproxy\.router\.openshift\.io/timeout}' 2>/dev/null
 }
 
 current_latency() {
@@ -184,6 +223,68 @@ do_status() {
   else
     ok "PlaceOrder p99: ${p99}ms — below the ${THRESHOLD_MS}ms threshold"
   fi
+
+  # ── router headroom ───────────────────────────────────────────────────────
+  section "Router headroom"
+  local rt limit_ms
+  rt="$(route_timeout_now)"
+  if [[ -n "$rt" ]]; then
+    ok "route/${ROUTE_NAME} timeout annotation: ${rt}"
+    limit_ms="?"
+  else
+    warn "route/${ROUTE_NAME} has no timeout annotation — the 30s default applies"
+    limit_ms="$ROUTER_TIMEOUT_MS"
+  fi
+
+  if [[ -n "$el" && "$limit_ms" != "?" ]]; then
+    # Post-charge work is a fixed six sleeps regardless of cart size (one
+    # ListProducts for the recommendations, five GetProduct for the
+    # confirmation page). Everything before the charge scales with the cart, so
+    # the ceiling is a cart size, not a latency.
+    python3 - "$el" "$limit_ms" <<'PY'
+import re, sys
+raw, limit = sys.argv[1], float(sys.argv[2])
+m = re.match(r'^([0-9.]+)\s*(ms|s)$', raw.strip())
+if not m:
+    sys.exit(0)
+ms = float(m.group(1)) * (1000 if m.group(2) == 's' else 1)
+if ms <= 0:
+    sys.exit(0)
+post = 6 * ms
+items = (limit - post) / ms
+print("  at %gms per call, post-charge work is ~%.1fs and the router cuts off" % (ms, post / 1000))
+print("  at %.0fs, so a cart over ~%d items would 504 - and the trace would"
+      % (limit / 1000, int(items)))
+print("  still look healthy, because HAProxy drops the caller and the handler")
+print("  runs on. Raise it with: ./scripts/demo-fault.sh route-timeout 120s")
+PY
+  fi
+
+  local errs
+  errs="$(router_5xx)"
+  if [[ "$errs" == "?" ]]; then
+    warn "router 5xx rate: unavailable"
+  elif python3 -c "import sys; sys.exit(0 if float('$errs') > 0.001 else 1)" 2>/dev/null; then
+    bad "router 5xx on route/${ROUTE_NAME}: ${errs}/s — requests ARE being cut off"
+    note "This is the failure the traces cannot show you. Either lower the"
+    note "latency or raise the route timeout before demoing."
+  else
+    ok "router 5xx on route/${ROUTE_NAME}: none"
+  fi
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+do_route_timeout() {
+  local dur="${ARG:-120s}"
+  section "Raise the frontend Route's HAProxy timeout to ${dur}"
+  "$OC" annotate route "$ROUTE_NAME" -n "$APP_NAMESPACE" --overwrite \
+    "haproxy.router.openshift.io/timeout=${dur}" >/dev/null \
+    && ok "route/${ROUTE_NAME} timeout = ${dur}" \
+    || die "could not annotate the route"
+  note "Cheap insurance rather than a fix: it buys headroom so a large cart"
+  note "cannot turn the latency demo into an intermittent 504 demo. Remove it"
+  note "with: oc annotate route ${ROUTE_NAME} -n ${APP_NAMESPACE} \\"
+  note "  haproxy.router.openshift.io/timeout-"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -211,7 +312,8 @@ case "$CMD" in
   revert)  do_revert ;;
   status)  do_status ;;
   watch)   do_watch ;;
+  route-timeout) do_route_timeout ;;
   *)
-    printf 'usage: %s [loadgen [n]|inject [ms]|revert|status|watch]\n' "$0" >&2
+    printf 'usage: %s [loadgen [n]|inject [ms]|revert|status|watch|route-timeout [dur]]\n' "$0" >&2
     exit 1 ;;
 esac

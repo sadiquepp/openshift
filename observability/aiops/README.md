@@ -365,9 +365,55 @@ that moves with cart size.
 
 **Nine identical 401ms blocks in a staircase** is the clearest N+1 a waterfall
 will ever show you. It comes from the load generator's carts accumulating items
-once scaled to 5 replicas. Two knobs if six seconds of spinner feels long on
-stage: fewer loadgen replicas (smaller carts) or `LATENCY=150ms`
-(~2.3s total).
+once scaled to 5 replicas.
+
+### Tuning the fault, and the ceiling you must not cross
+
+Six seconds is a severe checkout regression, not a normal one — past about
+three seconds abandonment climbs steeply, and at six a customer assumes
+failure and retries, which on a checkout risks a double submission. The
+temptation is to make it far bigger anyway so an audience *feels* it. Resist
+going to 30s, for three reasons.
+
+> **An OpenShift Route times out at 30s by default, and the trace will not show
+> it.** HAProxy closes the *client* connection and returns 504, while the
+> frontend handler runs on and its span completes normally. So the customer sees
+> an error, the waterfall shows a merely slow request, and nothing in the
+> telemetry disagrees. On stage that is the worst available failure: the agent
+> narrates latency while the audience watched a 504. It is only visible
+> router-side, which is why `demo-fault.sh status` now checks
+> `haproxy_server_http_responses_total` and reports the headroom.
+
+The ceiling is a **cart size**, not a latency, because post-charge work is a
+fixed six sleeps regardless of cart (one `ListProducts` for the
+recommendations, five `GetProduct` for the confirmation page) while everything
+before the charge scales with the items:
+
+| `LATENCY` | post-charge | 504 above a cart of |
+|---|---|---|
+| 400ms | ~2.4s | ~69 items |
+| 800ms | ~4.8s | ~31 items |
+| 2000ms | ~12.0s | ~9 items |
+
+`./scripts/demo-fault.sh route-timeout 120s` buys headroom if you want to go
+high. The other two reasons to stay low: throughput falls roughly in
+proportion, thinning the p99 samples the alert's rate guard depends on; and a
+30-second checkout reads as a dead service, which nobody needs an agent to
+diagnose. The two-to-six second insidious case is exactly where traces earn
+their keep.
+
+**The better lever is the post-charge share, not the total.** Post-charge work
+is fixed, so a smaller cart raises its share without touching the ceiling:
+
+| cart | pre-charge | post-charge | share after the charge |
+|---|---|---|---|
+| 9 items | ~3.6s | ~2.4s | 40% |
+| 1 item | ~0.4s | ~2.4s | **~85%** |
+
+So *"charged four tenths of a second in, then waited another two and a half
+seconds"* is available at no risk at all. The nine-item trace is still the
+better hero, though, because it carries both stories at once: the staircase and
+the tail.
 
 **`p99 = 49.58ms` against a `50ms` bucket edge** is the coarse-histogram problem
 caught in the act. The alert fires either way, but every number it quotes is a
