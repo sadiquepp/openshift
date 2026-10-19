@@ -68,6 +68,33 @@ INFRA_SPANS = (
 SPAN_KIND_CLIENT = 3
 SPAN_KIND_SERVER = 2
 
+# Protobuf's JSON mapping serialises enums by NAME, so Tempo returns
+# "SPAN_KIND_SERVER" where the wire format has 2. Both forms appear in the
+# wild depending on the exporter, and the kind is what separates a caller from
+# a callee here — get it wrong and every finding below is noise rather than an
+# error. So accept either and say so loudly if neither is present.
+_SPAN_KINDS = {
+    "SPAN_KIND_UNSPECIFIED": 0,
+    "SPAN_KIND_INTERNAL": 1,
+    "SPAN_KIND_SERVER": 2,
+    "SPAN_KIND_CLIENT": 3,
+    "SPAN_KIND_PRODUCER": 4,
+    "SPAN_KIND_CONSUMER": 5,
+}
+
+
+def parse_kind(raw) -> int:
+    if raw is None or raw == "":
+        return 0
+    if isinstance(raw, bool):
+        return 0
+    if isinstance(raw, int):
+        return raw
+    text = str(raw).strip()
+    if text.isdigit():
+        return int(text)
+    return _SPAN_KINDS.get(text.upper(), 0)
+
 
 def normalise(name: str) -> str:
     """`grpc.hipstershop.Svc/Op`, `/hipstershop.Svc/Op` -> `Svc/Op`."""
@@ -137,7 +164,7 @@ def parse_trace(doc: dict) -> list[Span]:
                 if not start or end < start:
                     continue
                 spans.append(Span(service, sp.get("name") or "?",
-                                  int(sp.get("kind") or 0), start, end))
+                                  parse_kind(sp.get("kind")), start, end))
     spans.sort(key=lambda s: s.start)
     return spans
 
@@ -146,6 +173,13 @@ def analyse(spans: list[Span], baseline_ms: float | None) -> dict:
     real = [s for s in spans if not s.is_infra]
     if not real:
         return {"error": "no application spans in this trace"}
+
+    if not any(s.kind in (SPAN_KIND_CLIENT, SPAN_KIND_SERVER) for s in real):
+        return {"error": (
+            "no client or server spans — every span decoded as kind "
+            f"{sorted({s.kind for s in real})}. The client/server split drives "
+            "every finding here, so this would be noise rather than analysis. "
+            "Check how the exporter encodes `kind`.")}
 
     t0 = min(s.start for s in real)
     t1 = max(s.end for s in real)
@@ -411,6 +445,16 @@ def port_forward(namespace: str, service: str, remote: int, local: int):
     oc = _oc()
     if not oc:
         raise SystemExit("oc/kubectl not on PATH, needed for --port-forward")
+    try:
+        with socket.create_connection(("127.0.0.1", local), timeout=0.5):
+            raise SystemExit(
+                f"127.0.0.1:{local} is already in use — probably a port-forward "
+                f"left over from an earlier run. That is not harmless: it may "
+                f"point at a different service and return plausible but wrong "
+                f"data. Close it (pkill -f 'port-forward.*{local}') or pass "
+                f"--local-port.")
+    except OSError:
+        pass
     proc = subprocess.Popen(
         [oc, "port-forward", "-n", namespace, f"svc/{service}", f"{local}:{remote}"],
         stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
