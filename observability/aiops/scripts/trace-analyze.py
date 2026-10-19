@@ -53,6 +53,7 @@ import ssl
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -548,14 +549,29 @@ def main() -> int:
     p.add_argument("--local-port", type=int, default=18080)
     p.add_argument("--port-forward", action="store_true",
                    help="open an oc port-forward to Tempo for this run "
-                        "(default when no --tempo-base/$TEMPO_BASE is set)")
+                        "(the default unless TEMPO_BASE names a remote host)")
+    p.add_argument("--no-port-forward", action="store_true",
+                   help="never forward; TEMPO_BASE is already reachable")
     args = p.parse_args()
 
     if args.trace_id or args.slowest:
-        forward = args.port_forward or not args.tempo_base
         base = args.tempo_base or (
             f"https://127.0.0.1:{args.local_port}"
             f"/api/traces/v1/{args.tenant}/tempo")
+
+        # A loopback TEMPO_BASE is a request for a forward, not a reason to
+        # skip one. Treating "the variable is set" as "the endpoint is
+        # reachable" meant a TEMPO_BASE left exported from an earlier shell
+        # silently disabled forwarding and failed on a refused connection to a
+        # port nothing was listening on.
+        host = urllib.parse.urlparse(base).hostname or ""
+        loopback = host in ("127.0.0.1", "localhost", "::1")
+        if loopback:
+            port = urllib.parse.urlparse(base).port
+            if port:
+                args.local_port = port
+        forward = (not args.no_port_forward) and (
+            args.port_forward or not args.tempo_base or loopback)
 
         def run() -> dict:
             tid = args.trace_id
@@ -568,12 +584,32 @@ def main() -> int:
                 print(f"# trace {tid}", file=sys.stderr)
             return fetch_trace(base, tid)
 
-        if forward:
-            with port_forward(args.namespace, args.tempo_service, 8080,
-                              args.local_port):
+        try:
+            if forward:
+                with port_forward(args.namespace, args.tempo_service, 8080,
+                                  args.local_port):
+                    doc = run()
+            else:
                 doc = run()
-        else:
-            doc = run()
+        except urllib.error.HTTPError as exc:
+            body = (exc.read() or b"").decode(errors="replace")[:300]
+            hint = ""
+            if exc.code in (401, 403):
+                hint = (" — the account needs tempostack-traces-reader for "
+                        f"tenant '{args.tenant}'")
+            raise SystemExit(f"Tempo returned {exc.code}{hint}\n{body}")
+        except urllib.error.URLError as exc:
+            hint = ""
+            if loopback and args.no_port_forward:
+                hint = ("\nThat host is loopback and forwarding was disabled, "
+                        "so nothing is listening on it. Drop "
+                        "--no-port-forward.")
+            elif not loopback:
+                hint = ("\nThat host is not loopback, so no forward was "
+                        "opened. From outside the cluster, unset TEMPO_BASE "
+                        "and this script will forward to "
+                        f"svc/{args.tempo_service} itself.")
+            raise SystemExit(f"could not reach Tempo at {base}: {exc.reason}{hint}")
     else:
         fh = sys.stdin if (not args.file or args.file == "-") else open(args.file)
         doc = json.load(fh)
