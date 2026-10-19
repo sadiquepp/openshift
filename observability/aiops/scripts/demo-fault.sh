@@ -230,7 +230,17 @@ do_status() {
   rt="$(route_timeout_now)"
   if [[ -n "$rt" ]]; then
     ok "route/${ROUTE_NAME} timeout annotation: ${rt}"
-    limit_ms="?"
+    # Compute headroom against the configured value rather than giving up on
+    # it: once the annotation is set, its number is the one that matters.
+    limit_ms="$(python3 -c '
+import re, sys
+m = re.match(r"^([0-9.]+)\s*(ms|s|m|h)$", sys.argv[1].strip())
+if not m:
+    print("?")
+else:
+    mult = {"ms": 1, "s": 1000, "m": 60000, "h": 3600000}[m.group(2)]
+    print(int(float(m.group(1)) * mult))
+' "$rt" 2>/dev/null || echo '?')"
   else
     warn "route/${ROUTE_NAME} has no timeout annotation — the 30s default applies"
     limit_ms="$ROUTER_TIMEOUT_MS"
