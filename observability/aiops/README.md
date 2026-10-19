@@ -22,6 +22,7 @@ consumes the Tempo, spanmetrics and Loki pipelines that are already there.
 - [Phase 1 — ground truth](#phase-1--ground-truth)
 - [Measured baseline](#measured-baseline)
 - [Phase 2 — the signal path, without an agent](#phase-2--the-signal-path-without-an-agent)
+- [The analyzer](#the-analyzer)
 - [Design decisions already made](#design-decisions-already-made)
 - [Known blockers](#known-blockers)
 - [Upstream reference](#upstream-reference)
@@ -122,7 +123,8 @@ rather than metrics.
 | ~~1~~ | ~~Ground truth and scaffold~~ | **done** — see [Measured baseline](#measured-baseline) |
 | **2** | Signal path, no agent: histogram buckets, `PrometheusRule`, Alertmanager → Slack, beat B's fault and its revert | Inject → Slack in ~3-5 min; revert → resolves |
 | 2b | Beat A's `cartservice → redis-cart` network fault (presenter-driven, no alert path) | Flows localise it; traces cannot |
-| 3 | `trace_analyze` as a plain script, then wrapped as an MCP server | Deterministic verdict against a real slow trace, repeatably |
+| **3a** | `trace-analyze.py` as a plain script | **done** — see [The analyzer](#the-analyzer) |
+| 3b | the same analyzer wrapped as an MCP server | the agent can call it |
 | 4 | Agent layer: sandbox, hooks, Slack **app** over Socket Mode (replacing phase 2's one-way webhook), the investigate skill | Agent posts the diagnosis in-thread, and reads the human's confirmation |
 | 5 | Remediation job behind a confirmation gate, then timed rehearsals | 10 consecutive runs inside the slot |
 
@@ -335,6 +337,38 @@ the charge, and no metric reaches them — but its size scales with cart size an
 has to be read off a faulted trace rather than asserted. `verify-baseline.sh`
 now computes it; see `post-charge share` in its summary.
 
+### The measured faulted trace
+
+One captured request, `EXTRA_LATENCY=400ms`, nine-item cart:
+
+| | |
+|---|---|
+| request total | 6050.4ms (45 spans) |
+| inside `PlaceOrder` | 9 × 401ms serial = 3614ms, 60% of the request |
+| charge completed | 3631.3ms |
+| after the charge | 2419.1ms — 40% |
+| confirmation page | 5 × 401ms serial = 2008ms, 33% |
+| client vs server span | 401.9 vs 401.1ms — 99.8% inside the callee |
+
+**Say the absolute, not a ratio.** The alert reports ~3.6s of checkout; the
+customer waited 6.1s; the missing 2.4s all followed the charge. That is
+measured, and it survives contact with an audience better than a multiplier
+that moves with cart size.
+
+> **The 40% post-charge share is structural, not a symptom.** The clean trace
+> is 39% (12.2ms of 31.5ms) and the faulted one 40% (2419ms of 6050ms) — the
+> fault scales the request without shifting the ratio. So the claim to make is
+> that *40% of every checkout happens after the card is charged, and under this
+> fault that is 2.4 seconds instead of 12 milliseconds.* Attributing the share
+> itself to the fault would be wrong, and someone in the audience may well
+> check.
+
+**Nine identical 401ms blocks in a staircase** is the clearest N+1 a waterfall
+will ever show you. It comes from the load generator's carts accumulating items
+once scaled to 5 replicas. Two knobs if six seconds of spinner feels long on
+stage: fewer loadgen replicas (smaller carts) or `LATENCY=150ms`
+(~2.3s total).
+
 **`p99 = 49.58ms` against a `50ms` bucket edge** is the coarse-histogram problem
 caught in the act. The alert fires either way, but every number it quotes is a
 boundary. Hence the finer boundaries in
@@ -485,6 +519,54 @@ slow samples, then the rule's `for: 2m` has to elapse. Resolution takes
 about as long, for the same reason, and `sendResolved` is on so the all-clear
 arrives rather than silence. Rehearse with that in mind — it is too slow to
 inject live in an 8-minute slot, so inject before you start talking.
+
+## The analyzer
+
+`scripts/trace-analyze.py` computes the diagnosis; the model narrates what it
+returns. Everything it reports is arithmetic over span timings, so the same
+trace gives the same verdict every run — which is what makes a demo rehearsable
+and stops a mid-size model inventing a fluent, wrong cause.
+
+```bash
+# offline, from a saved trace — this is how you rehearse
+./scripts/trace-analyze.py --file trace.json --baseline-ms 31.5
+
+# against the cluster (port-forward locally, or the service URL in-cluster)
+export TEMPO_BASE=https://127.0.0.1:18080/api/traces/v1/dev/tempo
+./scripts/trace-analyze.py --slowest --min-ms 250
+./scripts/trace-analyze.py --json --trace-id <id>      # for the MCP wrapper
+```
+
+It reports the request total and slowdown, each repeated-call site, where the
+time physically is, opaque spans, the payment ordering and the suspect — then
+states plainly that the root cause is *not in the trace* and names the second
+signal to check.
+
+### Three bugs worth recording, because each would have been said on stage
+
+Tested against the real faulted trace, the first version got its three
+headline findings wrong — all three fluently, which is the dangerous kind:
+
+- **it blamed `checkoutservice`**, by ranking client/server pairs on client
+  duration. The outermost pair always wins: `PlaceOrder`'s server span fills
+  `PlaceOrder`'s client span by construction, at a meaningless "100% in
+  callee".
+- **it blamed `frontend` as the suspect**, by summing server-span time per
+  service. The root `POST` span contains the whole request, so that metric
+  elects whoever holds it.
+- **it called nine strictly serial calls "overlapping"**, because two spans
+  overlapped by 0.03ms.
+
+The first two are fixed by **self time** — a span's duration minus the union of
+what is nested inside it — which finds where a request actually terminates
+rather than who contains it. The third by a tolerance: spans are
+nanosecond-stamped across processes, so sequential calls routinely overlap by
+microseconds, and "serial" is a claim the narrative rests on.
+
+A clean trace is the regression test that matters: the analyzer must not invent
+findings when nothing is wrong. On the baseline trace it reports no location
+verdict at all, and a suspect holding 4.6ms — 15% — rather than an alarming
+one.
 
 ## Design decisions already made
 
