@@ -172,8 +172,22 @@ created instead of three and both LokiStacks are skipped.
 
 That combination needs no change to `../ansible`: the cluster layer never cares
 where the cluster runs, and `aws-prereqs.yml` mints the buckets and keys exactly
-as it does for a cluster on EC2. Four things are worth checking that do not come
-up when both sides are in AWS.
+as it does for a cluster on EC2.
+
+**This is a day-2 playbook.** It runs after the cluster is up — `ocp-onpremise`
+`setup_hub_cluster.yaml` first, then `site.yml` here, then the probe. On the LVM
+path nothing else is needed in between: preflight hard-fails without a default
+StorageClass, and `roles/setup-lvm-storage` runs inside the hub build itself
+(tag `lvm`) and makes `lvms-vg1` the default. On the Ceph path
+(`use_lvm_storage: false`) the default class comes from `setup_ceph_odf.yaml`
+instead, so run that first. `aws-prereqs.yml` is the exception — it talks only
+to AWS and can run before the cluster exists.
+
+`ocp-onpremise` deploys no observability components of its own, so there is
+nothing here to collide with.
+
+Four more things are worth checking that do not come up when both sides are in
+AWS.
 
 **Egress to S3 must actually work from the cluster.** The Loki and Tempo
 operators write straight to `https://s3.<region>.amazonaws.com`, so the
