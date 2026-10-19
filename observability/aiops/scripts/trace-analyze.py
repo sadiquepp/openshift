@@ -44,10 +44,15 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
+import shutil
+import socket
 import ssl
+import subprocess
 import sys
+import time
 import urllib.parse
 import urllib.request
 
@@ -366,6 +371,10 @@ def render(a: dict) -> str:
 
 
 # ── Tempo access (used by --trace-id / --slowest, and by the MCP wrapper) ────
+def _oc() -> str:
+    return shutil.which("oc") or shutil.which("kubectl") or ""
+
+
 def _token() -> str:
     t = os.environ.get("TEMPO_TOKEN", "")
     if t:
@@ -375,7 +384,60 @@ def _token() -> str:
         with open(sa) as fh:
             return fh.read().strip()
     except OSError:
-        return ""
+        pass
+    # Running from a workstation or bastion: ask oc rather than making the
+    # caller export a token by hand.
+    oc = _oc()
+    if oc:
+        try:
+            out = subprocess.run([oc, "whoami", "-t"], capture_output=True,
+                                 timeout=15)
+            if out.returncode == 0:
+                return out.stdout.decode().strip()
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return ""
+
+
+@contextlib.contextmanager
+def port_forward(namespace: str, service: str, remote: int, local: int):
+    """Hold an `oc port-forward` open, and wait until it actually accepts.
+
+    Backgrounding the forward by hand and running straight into it is a race:
+    the shell reports the job started, the forward is not yet listening, and
+    the first request dies on ECONNREFUSED. Waiting for the socket removes the
+    race rather than documenting it.
+    """
+    oc = _oc()
+    if not oc:
+        raise SystemExit("oc/kubectl not on PATH, needed for --port-forward")
+    proc = subprocess.Popen(
+        [oc, "port-forward", "-n", namespace, f"svc/{service}", f"{local}:{remote}"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    try:
+        deadline = time.time() + 25
+        ready = False
+        while time.time() < deadline:
+            if proc.poll() is not None:
+                err = (proc.stderr.read() or b"").decode().strip()[:400]
+                raise SystemExit(f"port-forward exited: {err or 'no output'}")
+            try:
+                with socket.create_connection(("127.0.0.1", local), timeout=0.5):
+                    ready = True
+                    break
+            except OSError:
+                time.sleep(0.4)
+        if not ready:
+            raise SystemExit(
+                f"port-forward to svc/{service} did not start listening on "
+                f"127.0.0.1:{local} within 25s")
+        yield
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.SubprocessError:
+            proc.kill()
 
 
 def _get(url: str) -> dict:
@@ -434,21 +496,40 @@ def main() -> int:
     p.add_argument("--tempo-base", default=os.environ.get("TEMPO_BASE", ""))
     p.add_argument("--baseline-ms", type=float, default=None)
     p.add_argument("--json", action="store_true")
+    # Local convenience. In-cluster (the MCP wrapper) TEMPO_BASE points at the
+    # service and none of this is used.
+    p.add_argument("--namespace", default="tracing-system")
+    p.add_argument("--tempo-service", default="tempo-tempo-gateway")
+    p.add_argument("--tenant", default="dev")
+    p.add_argument("--local-port", type=int, default=18080)
+    p.add_argument("--port-forward", action="store_true",
+                   help="open an oc port-forward to Tempo for this run "
+                        "(default when no --tempo-base/$TEMPO_BASE is set)")
     args = p.parse_args()
 
     if args.trace_id or args.slowest:
-        if not args.tempo_base:
-            p.error("--tempo-base or $TEMPO_BASE required")
-        tid = args.trace_id
-        if args.slowest:
-            tid = find_slowest(args.tempo_base, args.service, args.min_ms,
-                               args.lookback)
-            if not tid:
-                print(f"no trace over {args.min_ms}ms for {args.service} "
-                      f"in the last {args.lookback}s", file=sys.stderr)
-                return 2
-            print(f"# trace {tid}", file=sys.stderr)
-        doc = fetch_trace(args.tempo_base, tid)
+        forward = args.port_forward or not args.tempo_base
+        base = args.tempo_base or (
+            f"https://127.0.0.1:{args.local_port}"
+            f"/api/traces/v1/{args.tenant}/tempo")
+
+        def run() -> dict:
+            tid = args.trace_id
+            if args.slowest:
+                tid = find_slowest(base, args.service, args.min_ms, args.lookback)
+                if not tid:
+                    raise SystemExit(
+                        f"no trace over {args.min_ms}ms for {args.service} in "
+                        f"the last {args.lookback}s")
+                print(f"# trace {tid}", file=sys.stderr)
+            return fetch_trace(base, tid)
+
+        if forward:
+            with port_forward(args.namespace, args.tempo_service, 8080,
+                              args.local_port):
+                doc = run()
+        else:
+            doc = run()
     else:
         fh = sys.stdin if (not args.file or args.file == "-") else open(args.file)
         doc = json.load(fh)

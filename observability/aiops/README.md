@@ -574,14 +574,24 @@ trace gives the same verdict every run — which is what makes a demo rehearsabl
 and stops a mid-size model inventing a fluent, wrong cause.
 
 ```bash
+# against the cluster — opens and waits for its own port-forward, and reads
+# the token from `oc whoami -t`, so this is the whole command
+./scripts/trace-analyze.py --slowest --min-ms 2000 --baseline-ms 31.5
+
 # offline, from a saved trace — this is how you rehearse
 ./scripts/trace-analyze.py --file trace.json --baseline-ms 31.5
 
-# against the cluster (port-forward locally, or the service URL in-cluster)
-export TEMPO_BASE=https://127.0.0.1:18080/api/traces/v1/dev/tempo
-./scripts/trace-analyze.py --slowest --min-ms 250
-./scripts/trace-analyze.py --json --trace-id <id>      # for the MCP wrapper
+# in-cluster (the MCP wrapper): TEMPO_BASE set, no forwarding
+export TEMPO_BASE=https://tempo-tempo-gateway.tracing-system.svc.cluster.local:8080/api/traces/v1/dev/tempo
+./scripts/trace-analyze.py --json --trace-id <id>
 ```
+
+> **Do not background `oc port-forward` and run straight into it.** The shell
+> reports the job started before the forward is listening, and the first
+> request dies on `ECONNREFUSED` — which reads like a broken gateway rather
+> than a race. The script waits for the socket itself, so pass
+> `--port-forward` (or simply leave `TEMPO_BASE` unset) instead of setting one
+> up by hand.
 
 It reports the request total and slowdown, each repeated-call site, where the
 time physically is, opaque spans, the payment ordering and the suspect — then
