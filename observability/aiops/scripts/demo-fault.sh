@@ -12,12 +12,17 @@
 # network" a measured fact rather than a presenter's claim.
 #
 # Measured on this cluster at 400ms, the delay lands in three places:
-#   inside PlaceOrder     1x GetProduct per cart item   ~0.4s and up
+#   inside PlaceOrder     1x GetProduct PER CART ITEM   0.4s x items
 #   recommendationservice 1x ListProducts               ~0.4s
 #   confirmation page     5x GetProduct from frontend   ~2.0s
-# Charge completes a third of the way through the request, so roughly 2.4 of
-# the 2.9 added seconds are spent after the customer's card was charged. The
-# alert sees only the PlaceOrder share. That gap is the demo.
+#
+# The per-cart-item multiplier is the part worth knowing: PlaceOrder p99 was
+# measured at 2424ms under this fault, not the ~400ms a single-item cart
+# suggests, because the load generator's carts hold several items. So the alert
+# captures a large share of the fault, and the post-charge remainder — the
+# confirmation page's lookups, which happen after the card is charged and which
+# no metric can reach — is smaller than a single-item trace implies. Read the
+# real split from verify-baseline.sh's post-charge share rather than assuming.
 #
 # Subcommands:
 #   loadgen [n]   scale the load generator (default 5) for a stable p99

@@ -66,6 +66,7 @@ EXTRA_LATENCY_STATE="?"
 TEMPO_URL=""
 TEMPO_SEARCH_OK="no"
 RECO_FANOUT="?"
+POST_SHARE="?"
 CART_BACKEND=""
 UNIT="?"
 START=0
@@ -288,8 +289,12 @@ print(", ".join(v[1] for v in vals))
 ')"
   if [[ -n "$BUCKETS" ]]; then
     ok "bucket boundaries (le, in ${UNIT}): ${BUCKETS}"
-    note "Few boundaries near the real baseline means histogram_quantile is"
-    note "quantisation noise. Phase 2 adds finer boundaries for that reason."
+    _nb="$(tr ',' '\n' <<<"$BUCKETS" | grep -c .)"
+    if [[ "${_nb:-0}" -le 8 ]]; then
+      warn "only ${_nb} boundaries — histogram_quantile will report an edge"
+      note "rather than a measurement near this workload's baseline."
+      note "Fix: ./scripts/setup-alerting.sh buckets"
+    fi
   else
     warn "could not read bucket boundaries"
   fi
@@ -424,38 +429,88 @@ else
   SCHEME="${TEMPO_URL%%://*}"
   BASE="${SCHEME}://127.0.0.1:${PF_PORT}/api/traces/v1/${TEMPO_TENANT}/tempo"
 
-  # Prefer the slowest recent checkout: more spans, and closest to what the
-  # demo will actually open.
-  TRACE_ID="$(curl -sSk --max-time 25 \
-    -H "Authorization: Bearer ${TOKEN}" \
-    -G --data-urlencode 'q={ resource.service.name = "checkoutservice" }' \
-    --data-urlencode "limit=20" \
-    --data-urlencode "start=${START}" \
-    --data-urlencode "end=${NOW}" \
-    "${BASE}/api/search" 2>/dev/null \
-    | python3 -c '
+  # Select on the server with TraceQL rather than picking a maximum from
+  # whatever the search happened to return.
+  #
+  # Sorting client-side was wrong twice over: Tempo's search returns recent
+  # matches rather than slow ones, and if the response carries no durationMs
+  # every candidate ties at zero, so the first one wins and gets *labelled* the
+  # slowest. With a fault minutes old inside an hour-long window, that reliably
+  # produced a pre-fault trace while the metrics said the fault was live. A
+  # duration floor in the query means every candidate is genuinely slow.
+  FLOOR_MS="${MIN_TRACE_MS:-0}"
+  if [[ "$FLOOR_MS" == "0" && -n "$EXTRA_LATENCY_STATE" && "$EXTRA_LATENCY_STATE" != "unset" && "$EXTRA_LATENCY_STATE" != "?" ]]; then
+    FLOOR_MS=250
+    note "EXTRA_LATENCY is active — asking Tempo for traces over ${FLOOR_MS}ms"
+    note "so the shape below is the faulted one, not one from before injection"
+  fi
+
+  search_traces() {
+    # $1 = TraceQL. Emits "traceID<TAB>durationMs" per hit, plus a trailing
+    # "#meta<TAB>count<TAB>have_duration" line.
+    curl -sSk --max-time 25 \
+      -H "Authorization: Bearer ${TOKEN}" \
+      -G --data-urlencode "q=$1" \
+      --data-urlencode "limit=50" \
+      --data-urlencode "start=${START}" \
+      --data-urlencode "end=${NOW}" \
+      "${BASE}/api/search" 2>/dev/null \
+      | python3 -c '
 import json, sys
 try:
     d = json.load(sys.stdin)
 except Exception:
-    sys.exit(0)
-best, best_ms = None, -1.0
+    print("#meta\t0\tno"); sys.exit(0)
+rows, have = [], False
 for t in d.get("traces") or []:
+    tid = t.get("traceID") or t.get("traceId")
+    raw = t.get("durationMs")
+    if raw not in (None, ""):
+        have = True
     try:
-        ms = float(t.get("durationMs") or 0)
+        ms = float(raw or 0)
     except (TypeError, ValueError):
         ms = 0.0
-    tid = t.get("traceID") or t.get("traceId")
-    if tid and ms > best_ms:
-        best, best_ms = tid, ms
-if best:
-    print(best)
-')"
+    if tid:
+        rows.append((ms, tid))
+rows.sort(reverse=True)
+for ms, tid in rows:
+    print("%s\t%g" % (tid, ms))
+print("#meta\t%d\t%s" % (len(rows), "yes" if have else "no"))
+'
+  }
+
+  TRACEQL_BASE='resource.service.name = "checkoutservice"'
+  if [[ "$FLOOR_MS" != "0" ]]; then
+    HITS="$(search_traces "{ ${TRACEQL_BASE} && trace:duration > ${FLOOR_MS}ms }")"
+    if [[ -z "$(grep -v '^#meta' <<<"$HITS")" ]]; then
+      warn "no trace over ${FLOOR_MS}ms in the last ${LOOKBACK}"
+      note "Either the fault has not reached Tempo yet, or this Tempo does not"
+      note "support the trace:duration filter. Falling back to an unfiltered"
+      note "search — check the durations below before trusting the shape."
+      HITS="$(search_traces "{ ${TRACEQL_BASE} }")"
+    fi
+  else
+    HITS="$(search_traces "{ ${TRACEQL_BASE} }")"
+  fi
+
+  META="$(grep '^#meta' <<<"$HITS" | head -1)"
+  CANDIDATES="$(grep -v '^#meta' <<<"$HITS")"
+  N_HITS="$(cut -f2 <<<"$META")"
+  HAVE_DUR="$(cut -f3 <<<"$META")"
+  note "search returned ${N_HITS:-0} trace(s); durationMs reported: ${HAVE_DUR:-no}"
+  if [[ "$HAVE_DUR" == "no" ]]; then
+    warn "this Tempo's search omits durationMs, so the pick below is arbitrary"
+    note "rather than the slowest — read the span table, not the label."
+  fi
+
+  TRACE_ID="$(head -1 <<<"$CANDIDATES" | cut -f1)"
+  TRACE_MS="$(head -1 <<<"$CANDIDATES" | cut -f2)"
 
   if [[ -z "$TRACE_ID" ]]; then
     warn "search returned no trace IDs in the last ${LOOKBACK}"
   else
-    ok "slowest recent checkout trace: ${TRACE_ID}"
+    ok "checkout trace ${TRACE_ID} (search reported ${TRACE_MS:-?}ms)"
     SPANS="$(curl -sSk --max-time 25 -H "Authorization: Bearer ${TOKEN}" \
       "${BASE}/api/traces/${TRACE_ID}" 2>/dev/null \
       | python3 -c '
@@ -487,13 +542,49 @@ print("    %-10s %-24s %-52s %9s" % ("offset", "service", "span", "duration"))
 for start, svc, name, ms, kind in rows:
     print("    %8.1fms %-24s %-52s %7.2fms" % ((start - t0) / 1e6, svc[:24], name[:52], ms))
 print("TOTAL_SPANS=%d" % len(rows))
+
+# The number the demo actually rests on: how much of the request happens after
+# the card is charged. Computed rather than eyeballed off the offsets, because
+# it is the claim beat B is built on and it moves with cart size.
+if rows:
+    span_end = max(s + int(ms * 1e6) for s, _, _, ms, _ in rows)
+    total_ms = (span_end - t0) / 1e6
+    charge_end = None
+    for start, svc, name, ms, kind in rows:
+        if "PaymentService/Charge" in name and svc == "checkoutservice":
+            charge_end = start + int(ms * 1e6)
+            break
+    if charge_end is not None:
+        post_ms = (span_end - charge_end) / 1e6
+        pct = (post_ms / total_ms * 100) if total_ms > 0 else 0
+        print("SUMMARY\ttotal=%.1f\tcharge_at=%.1f\tpost=%.1f\tpct=%.0f"
+              % (total_ms, (charge_end - t0) / 1e6, post_ms, pct))
+    else:
+        print("SUMMARY\ttotal=%.1f\tcharge_at=\tpost=\tpct=" % total_ms)
 ')"
     if [[ -z "$SPANS" ]]; then
       warn "could not parse the trace payload"
     else
-      printf '%s\n' "$SPANS" | grep -v '^TOTAL_SPANS='
+      printf '%s\n' "$SPANS" | grep -vE '^(TOTAL_SPANS=|SUMMARY)'
       N="$(grep -o 'TOTAL_SPANS=[0-9]*' <<<"$SPANS" | cut -d= -f2)"
       ok "${N:-?} spans in that trace"
+
+      SUMMARY_LINE="$(grep '^SUMMARY' <<<"$SPANS" | head -1)"
+      if [[ -n "$SUMMARY_LINE" ]]; then
+        TOTAL_MS="$(sed -n 's/.*total=\([0-9.]*\).*/\1/p' <<<"$SUMMARY_LINE")"
+        CHARGE_AT="$(sed -n 's/.*charge_at=\([0-9.]*\).*/\1/p' <<<"$SUMMARY_LINE")"
+        POST_MS="$(sed -n 's/.*post=\([0-9.]*\).*/\1/p' <<<"$SUMMARY_LINE")"
+        POST_PCT="$(sed -n 's/.*pct=\([0-9]*\).*/\1/p' <<<"$SUMMARY_LINE")"
+        printf '\n'
+        if [[ -n "$CHARGE_AT" ]]; then
+          ok "request total ${TOTAL_MS}ms; charge completed at ${CHARGE_AT}ms"
+          ok "post-charge wait ${POST_MS}ms — ${POST_PCT}% of the request"
+          POST_SHARE="${POST_PCT}% (${POST_MS}ms of ${TOTAL_MS}ms)"
+        else
+          warn "no checkoutservice PaymentService/Charge span — cannot split pre/post charge"
+          POST_SHARE="n/a"
+        fi
+      fi
 
       RECO_FANOUT="$(printf '%s\n' "$SPANS" | grep -ci 'recommendation' || true)"
       printf '\n'
@@ -528,6 +619,7 @@ cat <<SUMMARY
   Tempo query base     ${TEMPO_URL:-<unresolved>}
   TraceQL search       ${TEMPO_SEARCH_OK}
   reco spans in trace  ${RECO_FANOUT}
+  post-charge share    ${POST_SHARE}
 SUMMARY
 
 printf '\n%sPaste this block back to continue with phase 2.%s\n' "$c_dim" "$c_reset"

@@ -316,12 +316,24 @@ into a 25.4ms request, so **about 2.4 of the 2.9 added seconds fall after the
 customer's card was charged.** The post-charge beat is real and larger than the
 design projected.
 
-**The alert understates the incident by roughly sevenfold, and that is the
-point.** `PlaceOrder` p99 moves 49.6ms → ~430ms, while the customer's wait moves
-25ms → ~2.9s. No metric can find the remaining 2.4s: it is spread across six
-spans in another service, after checkout returned success. So the alert says
-430ms and the trace explains 2.9s — which is the demo's whole argument, handed
-over by the alert itself rather than asserted by a presenter.
+**The alert understates the incident, and that is the point — but by less than
+first estimated.** Measured under a 400ms fault:
+
+| | clean | faulted |
+|---|---|---|
+| `PlaceOrder` p50 / p99 | 29.1 / 49.6ms | 538 / **2424ms** |
+| `GetProduct` p50 (server) | 5ms | **365ms** |
+
+The first estimate of a sevenfold gap came from the single-item cart in the
+baseline trace, where `PlaceOrder` pays the 400ms once. It does not: `GetProduct`
+runs **once per cart item**, so a six-item cart pays it six times and
+`PlaceOrder` alone reaches ~2.4s. The alert therefore captures far more of the
+fault than projected, and the post-charge remainder is proportionally smaller.
+
+The gap is still real — the confirmation page's lookups genuinely happen after
+the charge, and no metric reaches them — but its size scales with cart size and
+has to be read off a faulted trace rather than asserted. `verify-baseline.sh`
+now computes it; see `post-charge share` in its summary.
 
 **`p99 = 49.58ms` against a `50ms` bucket edge** is the coarse-histogram problem
 caught in the act. The alert fires either way, but every number it quotes is a
@@ -365,8 +377,10 @@ export SLACK_WEBHOOK_URL='https://hooks.slack.com/services/...'
 
 **Finer histogram boundaries**, patched onto the live collector *and* set in
 `../ansible/group_vars/all.yml` so the next ansible run does not quietly revert
-them. Fourteen boundaries from 1ms to 10s, bracketing the 29ms baseline, the
-~430ms in-checkout fault and the ~2.9s customer wait.
+them. Fourteen boundaries from 1ms to 10s, bracketing the 29ms baseline and the
+multi-second faulted request. Confirmed on the cluster: a clean p99 of 49.58ms
+against a 50ms boundary became a real distribution once the boundaries landed
+either side of it.
 
 > **Wait about five minutes after changing buckets before reading a p99.**
 > Series carrying the old `le` values stay in Prometheus until they age out of
