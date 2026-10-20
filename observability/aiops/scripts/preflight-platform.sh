@@ -77,13 +77,51 @@ note "Compare against 'oc adm top nodes' — these are allocatable, not free."
 # resolves to — which is what the Subscription needs and what differs between
 # clusters.
 # ─────────────────────────────────────────────────────────────────────────────
+# Every PackageManifest on the cluster, once: name, defaultChannel, catalog.
+# Fetched up front so the fragment search below costs one API call rather than
+# one per operator.
+ALL_PKGS=""
+load_packages() {
+  ALL_PKGS="$("$OC" get packagemanifests -A \
+    -o 'jsonpath={range .items[*]}{.metadata.name}{" "}{.status.defaultChannel}{" "}{.status.catalogSource}{"\n"}{end}' \
+    2>/dev/null | sort -u)"
+}
+
 probe_package() {
-  local label="$1" pkg="$2"
+  # $1 = label, $2 = a FRAGMENT of the package name.
+  #
+  # Matched as a fragment across every catalog rather than looked up by exact
+  # name. An exact lookup reports MISSING when a package has merely been
+  # renamed, which is a false negative that reads like "this operator is
+  # unavailable" — and these names do move between releases. ocp-onpremise's
+  # SPIRE role does it this way and it is the better technique.
+  local label="$1" frag="$2"
+  [[ -z "$ALL_PKGS" ]] && load_packages
+
+  local matches
+  matches="$(printf '%s\n' "$ALL_PKGS" | grep -i -- "$frag" || true)"
+  if [[ -z "$matches" ]]; then
+    warn "${label}: nothing matching '${frag}' in any catalog on this cluster"
+    FACTS+=("$(printf '%-20s NO MATCH for fragment %s' "$label" "$frag")")
+    return 1
+  fi
+
+  local n
+  n="$(grep -c . <<<"$matches")"
+  if [[ "$n" -gt 1 ]]; then
+    note "${label}: ${n} packages match '${frag}':"
+    while read -r nm ch cat; do
+      [[ -n "$nm" ]] && note "$(printf '  %-52s default=%-14s %s' "$nm" "${ch:-?}" "${cat:-?}")"
+    done <<<"$matches"
+  fi
+
+  local pkg
+  pkg="$(head -1 <<<"$matches" | awk '{print $1}')"
   local json
   json="$("$OC" get packagemanifest "$pkg" -n "$MARKETPLACE" -o json 2>/dev/null)"
   if [[ -z "$json" ]]; then
-    warn "${label}: package '${pkg}' not found in any catalog"
-    FACTS+=("$(printf '%-20s MISSING (%s)' "$label" "$pkg")")
+    warn "${label}: '${pkg}' listed but could not be read"
+    FACTS+=("$(printf '%-20s UNREADABLE (%s)' "$label" "$pkg")")
     return 1
   fi
   printf '%s' "$json" | python3 -c '
@@ -123,11 +161,20 @@ for ch in d.get("channels", []) or []:
 }
 
 section "2. Operator packages"
-probe_package "RHOAI"        "rhods-operator"
-probe_package "AAP"          "ansible-automation-platform-operator"
-probe_package "TrustyAI"     "trustyai-service-operator"
-probe_package "ZTWI/SPIRE"   "zero-trust-workload-identity-manager"
-probe_package "Connectivity" "kuadrant-operator"
+probe_package "RHOAI"        "rhods"
+probe_package "AAP"          "ansible-automation-platform"
+probe_package "TrustyAI"     "trustyai"
+probe_package "ZTWI/SPIRE"   "zero-trust"
+probe_package "SPIRE (alt)"  "spire"
+probe_package "Connectivity" "kuadrant"
+
+# Last resort for anything still unmatched: show every operator whose name
+# hints at identity or guardrails, so a rename is visible rather than silent.
+section "2b. Anything identity- or trust-shaped in the catalogs"
+printf '%s\n' "$ALL_PKGS" | grep -iE "spiffe|spire|zero|trust|guard|identity" \
+  | while read -r nm ch cat; do
+      [[ -n "$nm" ]] && note "$(printf '%-56s default=%-14s %s' "$nm" "${ch:-?}" "${cat:-?}")"
+    done || note "(nothing)"
 
 # ─────────────────────────────────────────────────────────────────────────────
 section "3. What the CRDs will actually be called"
