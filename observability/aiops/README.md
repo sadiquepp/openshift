@@ -24,6 +24,7 @@ consumes the Tempo, spanmetrics and Loki pipelines that are already there.
 - [Phase 2 — the signal path, without an agent](#phase-2--the-signal-path-without-an-agent)
 - [The analyzer](#the-analyzer)
 - [Design decisions already made](#design-decisions-already-made)
+- [What phase 4a reuses, and the one thing that collides](#what-phase-4a-reuses-and-the-one-thing-that-collides)
 - [Known blockers](#known-blockers)
 - [Upstream reference](#upstream-reference)
 
@@ -125,7 +126,7 @@ rather than metrics.
 | 2b | Beat A's `cartservice → redis-cart` network fault (presenter-driven, no alert path) | Flows localise it; traces cannot |
 | ~~3a~~ | `trace-analyze.py` as a plain script | **done** — verified against the cluster, see [The analyzer](#the-analyzer) |
 | 3b | the same analyzer wrapped as an MCP server | the agent can call it |
-| 4a | Platform operators: RHOAI, AAP, TrustyAI guardrails, ZTWI/SPIRE, Gitea — all through [`../ansible/roles/olm_operator`](../ansible/roles/olm_operator). `scripts/preflight-platform.sh` reports the catalog facts first | each operator Succeeded and its CR Ready |
+| 4a | Platform: RHOAI and ZTWI/SPIRE reused from `ocp-onpremise` (see below), AAP and TrustyAI new. `scripts/preflight-platform.sh` reports the catalog facts first | each operator Succeeded and its CR Ready |
 | 4b | Agent runtime: Slack **app** over Socket Mode (replacing phase 2's one-way webhook), the investigate skill | agent posts the diagnosis in-thread, and reads the human's confirmation |
 | 5 | AAP job template behind a confirmation gate, then timed rehearsals | 10 consecutive runs inside the slot |
 
@@ -753,6 +754,49 @@ wrong shape of task to have in front of a demo date.
 
 **AAP needs a subscription** for the governed job-template path, and a manifest
 to entitle it.
+
+## What phase 4a reuses, and the one thing that collides
+
+[`sadiquepp/ocp-onpremise`](https://github.com/sadiquepp/ocp-onpremise) already
+carries two of 4a's four components, as Ansible in the same idiom as the cluster
+build. The cluster is built from that repo anyway, so this is a sequencing
+question rather than a porting one: `ocp-onpremise` for the cluster, RHOAI and
+SPIRE; this repo for observability and the aiops layer.
+
+**`openshift-ai/` solves the model problem**, which was 4a's only genuinely
+uncertain piece. It serves a GGUF model on CPU through a custom KServe
+`ServingRuntime` speaking the OpenAI API — necessary because Red Hat's own CPU
+vLLM runtime is supported on Power, Z and ARM rather than x86-64, so a custom
+runtime is the documented route out. It declares its own probes, since KServe
+only generates probes for its v1/v2 protocols and an OpenAI-API server serves
+neither, with a startup probe generous enough to survive a model loading off a
+lab PVC. It runs `RawDeployment`, so no Knative. And it discovers the CRD shape
+rather than assuming it, for the same reason `preflight-platform.sh` exists.
+
+**`spiffe-spire/` covers ZTWI**, and already puts Online Boutique's
+checkoutservice → paymentservice call under mTLS with SVIDs from the Workload
+API.
+
+That second one is the collision. Its overlay **patches `checkoutservice`** —
+`PAYMENT_SERVICE_ADDR=localhost:50051` plus a ghostunnel sidecar — and so does
+the `tracing` overlay, which sets this workload's OTel environment. Applied to
+one namespace, the later apply wins and one of them is silently lost. Worse for
+the demo: ghostunnel changes the span being measured. `PaymentService/Charge`
+would then time a localhost proxy and an mTLS handshake, so the client/server
+delta grows and the analyzer would read "between the services" where it reads
+5.06ms against 0.15ms today.
+
+> **SPIRE is the only part of 4a that modifies the application under
+> observation.** RHOAI, AAP and TrustyAI sit beside it. So add it **last**, with
+> a combined overlay rather than two competing ones, and re-run
+> `trace-analyze.py` afterwards to see what the sidecar did to the waterfall.
+> Building the demo on top of it and discovering this while recording is the
+> expensive order.
+
+AAP has no prior work. TrustyAI is deliberately off in `openshift-ai/`'s
+component list — excluded with pipelines, Ray, Kueue, CodeFlare and ModelMesh
+on the grounds that each is more pods than a lab hub has room for — so enabling
+it is a decision about the pod budget, not a default to inherit.
 
 ## Upstream reference
 
