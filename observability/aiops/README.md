@@ -125,8 +125,13 @@ rather than metrics.
 | 2b | Beat A's `cartservice → redis-cart` network fault (presenter-driven, no alert path) | Flows localise it; traces cannot |
 | ~~3a~~ | `trace-analyze.py` as a plain script | **done** — verified against the cluster, see [The analyzer](#the-analyzer) |
 | 3b | the same analyzer wrapped as an MCP server | the agent can call it |
-| 4 | Agent layer: sandbox, hooks, Slack **app** over Socket Mode (replacing phase 2's one-way webhook), the investigate skill | Agent posts the diagnosis in-thread, and reads the human's confirmation |
-| 5 | Remediation job behind a confirmation gate, then timed rehearsals | 10 consecutive runs inside the slot |
+| 4a | Platform operators: RHOAI, AAP, TrustyAI guardrails, ZTWI/SPIRE, Gitea — all through [`../ansible/roles/olm_operator`](../ansible/roles/olm_operator) | each operator Succeeded and its CR Ready |
+| 4b | Agent runtime: Slack **app** over Socket Mode (replacing phase 2's one-way webhook), the investigate skill | agent posts the diagnosis in-thread, and reads the human's confirmation |
+| 5 | AAP job template behind a confirmation gate, then timed rehearsals | 10 consecutive runs inside the slot |
+
+The split in phase 4 is deliberate and load-bearing: **the one unavailable
+image blocks 4b only.** Everything in 4a installs from operator catalogs, so
+the product stack is not waiting on it.
 
 **Phase 2 is a complete, demoable segment on its own.** If phase 4 is blocked
 (see [Known blockers](#known-blockers)), the automated beat still works — it
@@ -702,17 +707,43 @@ That halves the slowest and least predictable part of the demo.
 
 ## Known blockers
 
-**The agent runtime is not a product.** Phase 4 depends on OpenShell and
-OpenClaw, Red Hat Emerging Technologies lab components installed from a pinned
-commit of an external lab repository. The upstream install notes state that the
-pinned OpenClaw image digest was **removed from Quay**, and instruct you to
-mirror it from a cluster where it is still running rather than chase newer tags.
-If no such cluster is reachable, phase 4 does not start. This is the single
-largest risk and the reason phases 2 and 3 are built to stand alone.
+**The agent runtime's image is gone, and only that.** Phase 4b depends on
+OpenShell and OpenClaw — the only two components in the upstream reference's own
+table filed under *Emerging Technologies lab* rather than Red Hat products. The
+pinned image, `quay.io/ryan_nix/openclaw-openshift:openclaw-v2026.6.11`, is a
+personal namespace, and the tag now answers:
 
-**Phase 5's remediation needs an AAP subscription** for the governed job-template
-path. Without one, the fallback is a playbook run behind the same explicit
-confirmation gate — weaker governance story, identical demo.
+```
+Tag openclaw-v2026.6.11 was deleted or has expired. To pull, revive via time machine
+```
+
+Quay's time machine is owner-only, so that image is unrecoverable from outside.
+The repository is very much alive — 60 active tags, built daily — but a current
+image brings three known breakages, and the kit only solves two:
+
+| on a newer image | handled by the kit? |
+|---|---|
+| `curl: command not found` in the seed init | yes — v6 hardening, node `fetch()` |
+| `tar: command not found` in the seed init | yes — v7 hardening, a node ustar parser |
+| **SQLite WAL error on init** | **no** — the only listed remedy is the June image |
+
+And one the docs do not mention: the seed installs
+`@openclaw/openshell-sandbox@2026.6.11` and `@openclaw/slack@2026.6.11`, so a
+current gateway would run four-month-old plugins, across whatever changed in the
+`/hooks/agent` contract the bridge depends on.
+
+Three routes, in descending order of certainty: ask Red Hat Emerging
+Technologies for the image; host the agent on RHOAI instead, which keeps every
+product in the story and drops the only non-product dependency; or timebox an
+attempt on a current tag and find out whether SQLite yields. What makes the
+third unattractive is not the odds but the unbounded estimate — "make an
+undocumented four-month-newer build work against a kit pinned to June" is the
+wrong shape of task to have in front of a demo date.
+
+**Phase 4a and phase 5 are unaffected.** The products install from catalogs.
+
+**AAP needs a subscription** for the governed job-template path, and a manifest
+to entitle it.
 
 ## Upstream reference
 
