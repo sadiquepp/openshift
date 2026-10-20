@@ -125,7 +125,7 @@ rather than metrics.
 | 2b | Beat A's `cartservice → redis-cart` network fault (presenter-driven, no alert path) | Flows localise it; traces cannot |
 | ~~3a~~ | `trace-analyze.py` as a plain script | **done** — verified against the cluster, see [The analyzer](#the-analyzer) |
 | 3b | the same analyzer wrapped as an MCP server | the agent can call it |
-| 4a | Platform operators: RHOAI, AAP, TrustyAI guardrails, ZTWI/SPIRE, Gitea — all through [`../ansible/roles/olm_operator`](../ansible/roles/olm_operator) | each operator Succeeded and its CR Ready |
+| 4a | Platform operators: RHOAI, AAP, TrustyAI guardrails, ZTWI/SPIRE, Gitea — all through [`../ansible/roles/olm_operator`](../ansible/roles/olm_operator). `scripts/preflight-platform.sh` reports the catalog facts first | each operator Succeeded and its CR Ready |
 | 4b | Agent runtime: Slack **app** over Socket Mode (replacing phase 2's one-way webhook), the investigate skill | agent posts the diagnosis in-thread, and reads the human's confirmation |
 | 5 | AAP job template behind a confirmation gate, then timed rehearsals | 10 consecutive runs inside the slot |
 
@@ -252,6 +252,15 @@ implies a connected cluster, so this only matters if that changes.
 | `workload` | yes | yes — both beats |
 | `netobserv` | no | **yes — beat A is the flows beat** |
 | `logging` | no | optional |
+
+> **The demo is recorded, not presented live**, which retires several
+> constraints: a slow model turn, the three-to-five minute wait from fault to
+> alert, and the pacing worry about how long six seconds looks on screen are
+> all edit-time problems. It also means **no GPU is needed anywhere** — nothing
+> in this stack requires one, and only *fast* inference did. Bare metal with an
+> 8B model on CPU is enough, because the analyzer computes the verdict and the
+> model only phrases it. A model that cannot be trusted to derive a diagnosis
+> can be trusted to read one out.
 
 > **Decide `netobserv_use_loki` before you provision.** Per-flow RTT in the
 > Traffic flows tab is Path B only. If beat A is a 45-second presenter walk over
