@@ -1,0 +1,5 @@
+---
+# Connection for the few places a raw `oc` is easier than a module — the
+# catalog listing, which has no good kubernetes.core equivalent.
+_aap_oc_env: >-
+  {{ {'KUBECONFIG': kubeconfig} if (kubeconfig | default('') | length > 0) else {} }}

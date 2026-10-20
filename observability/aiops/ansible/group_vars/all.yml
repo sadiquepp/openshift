@@ -1,0 +1,42 @@
+---
+# ── Ansible Automation Platform ───────────────────────────────────────────────
+# Phase 4a of observability/aiops. AAP is the governed remediation path: the
+# agent does not run commands, it launches a job template someone else wrote.
+#
+# Measured on the target cluster (OpenShift 4.22.10) by
+# ../scripts/preflight-platform.sh:
+#   package  ansible-automation-platform-operator   in redhat-operators
+#   channels stable-2.6, stable-2.6-cluster-scoped,
+#            stable-2.7 (default), stable-2.7-cluster-scoped
+#   CRD      ansibleautomationplatforms.aap.ansible.com (the unified 2.5+ CR)
+
+kubeconfig: ""
+kube_context: ""
+
+aap_namespace: aap
+aap_instance_name: aap
+
+# Matched as a fragment, like ocp-onpremise's SPIRE role does, so a renamed
+# package is found rather than reported missing. Set aap_package to pin.
+aap_package_match: ansible-automation-platform
+aap_package: ""
+
+# Empty takes the catalog's default channel. The namespace-scoped line is
+# deliberate: the cluster-scoped variant watches every namespace, which this
+# demo has no use for and which makes the operator harder to remove cleanly.
+aap_channel: ""
+aap_catalog_source: redhat-operators
+aap_catalog_namespace: openshift-marketplace
+
+# Only the controller. Hub is a container registry and Event-Driven Ansible a
+# second controller, and neither is on the path from "the agent asks" to "a job
+# template runs" — on a lab cluster each is just more pods.
+aap_components:
+  controller: true
+  hub: false
+  eda: false
+  lightspeed: false
+
+aap_wait_timeout: 1800
+aap_min_free_cpu_cores: 4
+aap_min_free_memory_gib: 12

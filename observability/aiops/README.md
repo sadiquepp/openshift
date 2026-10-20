@@ -22,6 +22,7 @@ consumes the Tempo, spanmetrics and Loki pipelines that are already there.
 - [Phase 1 — ground truth](#phase-1--ground-truth)
 - [Measured baseline](#measured-baseline)
 - [Phase 2 — the signal path, without an agent](#phase-2--the-signal-path-without-an-agent)
+- [Phase 4a — Ansible Automation Platform](#phase-4a--ansible-automation-platform)
 - [The analyzer](#the-analyzer)
 - [Design decisions already made](#design-decisions-already-made)
 - [What phase 4a reuses, and the one thing that collides](#what-phase-4a-reuses-and-the-one-thing-that-collides)
@@ -580,6 +581,45 @@ slow samples, then the rule's `for: 2m` has to elapse. Resolution takes
 about as long, for the same reason, and `sendResolved` is on so the all-clear
 arrives rather than silence. Rehearse with that in mind — it is too slow to
 inject live in an 8-minute slot, so inject before you start talking.
+
+## Phase 4a — Ansible Automation Platform
+
+AAP is the governed remediation path: the agent never runs a command, it
+launches a job template someone else wrote. It is the one 4a component with no
+prior work in `ocp-onpremise`, so it lives here, in
+[`ansible/`](ansible), reusing
+[`../ansible/roles/olm_operator`](../ansible/roles/olm_operator) through a
+`roles_path` rather than reimplementing the Subscription-resolves,
+CSV-Succeeded, CRDs-Established waiting that every other operator in this repo
+already goes through.
+
+```bash
+cd ansible
+export KUBECONFIG=~/.kube/config
+ansible-playbook setup_aap.yml --tags preflight     # reads only
+ansible-playbook setup_aap.yml
+ansible-playbook setup_aap.yml --tags instance,verify
+```
+
+Measured on this cluster: package `ansible-automation-platform-operator` in
+`redhat-operators`, default channel `stable-2.7` → 2.7.0, CRD
+`ansibleautomationplatforms.aap.ansible.com`. The namespace-scoped channel is
+used deliberately over `stable-2.7-cluster-scoped`, which watches every
+namespace this demo has no use for.
+
+Only the controller is enabled. Hub is a container registry and Event-Driven
+Ansible a second controller, and neither sits on the path from "the agent asks"
+to "a job template runs".
+
+> **The CR's shape is read from the cluster, not assumed.** AAP moved from
+> separate `AutomationController`, `AutomationHub` and EDA kinds in 2.4 to one
+> `AnsibleAutomationPlatform` in 2.5, and which component keys its spec accepts
+> is a property of the installed operator. So the role reads the storage
+> version and the spec's property names out of the CRD, then writes only the
+> keys that version has — a key the schema lacks is dropped rather than sent
+> and rejected at admission. `openshift-ai/` settled on the same approach for
+> `DataScienceCluster`, for the same reason, and this project has now been
+> caught out by four assumed-API mistakes.
 
 ## The analyzer
 

@@ -1,0 +1,85 @@
+---
+# Reads only. Nothing here changes the cluster.
+
+- name: Read the AAP package out of the catalog
+  ansible.builtin.command:
+    argv:
+      - oc
+      - get
+      - packagemanifests
+      - -A
+      - -o
+      - >-
+        jsonpath={range .items[*]}{.metadata.name}{" "}{.status.defaultChannel}{" "}{.status.catalogSource}{"\n"}{end}
+  register: _aap_pkgs
+  changed_when: false
+  environment: "{{ _aap_oc_env }}"
+
+# Fragment, not exact name. An exact lookup reports a renamed package as
+# missing, which is how this cluster's zero-trust operator was first reported
+# absent when it was merely prefixed.
+- name: Find the candidates
+  ansible.builtin.set_fact:
+    _aap_matches: >-
+      {{ _aap_pkgs.stdout_lines
+         | select('search', aap_package_match)
+         | map('split')
+         | list }}
+
+- name: Fail if the operator is not in any catalog
+  ansible.builtin.assert:
+    that: _aap_matches | length > 0
+    fail_msg: >-
+      No package matching '{{ aap_package_match }}' in any catalog on this
+      cluster. Check `oc get packagemanifests -A | grep -i ansible`, and set
+      aap_package to the exact name if it has been renamed.
+
+- name: Settle on the package and channel
+  ansible.builtin.set_fact:
+    _aap_pkg: "{{ aap_package if (aap_package | length > 0) else _aap_matches[0][0] }}"
+    _aap_chan: "{{ aap_channel if (aap_channel | length > 0) else _aap_matches[0][1] }}"
+
+- name: Say what will be installed
+  ansible.builtin.debug:
+    msg: >-
+      {{ _aap_pkg }} from {{ _aap_matches[0][2] }}, channel {{ _aap_chan }}
+      into namespace {{ aap_namespace }}.
+      Components: {{ aap_components | dict2items | selectattr('value') | map(attribute='key') | join(', ') }}.
+
+# Capacity, because an AAP instance that cannot schedule sits Pending with no
+# obvious cause, and the controller wants a database alongside it.
+- name: Read allocatable and requested capacity per worker
+  kubernetes.core.k8s_info:
+    kind: Node
+    label_selectors:
+      - node-role.kubernetes.io/worker
+  register: _aap_nodes
+
+- name: Fail if no worker reports capacity
+  ansible.builtin.assert:
+    that: _aap_nodes.resources | length > 0
+    fail_msg: "No nodes labelled node-role.kubernetes.io/worker."
+
+- name: Summarise worker capacity
+  ansible.builtin.debug:
+    msg: >-
+      {{ _aap_nodes.resources | length }} worker(s);
+      allocatable
+      {{ _aap_nodes.resources
+         | map(attribute='status.allocatable.cpu') | list | join(', ') }}
+      cpu and
+      {{ _aap_nodes.resources
+         | map(attribute='status.allocatable.memory') | list | join(', ') }}
+      memory. This is allocatable rather than free — compare with
+      `oc adm top nodes` before blaming the operator for a Pending pod.
+
+- name: Fail if there is no default StorageClass
+  kubernetes.core.k8s_info:
+    kind: StorageClass
+  register: _aap_sc
+  failed_when: >-
+    _aap_sc.resources
+    | selectattr('metadata.annotations', 'defined')
+    | selectattr('metadata.annotations["storageclass.kubernetes.io/is-default-class"]', 'defined')
+    | selectattr('metadata.annotations["storageclass.kubernetes.io/is-default-class"]', 'equalto', 'true')
+    | list | length == 0

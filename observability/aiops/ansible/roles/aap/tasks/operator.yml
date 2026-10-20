@@ -1,0 +1,18 @@
+---
+# The same role that installs every other operator in this repo. Reused rather
+# than reimplemented so the waiting logic — Subscription resolves, CSV reaches
+# Succeeded, CRDs become Established — exists once.
+- name: Install the AAP operator
+  ansible.builtin.include_role:
+    name: olm_operator
+  vars:
+    olm_namespace: "{{ aap_namespace }}"
+    olm_operator_group_name: "{{ aap_namespace }}-operators"
+    olm_subscription_name: "{{ _aap_pkg }}"
+    olm_package: "{{ _aap_pkg }}"
+    olm_channel: "{{ _aap_chan }}"
+    olm_source: "{{ aap_catalog_source }}"
+    olm_source_namespace: "{{ aap_catalog_namespace }}"
+    olm_wait_for_crds:
+      - ansibleautomationplatforms.aap.ansible.com
+    olm_wait_timeout: "{{ aap_wait_timeout }}"

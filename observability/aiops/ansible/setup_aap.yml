@@ -1,0 +1,24 @@
+---
+# ═══════════════════════════════════════════════════════════════════════════════
+# Ansible Automation Platform for observability/aiops phase 4a.
+#
+#   ansible-playbook setup_aap.yml
+#   ansible-playbook setup_aap.yml --tags preflight      # reads only
+#   ansible-playbook setup_aap.yml --tags operator
+#   ansible-playbook setup_aap.yml --tags instance,verify
+#
+# Point it at a cluster the same way ../../ansible does: KUBECONFIG in the
+# environment, or -e kubeconfig=... / -e kube_context=...
+# ═══════════════════════════════════════════════════════════════════════════════
+- name: Ansible Automation Platform
+  hosts: localhost
+  gather_facts: false
+
+  module_defaults:
+    group/kubernetes.core.k8s: &k8s_connection
+      kubeconfig: "{{ kubeconfig if (kubeconfig | default('') | length > 0) else omit }}"
+      context: "{{ kube_context if (kube_context | default('') | length > 0) else omit }}"
+    kubernetes.core.k8s_json_patch: *k8s_connection
+
+  roles:
+    - role: aap

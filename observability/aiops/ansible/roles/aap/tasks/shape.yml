@@ -1,0 +1,48 @@
+---
+# Read the API out of the cluster instead of assuming it.
+#
+# AAP's custom resource has moved: 2.4 had separate AutomationController,
+# AutomationHub and EDA kinds, and 2.5 replaced them with one
+# AnsibleAutomationPlatform that switches components on and off. Its group
+# version and the component keys it accepts are properties of the installed
+# operator, not of this file, and writing a key the schema does not have is
+# rejected at admission. ocp-onpremise's openshift-ai role settled on the same
+# approach for DataScienceCluster, for the same reason.
+
+- name: Read the AnsibleAutomationPlatform CRD
+  kubernetes.core.k8s_info:
+    api_version: apiextensions.k8s.io/v1
+    kind: CustomResourceDefinition
+    name: ansibleautomationplatforms.aap.ansible.com
+  register: _aap_crd
+
+- name: Fail if the CRD is absent
+  ansible.builtin.assert:
+    that: _aap_crd.resources | length > 0
+    fail_msg: >-
+      ansibleautomationplatforms.aap.ansible.com is not on this cluster. Run
+      with --tags operator first, or check the CSV in {{ aap_namespace }}.
+
+- name: Pick the storage version
+  ansible.builtin.set_fact:
+    _aap_api_version: >-
+      {{ _aap_crd.resources[0].spec.group }}/{{
+         (_aap_crd.resources[0].spec.versions
+          | selectattr('storage', 'equalto', true) | first).name }}
+
+- name: Read the spec properties that version accepts
+  ansible.builtin.set_fact:
+    _aap_spec_keys: >-
+      {{ ((_aap_crd.resources[0].spec.versions
+           | selectattr('storage', 'equalto', true) | first).schema.openAPIV3Schema.properties.spec.properties
+          | default({})).keys() | list }}
+
+- name: Say what the operator serves
+  ansible.builtin.debug:
+    msg: >-
+      {{ _aap_api_version }};
+      spec accepts {{ _aap_spec_keys | length }} keys.
+      Of the components asked for, these exist in the schema:
+      {{ aap_components.keys() | select('in', _aap_spec_keys) | join(', ') | default('none', true) }}.
+      {% set unknown = aap_components.keys() | reject('in', _aap_spec_keys) | list %}
+      {% if unknown %}Not in this version, so not written: {{ unknown | join(', ') }}.{% endif %}

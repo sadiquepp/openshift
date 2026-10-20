@@ -1,0 +1,27 @@
+---
+# ── aap ───────────────────────────────────────────────────────────────────────
+# Ansible Automation Platform, as the governed remediation path for the demo:
+# the agent never runs a command, it launches a job template a human wrote.
+#
+# Split by tag so each step can be re-run on its own, and so `preflight` can be
+# run against a cluster without changing anything.
+
+- name: Preflight
+  ansible.builtin.import_tasks: preflight.yml
+  tags: [aap, preflight]
+
+- name: Operator
+  ansible.builtin.import_tasks: operator.yml
+  tags: [aap, operator]
+
+- name: Read the API shape the installed operator serves
+  ansible.builtin.import_tasks: shape.yml
+  tags: [aap, instance, verify]
+
+- name: Instance
+  ansible.builtin.import_tasks: instance.yml
+  tags: [aap, instance]
+
+- name: Verify
+  ansible.builtin.import_tasks: verify.yml
+  tags: [aap, verify]

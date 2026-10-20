@@ -1,0 +1,39 @@
+---
+# What phase 5 needs to reach: a URL and the admin password.
+
+- name: Find the controller's Route
+  kubernetes.core.k8s_info:
+    api_version: route.openshift.io/v1
+    kind: Route
+    namespace: "{{ aap_namespace }}"
+  register: _aap_routes
+
+- name: Find the admin password Secret
+  kubernetes.core.k8s_info:
+    kind: Secret
+    namespace: "{{ aap_namespace }}"
+  register: _aap_secrets
+
+- name: Report how to reach it
+  vars:
+    _route: >-
+      {{ (_aap_routes.resources
+          | selectattr('metadata.name', 'search', aap_instance_name)
+          | map(attribute='spec.host') | list | first) | default('<no route yet>', true) }}
+    _pw_secret: >-
+      {{ (_aap_secrets.resources
+          | selectattr('metadata.name', 'search', 'admin-password')
+          | map(attribute='metadata.name') | list | first) | default('', true) }}
+  ansible.builtin.debug:
+    msg:
+      - "URL:      https://{{ _route }}"
+      - "User:     admin"
+      - >-
+        Password: {{ ('oc get secret ' ~ _pw_secret ~ ' -n ' ~ aap_namespace ~
+                      ' -o jsonpath={.data.password} | base64 -d')
+                     if (_pw_secret | length > 0)
+                     else '<admin-password secret not created yet>' }}
+      - >-
+        Next: phase 5 creates the project, the credential, an inventory and the
+        job template the agent is allowed to launch. Nothing here grants the
+        agent anything yet.

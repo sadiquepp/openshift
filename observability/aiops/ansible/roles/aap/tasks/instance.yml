@@ -1,0 +1,56 @@
+---
+# Build the CR as data rather than from a template, so the component keys can
+# be filtered against what shape.yml found the schema accepts. A Jinja template
+# would have to guess, and a key the schema rejects fails the whole apply.
+
+- name: Start with an empty component block
+  ansible.builtin.set_fact:
+    _aap_component_spec: {}
+
+# One key per iteration, so the result is readable in -v output and the
+# filtering against the schema is obvious. The clever one-expression version of
+# this was a zip of two parallel selectattr chains, which nobody could check.
+- name: Add each component the schema accepts
+  ansible.builtin.set_fact:
+    _aap_component_spec: >-
+      {{ _aap_component_spec | combine({item.key: {'disabled': (not item.value)}}) }}
+  loop: >-
+    {{ aap_components | dict2items | selectattr('key', 'in', _aap_spec_keys) | list }}
+  loop_control:
+    label: "{{ item.key }}={{ 'enabled' if item.value else 'disabled' }}"
+
+- name: Create the AnsibleAutomationPlatform
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition:
+      apiVersion: "{{ _aap_api_version }}"
+      kind: AnsibleAutomationPlatform
+      metadata:
+        name: "{{ aap_instance_name }}"
+        namespace: "{{ aap_namespace }}"
+      spec: "{{ _aap_component_spec }}"
+  # The operator fills in a great deal of default spec on first reconcile, so
+  # `apply` rather than a plain create: re-running must not fight the values
+  # the operator itself wrote.
+
+- name: Wait for the instance to report Successful
+  kubernetes.core.k8s_info:
+    api_version: "{{ _aap_api_version }}"
+    kind: AnsibleAutomationPlatform
+    name: "{{ aap_instance_name }}"
+    namespace: "{{ aap_namespace }}"
+  register: _aap_instance
+  retries: "{{ ((aap_wait_timeout | int) / 15) | int }}"
+  delay: 15
+  until: >-
+    _aap_instance.resources | length > 0
+    and (_aap_instance.resources[0].status.conditions | default([]))
+        | selectattr('type', 'equalto', 'Successful')
+        | selectattr('status', 'equalto', 'True')
+        | list | length > 0
+  # If this times out the cause is nearly always scheduling or storage rather
+  # than the operator. Look there first:
+  #   oc get pods -n {{ aap_namespace }}
+  #   oc get pvc  -n {{ aap_namespace }}
+  #   oc get events -n {{ aap_namespace }} --sort-by=.lastTimestamp | tail
