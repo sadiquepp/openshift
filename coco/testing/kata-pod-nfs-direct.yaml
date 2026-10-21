@@ -1,0 +1,68 @@
+---
+# Step 1 of the direct in-pod NFS mount test - single container, no sidecar.
+#
+# The pod mounts the NFS share served by the helper node itself, from inside the
+# Kata guest, over the pod network. There is no PV/PVC and no kubelet-side NFS
+# mount, so nothing is mounted on the worker node.
+#
+# Test with runtimeClassName "kata" first (exec and logs are unrestricted there),
+# then move to kata-cc using testing/kata-cc-pod-nfs-direct.yaml.
+#
+# Replace: image, NFS_SERVER (helper IP), NFS_EXPORT.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nfs-direct-check
+  labels:
+    app: nfs-direct-check
+  annotations:
+    io.katacontainers.config.hypervisor.default_memory: "4096"
+spec:
+  runtimeClassName: kata
+  restartPolicy: Never
+  containers:
+  - name: nfs-client
+    image: mirror.hub.mylab.com:8443/openshift_sandboxed_containers/ubi-nfs-util:latest
+    securityContext:
+      privileged: true # mount(2) needs CAP_SYS_ADMIN, but only inside the Kata VM
+      runAsUser: 0
+    env:
+      - name: NFS_SERVER
+        value: "192.168.122.1"   # helper node IP. Use an IP - cluster DNS does not resolve helper names.
+      - name: NFS_EXPORT
+        value: "/srv/nfs/kata"
+      - name: MOUNTPOINT
+        value: "/mnt/nfs"
+      - name: NFS_OPTS
+        value: "vers=4.2,rw,hard,timeo=600,retrans=2,sec=sys"
+    command: ["/bin/bash", "-c"]
+    args:
+      - |
+        set -x
+
+        echo "### 1. does the Kata guest kernel support the nfs client?"
+        grep -E 'nfs|nfs4' /proc/filesystems || modprobe nfs || true
+        grep -q nfs /proc/filesystems \
+          || echo "WARNING: no nfs filesystem in the guest kernel - the mount below will fail with 'unknown filesystem type'"
+
+        echo "### 2. is the helper reachable over the pod network?"
+        ip -4 addr show
+        ip -4 route show
+        ping -c 2 "$NFS_SERVER" || true
+        nc -vz -w 5 "$NFS_SERVER" 2049
+
+        echo "### 3. mount the export"
+        mkdir -p "$MOUNTPOINT"
+        mount -t nfs -o "$NFS_OPTS" "${NFS_SERVER}:${NFS_EXPORT}" "$MOUNTPOINT"
+        findmnt "$MOUNTPOINT"
+        nfsstat -m
+
+        echo "### 4. read what the helper seeded, then write from the pod"
+        ls -l "$MOUNTPOINT"
+        cat "$MOUNTPOINT/from-helper.txt"
+        echo "written by $(hostname) at $(date -Is)" > "${MOUNTPOINT}/from-pod-$(hostname).txt"
+        cat "${MOUNTPOINT}/from-pod-$(hostname).txt"
+        df -hT "$MOUNTPOINT"
+
+        echo "### NFS mount test PASSED - keeping the pod alive for inspection"
+        sleep 36000

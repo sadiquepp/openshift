@@ -215,6 +215,43 @@ ps aux | grep qemu-kv
 ```
 * How to validate the pod is encrypted im memory?
 
+# Testing Direct NFS Mount Inside the CoCo Guest
+
+* A pod can mount an NFS share from a remote server itself, from inside the Kata/CoCo guest, over the pod network. There is no PV, PVC or CSI driver involved and the share is never mounted on the worker node, so the host cannot read it. This is the NFS counterpart of the block device example at testing/kata-cc-pod-pv-block.yaml.
+
+* The full runbook, the helper node NFS server setup script, the nfs-utils client image and both test manifests are at https://github.com/sadiquepp/openshift/tree/main/coco/nfs
+
+* Set up the export on the helper node.
+
+```
+cd nfs
+sudo ./setup-nfs-server.sh
+```
+
+* Build and mirror the client image that provides mount.nfs inside the pod. The Kata guest rootfs does not ship nfs-utils.
+
+```
+export NFS_UTIL_IMAGE="<mirror_registry>/openshift_sandboxed_containers/ubi-nfs-util:latest"
+podman build -t $NFS_UTIL_IMAGE -f nfs/Containerfile nfs/
+podman push $NFS_UTIL_IMAGE
+```
+
+* Test with runtime class "kata" first, where exec and logs are unrestricted, then switch the same manifest to "kata-cc".
+
+```
+oc apply -f testing/kata-pod-nfs-direct.yaml
+oc logs -f nfs-direct-check
+```
+
+* Then test the sidecar pattern a real application needs, where the mount is made by a native sidecar and the app container reaches it through the shared PID namespace.
+
+```
+oc apply -f testing/kata-cc-pod-nfs-direct.yaml
+oc logs nfs-unencrypted -c mount-nfs
+```
+
+* The first thing to establish is whether the Kata guest kernel has an NFS client at all. If "grep nfs /proc/filesystems" comes back empty in the pod and "modprobe nfs" fails, the mount fails with "unknown filesystem type 'nfs'" and no server side change will help. See the fallbacks in coco/nfs/README.md.
+
 # Testing Attestation from Trustee
 
 * Modify testing/ubi-pod.yaml to update the image location to local mirror

@@ -1,0 +1,128 @@
+---
+# Step 2 of the direct in-pod NFS mount test - NFS equivalent of
+# testing/kata-cc-pod-pv-block.yaml.
+#
+# Instead of a raw block PVC that a sidecar formats and mounts, a sidecar mounts
+# an NFS export from the helper node over the pod network, and the application
+# container reaches that mount through the shared PID namespace
+# (/proc/<sidecar-pid>/root/...), exactly as in the block device example. A mount
+# made in one container is not visible in another container's mount namespace,
+# which is why the symlink trick is needed here too.
+#
+# Nothing is mounted on the worker node: the mount happens inside the
+# Kata/CoCo guest, so the host (and kubelet) never see the share. That is the
+# point of the exercise for a confidential workload.
+#
+# Replace: images, NFS_SERVER (helper IP), NFS_EXPORT.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nfs-unencrypted
+  labels:
+    app: nfs-unencrypted
+  annotations:
+    io.katacontainers.config.hypervisor.default_memory: "4096"
+spec:
+  # Use "kata" to validate the pattern first, then switch to "kata-cc".
+  runtimeClassName: kata-cc
+  shareProcessNamespace: true # This is critical to allow access to containers
+  containers:
+  - name: hello-openshift
+    env:
+      - name: DATA_DIR # change this dir to meet your app's requirements.
+        value: /data
+      - name: NFS_MOUNTPOINT # must match the sidecar's TARGETPOINT below
+        value: /mnt/nfs
+    lifecycle:
+      postStart:
+        exec:
+          command:
+            - /bin/sh
+            - -c
+            - |
+              # Find the sidecar by the .ready marker it drops on the share,
+              # rather than assuming it is the second process in the pod.
+              for p in /proc/[0-9]*; do
+                if [ -e "$p/root$NFS_MOUNTPOINT/.ready" ]; then
+                  chmod ug+w $(dirname $DATA_DIR)
+                  ln -sfn "$p/root$NFS_MOUNTPOINT" $DATA_DIR
+                  exit 0
+                fi
+              done
+              echo "could not find the NFS sidecar mount" >&2
+              exit 1
+    securityContext:
+      privileged: true # security must be elevated to read /proc/<pid>/root, however, it's within the kata vm
+    image: mirror.hub.mylab.com:8443/openshift/origin-hello-openshift:4.16
+    ports:
+      - containerPort: 8888
+  initContainers: # note. If you have init containers already for the container *append* them to this list.
+  - name: mount-nfs
+    image: mirror.hub.mylab.com:8443/openshift_sandboxed_containers/ubi-nfs-util:latest
+    securityContext:
+      privileged: true # mount(2) needs CAP_SYS_ADMIN inside the guest
+    restartPolicy: Always  # Native sidecar so it doesn't block boot and keeps the mount alive
+    env:
+      - name: NFS_SERVER
+        value: "192.168.122.1"   # helper node IP. Use an IP - cluster DNS does not resolve helper names.
+      - name: NFS_EXPORT
+        value: "/srv/nfs/kata"
+      - name: NFS_OPTS
+        value: "vers=4.2,rw,hard,timeo=600,retrans=2,sec=sys"
+    command: ["/bin/sh", "-c"]
+    args:
+      - |
+        set -e # error out
+        TARGETPOINT=/mnt/nfs
+        grep -q nfs /proc/filesystems || modprobe nfs || true
+        if ! mount | grep -q " $TARGETPOINT "; then
+            mkdir -p "$TARGETPOINT"
+            mount -t nfs -o "$NFS_OPTS" "${NFS_SERVER}:${NFS_EXPORT}" "$TARGETPOINT"
+            echo "${NFS_SERVER}:${NFS_EXPORT} mounted at $TARGETPOINT"
+        else
+            echo "$TARGETPOINT is already mounted."
+        fi
+        findmnt "$TARGETPOINT"
+        touch $TARGETPOINT/.ready
+        # Keep the sidecar - and therefore the mount namespace holding the
+        # NFS mount - alive for as long as the pod runs.
+        tail -f /dev/null
+  - name: check-ready # this container is used to make sure the mount is done before the main container is launched.
+    image: mirror.hub.mylab.com:8443/openshift_sandboxed_containers/ubi-nfs-util:latest
+    securityContext:
+      privileged: true
+    env:
+      - name: NFS_MOUNTPOINT
+        value: /mnt/nfs
+    command: ["/bin/sh", "-c"]
+    args:
+      - |
+        set -e
+        MAX_WAIT=600 # seconds. NFS needs no mkfs, so this is much shorter than the block case.
+        WAITED=0
+
+        while [ $WAITED -lt $MAX_WAIT ]; do
+          for p in /proc/[0-9]*; do
+            if [ -e "$p/root$NFS_MOUNTPOINT/.ready" ]; then
+              echo "found $p/root$NFS_MOUNTPOINT/.ready"
+              exit 0
+            fi
+          done
+          sleep 1
+          WAITED=$((WAITED + 1))
+          echo "Waited: ${WAITED} s"
+        done
+        echo "Timed out waiting for the NFS sidecar mount"
+        exit 1
+---
+kind: Service
+apiVersion: v1
+metadata:
+  name: nfs-unencrypted-service
+  labels:
+    app: nfs-unencrypted
+spec:
+  selector:
+    app: nfs-unencrypted
+  ports:
+    - port: 8888
