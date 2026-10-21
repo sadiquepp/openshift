@@ -1,0 +1,80 @@
+---
+# Namespace and identity for the build pipeline.
+#
+# Nothing here is specific to the Online Boutique workload -- it is the
+# plumbing every buildah-based pipeline on OpenShift needs: a service account,
+# the SCC that lets buildah run, and the registry credentials and CA the push
+# needs. Apply this first and get it working before any pipeline exists.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: boutique-ci
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: boutique-builder
+  namespace: boutique-ci
+---
+# The OpenShift Pipelines operator creates a "pipeline" SA in every namespace
+# and binds pipelines-scc to it. A dedicated SA is used here instead so the
+# build identity is explicit and can be tightened independently.
+#
+# pipelines-scc is based on anyuid and additionally allows SETFCAP, which is
+# what buildah needs to write file capabilities while unpacking a base image.
+# The shipped buildah task defaults to the vfs storage driver because overlay
+# needs more privilege than this.
+#
+# >> DECISION POINT, and for this repository it is not a detail. <<
+#
+# Red Hat's guidance is that the simplest way to guarantee every image builds
+# is to run buildah as root under the privileged SCC. Do not reach for that
+# here without thinking: these pipelines exist to produce hardened images, and
+# a privileged builder is the first thing a reviewer will point at.
+#
+# In order of preference:
+#   1. pipelines-scc, below -- try this first, it is enough for every
+#      Containerfile in test-workloads/online-boutique/hardened/.
+#   2. The documented unprivileged buildah setup (custom SCC, requires
+#      allowPrivilegeEscalation) if a build fails on capabilities. See
+#      "Unprivileged building of container images using buildah" in the
+#      OpenShift Pipelines docs for YOUR version -- the SCC differs between
+#      versions, so copy it from there rather than from a blog.
+#   3. OpenShift Pipelines 1.20+ ships a buildah-ns task for this case.
+#   4. privileged, only with a written reason.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: boutique-builder-scc
+  namespace: boutique-ci
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:openshift:scc:pipelines-scc
+subjects:
+  - kind: ServiceAccount
+    name: boutique-builder
+    namespace: boutique-ci
+---
+# Push credentials for your registry, as a docker config. The build task mounts
+# this at a workspace and points buildah at it; it is NOT linked to the service
+# account, so it cannot leak into unrelated pods in this namespace.
+#
+#   oc -n boutique-ci create secret docker-registry registry-auth \
+#     --docker-server=registry.example.com:8443 \
+#     --docker-username='<user>' --docker-password='<password>'
+#
+# Note --docker-server must match the registry host in IMAGE exactly, port
+# included, or buildah will not find the entry and the push fails as 401.
+---
+# If your registry uses a private CA, the build pods need to trust it. On
+# OpenShift the supported path is a ConfigMap labelled for injection, which the
+# Network Operator fills in with the cluster trust bundle:
+#
+#   oc -n boutique-ci create configmap registry-ca \
+#     --from-file=ca-bundle.crt=/path/to/ca.crt
+#
+# This is the same CA problem solved for the cluster in step 5 of
+# test-workloads/online-boutique/hardened/README.md. Solving it there does not
+# solve it here: that made the NODES trust the registry, this makes the BUILD
+# POD trust it. Two different trust stores, same certificate.

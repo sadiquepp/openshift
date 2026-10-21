@@ -1,0 +1,190 @@
+---
+# Phase 1: build ONE service from ONE base set, end to end.
+#
+# Deliberately not the matrix yet. Everything that usually goes wrong on a
+# first OpenShift Pipelines build -- the SCC, the registry credentials, the
+# private CA, pulling hardened base images from registry.access.redhat.com --
+# goes wrong here too, and is far easier to read in a single TaskRun than in
+# one of twenty-two running at once. Get this green, then fan out.
+#
+# Two clones, because the inputs live in two places:
+#   upstream/  the application source   (GoogleCloudPlatform/microservices-demo)
+#   recipes/   the Containerfiles       (this repository)
+# build-push.sh does the same thing -- it clones upstream and builds with
+# "$HERE/$CF" against "$SRC/$CTX".
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: build-service
+  namespace: boutique-ci
+spec:
+  description: >-
+    Clone upstream application source and this repository, resolve the base
+    image digests, and build and push one service.
+  params:
+    - name: SERVICE
+      type: string
+      description: Service name; also the repository name in the target registry.
+    - name: BASE_SET
+      type: string
+      description: hardened or ubi. Only labels the image; the bases below decide the build.
+    - name: REGISTRY
+      type: string
+      description: Registry and namespace, e.g. registry.example.com:8443/online-boutique
+    - name: VERSION
+      type: string
+      default: v0.10.6
+    - name: REVISION
+      type: string
+      description: Build id, e.g. b20261021. Must be unique per build to stay immutable.
+    - name: TAG_SUFFIX
+      type: string
+      default: ""
+      description: Empty for hardened, "-ubi" for the UBI set, matching bases.env.
+    # Per-service recipe. In phase 2 this moves into the matrix; here it is
+    # explicit so one run is one readable thing.
+    - name: CONTAINERFILE
+      type: string
+      description: Path under recipes/, e.g. test-workloads/online-boutique/hardened/Containerfile.go
+    - name: CONTEXT
+      type: string
+      description: Path under upstream/, e.g. src/frontend
+    - name: BUILD_ARGS
+      type: array
+      default: []
+      description: Extra build args beyond BUILDER and RUNTIME, e.g. ENTRY=server.js
+    - name: BUILDER_BASE
+      type: string
+    - name: RUNTIME_BASE
+      type: string
+    - name: UPSTREAM_REPO
+      type: string
+      default: https://github.com/GoogleCloudPlatform/microservices-demo
+    - name: UPSTREAM_REVISION
+      type: string
+      default: v0.10.6
+    - name: RECIPES_REPO
+      type: string
+      default: https://github.com/sadiquepp/openshift
+    - name: RECIPES_REVISION
+      type: string
+      default: main
+    - name: TLS_VERIFY
+      type: string
+      default: "true"
+  workspaces:
+    - name: source
+      description: Shared across tasks; give it a volumeClaimTemplate per run.
+    - name: dockerconfig
+      description: Registry push credentials.
+      optional: true
+  results:
+    - name: IMAGE_DIGEST
+      description: What a GitOps overlay should pin.
+      value: $(tasks.build.results.IMAGE_DIGEST)
+    - name: IMAGE_URL
+      value: $(tasks.build.results.IMAGE_URL)
+  tasks:
+    # ClusterTasks were deprecated in OpenShift Pipelines 1.10; the cluster
+    # resolver (GA since 1.11) is how you reach the shipped tasks now. Most
+    # tutorials still say `taskRef: {kind: ClusterTask}` and will not work.
+    - name: clone-upstream
+      taskRef:
+        resolver: cluster
+        params:
+          - name: kind
+            value: task
+          - name: name
+            value: git-clone
+          - name: namespace
+            value: openshift-pipelines
+      workspaces:
+        - name: output
+          workspace: source
+      params:
+        - name: URL
+          value: $(params.UPSTREAM_REPO)
+        - name: REVISION
+          value: $(params.UPSTREAM_REVISION)
+        - name: SUBDIRECTORY
+          value: upstream
+
+    - name: clone-recipes
+      runAfter: [clone-upstream]   # same workspace; git-clone wants a clean subdir
+      taskRef:
+        resolver: cluster
+        params:
+          - name: kind
+            value: task
+          - name: name
+            value: git-clone
+          - name: namespace
+            value: openshift-pipelines
+      workspaces:
+        - name: output
+          workspace: source
+      params:
+        - name: URL
+          value: $(params.RECIPES_REPO)
+        - name: REVISION
+          value: $(params.RECIPES_REVISION)
+        - name: SUBDIRECTORY
+          value: recipes
+
+    # Resolved before the build, so the label records the base the build used
+    # rather than whatever the tag points at when the build finishes.
+    - name: resolve-builder
+      taskRef:
+        name: resolve-base-digest
+      params:
+        - name: IMAGE
+          value: $(params.BUILDER_BASE)
+
+    - name: resolve-runtime
+      taskRef:
+        name: resolve-base-digest
+      params:
+        - name: IMAGE
+          value: $(params.RUNTIME_BASE)
+
+    - name: build
+      runAfter: [clone-recipes, resolve-builder, resolve-runtime]
+      taskRef:
+        name: build-service
+      workspaces:
+        - name: source
+          workspace: source
+        - name: dockerconfig
+          workspace: dockerconfig
+      params:
+        # The immutable tag. build-push.sh pushes <version>-<build-id> as well
+        # as a floating tag; the pipeline pushes only this one, because the
+        # floating tag is what made a rebuild invisible to a node that had
+        # already cached it. GitOps pins the digest instead.
+        - name: IMAGE
+          value: $(params.REGISTRY)/$(params.SERVICE):$(params.VERSION)-$(params.REVISION)$(params.TAG_SUFFIX)
+        - name: CONTAINERFILE
+          value: recipes/$(params.CONTAINERFILE)
+        - name: CONTEXT
+          value: upstream/$(params.CONTEXT)
+        - name: BUILD_ARGS
+          value:
+            - BUILDER=$(params.BUILDER_BASE)
+            - RUNTIME=$(params.RUNTIME_BASE)
+            - $(params.BUILD_ARGS[*])
+        - name: BUILDER_BASE
+          value: $(params.BUILDER_BASE)
+        - name: BUILDER_BASE_DIGEST
+          value: $(tasks.resolve-builder.results.DIGEST)
+        - name: RUNTIME_BASE
+          value: $(params.RUNTIME_BASE)
+        - name: RUNTIME_BASE_DIGEST
+          value: $(tasks.resolve-runtime.results.DIGEST)
+        - name: VERSION
+          value: $(params.VERSION)
+        - name: REVISION
+          value: $(params.REVISION)
+        - name: BASE_SET
+          value: $(params.BASE_SET)
+        - name: TLS_VERIFY
+          value: $(params.TLS_VERIFY)

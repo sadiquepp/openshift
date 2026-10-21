@@ -1,0 +1,151 @@
+---
+# Build one Online Boutique service and push it, stamped with the same labels
+# build-push.sh writes.
+#
+# WHY NOT THE SHIPPED buildah TASK?
+#
+# You can reference it with the cluster resolver (kind: task, name: buildah,
+# namespace: openshift-pipelines) and for a simple build you should. It does
+# not fit here:
+#
+#   - Every Containerfile in this workload takes two to four --build-arg
+#     values, and each image carries six --label values. The shipped task
+#     takes them through BUILD_EXTRA_ARGS, a single string. An array value
+#     containing a space broke on the migration from the deprecated
+#     ClusterTask (SRVKP-7213) and multi-line continuation fails with
+#     "accepts at most 1 arg(s)" (SRVKP-8513). Ten flags in one string with
+#     no quoting of your own is a trap.
+#   - The labels are a fixed, meaningful set for this repository -- they are
+#     what check-bases.sh reads -- so they belong as named parameters, where
+#     a missing one is a validation error rather than a silently absent label.
+#
+# So BUILD_ARGS stays an array (expanded into the script's positional
+# parameters, which is the supported way to use an array param in a script)
+# and the labels are scalars.
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: build-service
+  namespace: boutique-ci
+spec:
+  description: >-
+    Build a Containerfile from this repository against application source
+    cloned from upstream, stamp the base-image digests as labels, and push.
+  params:
+    - name: IMAGE
+      type: string
+      description: Full target reference including registry, repository and tag.
+    - name: CONTAINERFILE
+      type: string
+      description: Path to the Containerfile, relative to the workspace.
+    - name: CONTEXT
+      type: string
+      description: Build context directory, relative to the workspace.
+    - name: BUILD_ARGS
+      type: array
+      default: []
+      description: Build arguments as KEY=VALUE, one array element each.
+    # The label set check-bases.sh reads. Keep these in step with the
+    # --label flags in test-workloads/online-boutique/hardened/build-push.sh.
+    - name: RUNTIME_BASE
+      type: string
+    - name: RUNTIME_BASE_DIGEST
+      type: string
+    - name: BUILDER_BASE
+      type: string
+    - name: BUILDER_BASE_DIGEST
+      type: string
+    - name: VERSION
+      type: string
+    - name: REVISION
+      type: string
+      description: Build id, the value check-bases.sh prints as "build <id>".
+    - name: BASE_SET
+      type: string
+      description: hardened or ubi.
+    - name: STORAGE_DRIVER
+      type: string
+      default: vfs
+    - name: TLS_VERIFY
+      type: string
+      default: "true"
+    - name: BUILDAH_IMAGE
+      type: string
+      default: registry.redhat.io/rhel9/buildah:latest
+  results:
+    - name: IMAGE_DIGEST
+      description: Digest of the image just pushed. This is what GitOps pins.
+    - name: IMAGE_URL
+      description: The image reference that was pushed.
+  workspaces:
+    - name: source
+      description: Holds both clones -- upstream application source and this repo.
+    - name: dockerconfig
+      description: >-
+        Registry credentials as config.json or .dockerconfigjson at the root.
+      optional: true
+  steps:
+    - name: build-and-push
+      image: $(params.BUILDAH_IMAGE)
+      workingDir: $(workspaces.source.path)
+      # The only supported way to expand an array param inside a script: put it
+      # in args, read it back as "$@".
+      args: ["$(params.BUILD_ARGS[*])"]
+      securityContext:
+        capabilities:
+          add: ["SETFCAP"]
+      script: |
+        #!/bin/bash
+        set -euo pipefail
+
+        BUILD_ARGS=()
+        for kv in "$@"; do
+          BUILD_ARGS+=(--build-arg "$kv")
+        done
+
+        # Point buildah at the mounted credentials if the workspace is bound.
+        # Both key names are accepted because `oc create secret
+        # docker-registry` writes .dockerconfigjson while a hand-made secret
+        # usually holds config.json.
+        AUTH=()
+        if [ "$(workspaces.dockerconfig.bound)" = "true" ]; then
+          for f in "$(workspaces.dockerconfig.path)/config.json" \
+                   "$(workspaces.dockerconfig.path)/.dockerconfigjson"; do
+            [ -f "$f" ] && { AUTH=(--authfile "$f"); break; }
+          done
+          [ "${#AUTH[@]}" -gt 0 ] || {
+            echo "dockerconfig workspace is bound but holds neither config.json nor .dockerconfigjson" >&2
+            exit 1
+          }
+        fi
+
+        buildah --storage-driver=$(params.STORAGE_DRIVER) bud \
+          "${BUILD_ARGS[@]}" \
+          --label "org.opencontainers.image.base.name=$(params.RUNTIME_BASE)" \
+          --label "org.opencontainers.image.base.digest=$(params.RUNTIME_BASE_DIGEST)" \
+          --label "org.opencontainers.image.version=$(params.VERSION)" \
+          --label "org.opencontainers.image.revision=$(params.REVISION)" \
+          --label "online-boutique.build.builder-base.name=$(params.BUILDER_BASE)" \
+          --label "online-boutique.build.builder-base.digest=$(params.BUILDER_BASE_DIGEST)" \
+          --label "online-boutique.build.base-set=$(params.BASE_SET)" \
+          --tls-verify=$(params.TLS_VERIFY) \
+          --no-cache \
+          -f "$(params.CONTAINERFILE)" \
+          -t "$(params.IMAGE)" \
+          "$(params.CONTEXT)"
+
+        buildah --storage-driver=$(params.STORAGE_DRIVER) push \
+          "${AUTH[@]}" \
+          --tls-verify=$(params.TLS_VERIFY) \
+          --digestfile /tmp/image-digest \
+          "$(params.IMAGE)" \
+          "docker://$(params.IMAGE)"
+
+        tee "$(results.IMAGE_DIGEST.path)" < /tmp/image-digest
+        printf '%s' "$(params.IMAGE)" | tee "$(results.IMAGE_URL.path)"
+      volumeMounts:
+        - name: varlibcontainers
+          mountPath: /var/lib/containers
+  volumes:
+    - name: varlibcontainers
+      emptyDir: {}

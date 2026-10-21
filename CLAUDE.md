@@ -25,6 +25,7 @@ Each top-level directory is a self-contained use case with its own `README.md` d
 | `logging/` | OpenShift Logging (Loki on S3 + Cluster Observability Operator UIPlugin) setup runbook. |
 | `networking/` | Two-VLAN ingress/MetalLB/UDN/CUDN networking guides. |
 | `acs/` | Advanced Cluster Security — RHACS operator, Central and SecuredCluster manifests in apply order, plus a script that scans the Online Boutique namespaces and diffs them. |
+| `pipelines/` | Tekton (OpenShift Pipelines) build automation for the Online Boutique workload — rebuilds the eleven services on hardened and UBI base sets and stamps the base digests `check-bases.sh` reads. Phase 1 is runnable; later phases (matrix fan-out, Argo CD digest write-back, rebuild-on-stale-base, RHACS gate) are designed in its README. |
 | `quay/` | Quay registry admin/config/registry manifests. |
 | `collections/requirements.yml` | Ansible Galaxy collections required across playbooks (`amazon.aws`, `community.aws`, `community.general`). |
 

@@ -1,0 +1,54 @@
+---
+# Phase 1 smoke test: one Go service on the hardened base set.
+#
+#   oc -n boutique-ci create -f runs/build-frontend-hardened.yaml
+#   tkn -n boutique-ci pipelinerun logs -L -f
+#
+# generateName, not name: a PipelineRun is immutable, so re-running needs a new
+# object. `oc create`, never `oc apply`.
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: build-frontend-hardened-
+  namespace: boutique-ci
+spec:
+  pipelineRef:
+    name: build-service
+  taskRunTemplate:
+    serviceAccountName: boutique-builder
+  params:
+    - name: SERVICE
+      value: frontend
+    - name: BASE_SET
+      value: hardened
+    - name: REGISTRY
+      value: registry.example.com:8443/online-boutique
+    - name: REVISION
+      value: b20261021
+    - name: CONTAINERFILE
+      value: test-workloads/online-boutique/hardened/Containerfile.go
+    - name: CONTEXT
+      value: src/frontend
+    # hi/go:latest-builder carries the toolchain and dnf; hi/static is the
+    # hardened counterpart of gcr.io/distroless/static and holds the binary
+    # and essentially nothing else. See bases.env for why not hi/go:latest.
+    - name: BUILDER_BASE
+      value: registry.access.redhat.com/hi/go:latest-builder
+    - name: RUNTIME_BASE
+      value: registry.access.redhat.com/hi/static:latest
+    # Until this branch is merged, point at it rather than main.
+    - name: RECIPES_REVISION
+      value: claude/vigilant-babbage-4qxa4j
+  workspaces:
+    - name: source
+      # One volume per run. A shared RWO PVC is the classic Tekton deadlock
+      # once the matrix in phase 2 starts twenty-two builds at once.
+      volumeClaimTemplate:
+        spec:
+          accessModes: [ReadWriteOnce]
+          resources:
+            requests:
+              storage: 5Gi
+    - name: dockerconfig
+      secret:
+        secretName: registry-auth
