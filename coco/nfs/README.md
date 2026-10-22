@@ -25,11 +25,25 @@ first with `runtimeClassName: kata` (ordinary sandboxed containers - same mount
 mechanics and the same network path, but `oc exec` and logs are unrestricted),
 then switch the same manifest to `kata-cc`.
 
-Note what the first step does *not* prove. OSC ships a confidential kernel and
-initrd for the CoCo handler and a non-confidential pair for plain `kata` - same
-source tree, different config fragments - so NFS client support can differ
-between them. Re-run the `/proc/filesystems` check under `kata-cc`; a pass under
-`kata` only establishes the mechanics and the network path.
+Note what the first step does *not* prove. The two handlers boot different
+kernel *generations*, not variants of one build, so nothing about the guest
+kernel transfers between them. On OSC 1.8.1:
+
+| Handler | Artefacts (from `/etc/kata-containers/<handler>/configuration.toml`) | Guest kernel |
+|---|---|---|
+| `kata` | `/var/cache/kata-containers/osbuilder-images/kata.{kernel,initrd}`, built on the node | `5.14.0-687.39.1.el9_8` - the RHCOS kernel version |
+| `kata-snp` (`kata-cc`) | `/usr/share/kata-containers/osbuilder-images/kata-cc.kernel` plus `image = kata-containers-confidential.img`, shipped prebuilt | `6.12.0-211.16.1.el10_2` - RHEL 10 |
+
+So re-run the `/proc/filesystems` check under `kata-cc`; a pass under `kata` only
+establishes the mechanics and the network path.
+
+**Do not infer kernel support from the `.ko` files in these images.** The plain
+`kata` initrd carries `sunrpc.ko`, `grace.ko` and `nfs.ko` with no `nfsv4.ko`,
+yet its running guest registers both `nfs` and `nfs4` - the NFS client is
+compiled *into* that kernel and the module tree alongside it is incidental. Read
+`usr/lib/modules/<ver>/modules.builtin` instead, and treat even that as strong
+evidence rather than proof, since the tree need not belong to the kernel the
+handler boots.
 
 ### Which kernel is "the guest kernel"
 
