@@ -131,6 +131,35 @@ bumps the kernel forces a fresh build, while one that ships a new
 `kata-containers` RPM without a kernel change will reuse the existing directory
 and leave the old module list in place.
 
+Baseline for the confidential handler, which is shaped differently - those
+artefacts are prebuilt files rather than generated per kernel:
+
+```
+# oc debug node/<node> -- chroot /host rpm -qf \
+#     /usr/share/kata-containers/osbuilder-images/kata-cc.kernel \
+#     /usr/share/kata-containers/osbuilder-images/kata-cc.initrd
+kata-containers-3.31.0-4.rhaos4.22.el9.x86_64
+kata-containers-3.31.0-4.rhaos4.22.el9.x86_64
+
+# zcat /usr/share/kata-containers/osbuilder-images/kata-cc.initrd | cpio -it | grep -i nfs
+usr/lib/modules/6.12.0-211.16.1.el10_2.x86_64/kernel/fs/nfs/nfs.ko.xz
+usr/lib/modules/6.12.0-211.16.1.el10_2.x86_64/kernel/fs/nfs_common/grace.ko.xz
+usr/lib/modules/6.12.0-211.16.1.el10_2.x86_64/kernel/fs/nfs_common/nfs_localio.ko.xz
+```
+
+Same `nfs.ko`-without-`nfsv4.ko` pattern, at a RHEL 10 kernel against RHEL 9 for
+plain `kata`. The `rpm -qf` result is the useful part: the confidential kernel
+and initrd ship in the **same** `kata-containers` RPM, so one z-stream upgrade
+should carry the fix into both runtimes - and into `kata-cc` it arrives inside
+the attested guest image, which is the only acceptable way for a confidential
+workload.
+
+Two things still unrecorded on the confidential side: whether NFS is instead
+compiled into `kata-cc.kernel` (check `modules.builtin` in its initrd), and
+whether the RPM ships the `kata-containers-confidential.img` that
+`kata-snp/configuration.toml` references but which is absent from the node
+(`rpm -ql kata-containers | grep -i confidential`).
+
 After upgrading, re-run the same command and check:
 
 1. `rpm -q kata-containers` is 3.31.0-5 or later.

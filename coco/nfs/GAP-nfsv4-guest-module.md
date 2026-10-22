@@ -171,6 +171,17 @@ usr/lib/modules/6.12.0-211.16.1.el10_2.x86_64/kernel/fs/nfs_common/nfs_localio.k
 `kata` rootfs in **Evidence 3**, at a different kernel (`6.12.0-211.16.1.el10_2`,
 RHEL 10, against `5.14.0-687.39.1.el9_8`, RHEL 9, for plain `kata`).
 
+Both confidential artefacts ship in the same RPM as the plain ones, confirmed
+on the node:
+
+```
+# rpm -qf /usr/share/kata-containers/osbuilder-images/kata-cc.{kernel,initrd}
+kata-containers-3.31.0-4.rhaos4.22.el9.x86_64
+kata-containers-3.31.0-4.rhaos4.22.el9.x86_64
+```
+
+so a single fix in that package reaches both runtimes.
+
 Two caveats on this item, stated plainly rather than glossed:
 
 - It has not been reproduced on a *running* CoCo guest; no SNP node was
