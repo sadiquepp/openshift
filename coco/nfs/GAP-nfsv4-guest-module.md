@@ -1,5 +1,13 @@
 # Gap: Kata guest rootfs ships `nfs.ko` without `nfsv4.ko`, so in-guest NFS mounts fail
 
+> **Do not file this yet - it is reported fixed.** Red Hat reports NFSv4 support
+> landed in Kata **3.31.0-5**. To pick it up, upgrade to the latest 4.22 z-stream
+> (kata v6), or to any of 4.22.11 - 4.22.18 (kata v5). Verify on an upgraded
+> cluster before filing anything: if the mount works with no `modprobe` and no
+> `hostPath`, this document is a historical record of the diagnosis on the
+> affected versions, not a bug report. File only if the gap survives the
+> upgrade.
+
 Write-up for a Red Hat support case / Jira against OpenShift sandboxed containers.
 Everything under **Evidence** was measured on the lab described below; the
 **Root cause** section is analysis of upstream kernel behaviour that is
