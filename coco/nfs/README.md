@@ -283,12 +283,16 @@ the node address; the helper never sees the pod IP. What that costs:
   `setup-nfs-server.sh` is v4-only: NLM/statd lock recovery needs the server to
   send `SM_NOTIFY` *to* the client's registered address, and behind NAT that is
   a pod IP.
-* **Watch the source port.** The client uses a privileged port (`resvport`) and
-  exports default to `secure`, which requires one. The kernel NAT core tries to
-  keep the original port and otherwise stays inside the privileged range, and
-  OVN's SNAT goes through that same code via OVS conntrack - but if it ever
-  lands above 1023 the mount is refused with a correct export. Confirm on the
-  helper with `ss -tn state established '( sport = :2049 )'`.
+* **The export must say `insecure`.** This is measured, not a caveat: the client
+  uses a privileged port (`resvport`) and exports default to `secure`, which
+  requires one, but OVN's SNAT does **not** preserve the privileged port range -
+  on this lab a mount arrived from port `33839`. `nfsd`'s
+  `nfsd_originating_port_ok()` then returns `nfserr_perm`, which reaches the
+  client as `mount.nfs: Operation not permitted`. The pod cannot influence the
+  translation, so the export has to allow a non-reserved port. Confirm what the
+  server sees with `ss -Htn state all '( sport = :2049 )'` on the helper while
+  the mount is in flight; the same line also shows which address the SNAT used,
+  which need not be the node's kubelet IP.
 * **Conntrack is stateful**, so an evicted entry would hang a `hard` mount.
   NFSv4 lease renewal (90s default) keeps the mapping warm on an active mount.
 * **Client identity.** Several pods behind one node IP are distinct clients from
@@ -326,7 +330,7 @@ workload. Ways back, in rough order of effort:
 | `mount.nfs: command not found` / `helper program not found` | The container image lacks `nfs-utils` - use `ubi-nfs-util`, not the app image. |
 | `No route to host` / `nc` to 2049 times out | Firewall on the helper, or the node cannot reach the helper. Test from the node: `oc debug node/<node> -- chroot /host nc -vz <helper> 2049`. |
 | `access denied by server while mounting` | Export ACL does not cover the *node* IP (pod traffic is SNATed). Fix `NFS_CLIENT_CIDR` and `exportfs -rav`. |
-| `access denied by server while mounting`, export ACL already correct | SNAT moved the client off a privileged source port and the export defaults to `secure`. Check with `ss -tn state established '( sport = :2049 )'` on the helper; add `insecure` to the export, or mount with `noresvport`. |
+| `mount.nfs: Operation not permitted` | The export lacks `insecure` and SNAT moved the client off a reserved port, so `nfsd` returns `nfserr_perm`. Confirmed on this lab. Add `insecure` and `exportfs -rav`. |
 | `Operation not permitted` on mount | Container is not privileged, or the CoCo agent policy blocked it. |
 | Mount works, writes fail with `Permission denied` | `no_root_squash` missing, or the container runs as a UID the server does not map. Check `ls -ln` on the mount. |
 | Files show as `nobody:nobody` | NFSv4 idmapping - set the same `Domain =` in `/etc/idmapd.conf` on the helper and in the client image, or use numeric IDs (`nfs4_disable_idmapping=1`). |

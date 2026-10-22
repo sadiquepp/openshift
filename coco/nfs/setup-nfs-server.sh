@@ -18,9 +18,15 @@ NFS_EXPORT_DIR="${NFS_EXPORT_DIR:-/srv/nfs/kata}"
 # Who is allowed to mount. Pod traffic leaving the cluster network is SNATed to
 # the node IP, so this must cover the OpenShift *node* addresses, not the pod CIDR.
 NFS_CLIENT_CIDR="${NFS_CLIENT_CIDR:-192.168.122.0/24}"
+# insecure is REQUIRED for a mount made from inside a pod, and is not optional.
+# mount.nfs opens a reserved source port, but OVN SNATs pod traffic leaving the
+# cluster network and does not preserve the privileged port range - measured at
+# 33839 on this lab. nfsd's nfsd_originating_port_ok() then returns nfserr_perm
+# for a non-reserved port unless the export says insecure, which surfaces as
+# "mount.nfs: Operation not permitted". The pod cannot influence the translation.
 # no_root_squash is needed because the test container mounts and writes as root
 # inside the Kata guest. Drop it once the application runs as a normal UID.
-NFS_EXPORT_OPTS="${NFS_EXPORT_OPTS:-rw,sync,no_wdelay,no_subtree_check,no_root_squash}"
+NFS_EXPORT_OPTS="${NFS_EXPORT_OPTS:-rw,sync,no_wdelay,no_subtree_check,no_root_squash,insecure}"
 # Serve NFSv4 only (single port 2049/tcp). Set to "y" to also enable NFSv3,
 # which additionally needs rpcbind/mountd/statd ports opened.
 NFS_ENABLE_V3="${NFS_ENABLE_V3:-n}"
