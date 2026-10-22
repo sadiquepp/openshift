@@ -53,6 +53,21 @@ As a control, run the same manifest with no `runtimeClassName` at all: a
 privileged runc pod shares the RHCOS kernel, which certainly has an NFS client.
 If it mounts under runc and fails under `kata`, the guest kernel is the cause.
 
+## What has been verified so far
+
+| Check | Result |
+|---|---|
+| Guest kernel NFS client under `kata` | **Present.** `nfs` and `nfs4` are registered in `/proc/filesystems`, so they are built in - no `modprobe` needed. `fuse` is present too, so the `fuse-nfs` fallback is available. Measured on OSC 1.8.1, guest kernel `5.14.0-687.39.1.el9_8.x86_64`. |
+| Probe really ran in the VM | **Yes.** `/sys/class/dmi/id/sys_vendor` reads `Red Hat` (a RHEL KVM guest); the bare metal would read `Dell Inc.`. The guest kernel version matching the node's is expected for the RHEL-derived OSC guest kernel, and is not evidence of a runc fallback. |
+| Guest kernel NFS client under `kata-cc` | **Not tested** - no SNP node available. Check it statically from the node instead: compare `sha256sum /usr/share/kata-containers/vmlinuz*` (identical build means the result above carries over) and `file` each one for its version string. If the confidential image loads modules rather than built-ins, `zcat <initrd> \| cpio -it \| grep -i nfs` shows whether `nfs.ko` ships in it. |
+| Everything downstream of the kernel | **Not tested** - the helper export, the client image, the mount itself, the SNAT'd source port and the sidecar pattern are all as written, not as run. |
+
+The `kata` leg covers everything that is not CoCo-specific: mount mechanics, client
+image, pod-network path, SNAT behaviour, server config. Three things remain
+`kata-cc`-only and have to be re-checked when an SNP node is available: the guest
+kernel (above), pulling `ubi-nfs-util` from inside the guest with the injected CA
+and registry auth, and the agent policy if you want `oc exec` rather than logs.
+
 ## Contents
 
 | File | Purpose |
