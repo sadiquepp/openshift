@@ -1,12 +1,16 @@
 # Gap: Kata guest rootfs ships `nfs.ko` without `nfsv4.ko`, so in-guest NFS mounts fail
 
-> **Do not file this yet - it is reported fixed.** Red Hat reports NFSv4 support
-> landed in Kata **3.31.0-5**. To pick it up, upgrade to the latest 4.22 z-stream
-> (kata v6), or to any of 4.22.11 - 4.22.18 (kata v5). Verify on an upgraded
-> cluster before filing anything: if the mount works with no `modprobe` and no
-> `hostPath`, this document is a historical record of the diagnosis on the
-> affected versions, not a bug report. File only if the gap survives the
-> upgrade.
+> **RESOLVED - do not file.** NFSv4 support landed in Kata **3.31.0-5**, and the
+> fix is confirmed on this cluster after upgrading to OCP **4.22.18**
+> (`kata-containers-3.31.0-5.rhaos4.22.el9`): `nfsv4.ko` now ships in *both*
+> guest rootfs images, along with `auth_rpcgss.ko` and `rpcsec_gss_krb5.ko`, so
+> the kernel loads the version module on demand and no workaround is needed.
+> `nfsv3.ko` is still absent, which costs nothing here.
+>
+> What follows is kept as the diagnosis record for the affected builds
+> (`3.31.0-4` and earlier) - useful for recognising the same symptom, and for
+> the reasoning about why host-side module injection is not an option inside a
+> TEE. It is not a bug report.
 
 Write-up for a Red Hat support case / Jira against OpenShift sandboxed containers.
 Everything under **Evidence** was measured on the lab described below; the

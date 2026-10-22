@@ -73,7 +73,7 @@ If it mounts under runc and fails under `kata`, the guest kernel is the cause.
 | Check | Result |
 |---|---|
 | **Direct in-pod NFSv4.2 mount under `kata`** | **Works.** Mounted `nfs4 vers=4.2,proto=tcp,rsize=1048576,wsize=1048576,hard,sec=sys` from inside the Kata guest over the pod network; read back the file the helper had seeded and wrote to the share. `df` showed the helper's filesystem, not the guest's virtiofs rootfs. Measured on OSC 1.13.1, `kata-containers-3.31.0-4.rhaos4.22.el9`, guest kernel `5.14.0-687.39.1.el9_8.x86_64`, OCP 4.22 / RHCOS 9.8.20260812-0, three-node compact cluster. |
-| Two prerequisites, both mandatory | **1.** `modprobe nfsv4` in the guest first - the rootfs ships `nfs.ko`, `sunrpc.ko` and `grace.ko` but no `nfsv4.ko`/`nfsv3.ko`, so the kernel's on-demand `request_module` fails and every 4.x mount returns `Protocol not supported`. The kernel is capable; the rootfs is pruned. **2.** `insecure` on the export, per the SNAT'd source port above. With both in place the mount succeeded first try. |
+| Prerequisite | `insecure` on the export, per the SNAT'd source port above. That is the whole list from `kata-containers-3.31.0-5` onwards. On earlier builds a `modprobe nfsv4` was also needed, because the guest rootfs shipped `nfs.ko` with no version module and every 4.x mount returned `Protocol not supported` - see [Post-upgrade result](#post-upgrade-result---fixed). |
 | The v4 callback address | The mount recorded `clientaddr=10.128.0.17` - the *pod* IP, unreachable from the server. Harmless on 4.1+, where the backchannel shares the connection; on 4.0 it would silently cost all delegations. |
 | Why `/proc/filesystems` is not the check | `nfs` and `nfs4` are registered by `nfs.ko` alone, before any version module is loaded - so that listing says nothing about whether a mount will work. `grep '^nfsv4 ' /proc/modules` is the check. `fuse` is also present, making `fuse-nfs` a live fallback. |
 | Pod-network path, export and ACL | **Good.** 2049 reachable from inside the guest (pod `10.128.0.17` SNAT'd to the node, server `192.168.122.202`), `showmount -e` lists the export with the script's own ACL, so nothing network-, firewall- or export-side is in the way. |
@@ -175,20 +175,44 @@ local workaround via a drop-in plus a regenerate. It is not a lever for
 `kata-cc`, whose initrd ships prebuilt: rebuilding that locally would change
 what gets measured for attestation.
 
-After upgrading, re-run the same command and check:
+### Post-upgrade result - fixed
 
-1. `rpm -q kata-containers` is 3.31.0-5 or later.
-2. The per-kernel directory's mtime is post-upgrade. If it is not, regenerate it
-   with no Kata pods on the node: `rm -rf /var/cache/kata-containers/osbuilder-images/*`
-   then `systemctl restart kata-osbuilder-generate.service` (read
-   `systemctl cat` first).
-3. `nfsv4.ko` appears in the listing.
-4. The same grep against
-   `/usr/share/kata-containers/osbuilder-images/kata-cc.initrd` for the
-   confidential guest, which ships prebuilt in the same RPM.
-5. `testing/kata-pod-nfs-direct.yaml` mounts with the `host-modules` volume and
-   the `modprobe` step removed. `insecure` on the export is still required - that
-   is the SNAT source port, unrelated to this fix.
+Upgraded to **OCP 4.22.18**, `kata-containers-3.31.0-5.rhaos4.22.el9`. The
+module arrived in both guest images:
+
+| | Before (3.31.0-4) | After (3.31.0-5) |
+|---|---|---|
+| plain `kata` initrd | 721 entries, no `nfsv4.ko` | 728 entries, **`nfsv4.ko`** |
+| confidential `kata-cc.initrd` | 977 entries, no `nfsv4.ko` | 983 entries, **`nfsv4.ko`** |
+| GSS / Kerberos | absent | **`auth_rpcgss.ko`, `rpcsec_gss_krb5.ko`** in both |
+| `nfsv3.ko` | absent | still absent |
+| NFS built in? | no | no - still modular, loaded on demand |
+
+Three consequences:
+
+* **No `modprobe` and no `hostPath` are needed any more.** The kernel's
+  on-demand `request_module("nfsv4")` now succeeds, so both manifests in
+  `testing/` were stripped back to a plain mount. `/proc/modules` is still the
+  check if anything misbehaves, never `/proc/filesystems`.
+* **`sec=krb5p` became possible.** `rpcsec_gss_krb5.ko` is new in both guests,
+  so an in-guest mount can be authenticated and encrypted rather than trusting
+  a source IP - see [the security note](#security-note-for-the-confidential-case),
+  and prefer a keytab released by Trustee over one baked into a manifest.
+* **NFSv3 is still unavailable**, which costs nothing: `nfsv3.ko` is absent and
+  v3's lock recovery needs the server to reach the pod IP, which the SNAT breaks.
+
+The kernel moved in this upgrade (`5.14.0-687.39.1` to `5.14.0-687.55.1`), so
+the per-kernel cache directory was rebuilt automatically - mtime confirmed
+post-upgrade. Had the kernel not moved, the stale directory would have been
+reused and would need forcing:
+`rm -rf /var/cache/kata-containers/osbuilder-images/*` then
+`systemctl restart kata-osbuilder-generate.service`, with no Kata pods on the
+node and after reading `systemctl cat`.
+
+`insecure` on the export is unrelated to this fix and still required.
+
+Still outstanding: re-running the end-to-end mount on the stripped-down
+manifests, and anything `kata-cc`, which needs an SNP node.
 
 ## Contents
 
@@ -452,7 +476,9 @@ supported`, the kernel is capable and only the version module is missing - start
 at 1. If `nfs` is absent from `/proc/filesystems` altogether, the kernel has no
 client at all - start at 4.
 
-1. **Load the version module from the pod.** The node's own module tree has
+1. **Load the version module from the pod** - *historical, for builds before
+   `kata-containers-3.31.0-5`, which ships `nfsv4.ko` in both guest rootfs
+   images.* The node's own module tree has
    `nfsv4.ko` for the exact guest kernel version, Red Hat signed, and a
    privileged container can load a module from its own filesystem into the guest
    kernel. Pull the tree off the node, drop it in the pod, `modprobe`, mount:
