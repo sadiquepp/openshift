@@ -18,6 +18,16 @@ consistent with all of it.
 
 ## Environment
 
+Re-verify these against the cluster immediately before filing - they are what
+the lab ran when the evidence below was captured, not necessarily what it runs
+now:
+
+```
+oc get csv -n openshift-sandboxed-containers-operator
+oc get node <node> -o wide
+oc exec <kata-pod> -- uname -r
+```
+
 | | |
 |---|---|
 | OSC operator | `sandboxed-containers-operator.v1.13.1` |
