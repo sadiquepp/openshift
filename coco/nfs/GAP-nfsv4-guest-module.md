@@ -168,13 +168,22 @@ Building `CONFIG_NFS_FS`/`CONFIG_NFS_V4` into the guest kernel would work
 equally well. Either way the module set should be self-consistent: ship the
 version modules alongside `nfs.ko`, or ship neither.
 
+If they cannot be included by default, the alternative ask is a supported and
+**attested** way to add a kernel module to a confidential guest. Note that
+`initdata` is already bound into the attestation report (HOSTDATA on SNP), so a
+mechanism built on it would keep the module inside the measured boundary -
+unlike anything injected from the host at runtime, which is the only option
+available today and is not acceptable inside a TEE. Since OCP 4.20 removed the
+customer-side initrd rebuild in favour of `initdata` and Trustee, there is
+currently no attested path for this at all.
+
 ## Why the existing workarounds are not sufficient
 
 | Workaround | Why it does not close the gap |
 |---|---|
 | `hostPath` the host's `/usr/lib/modules` into the pod and `modprobe` | Works for plain `kata`, because its guest kernel is built from the host's. **Unacceptable for CoCo**: it loads host-supplied kernel code inside the TEE, which is precisely the influence a confidential guest exists to deny. Also needs `privileged` and `hostPath` in the SCC. |
 | Bake the `.ko` into the workload image | Must match the guest `uname -r` exactly, so it breaks on every kernel update; and for CoCo it is still code arriving from outside the attested image. |
-| Rebuild the confidential layer image / initrd to add the module | Technically viable - the same `cpio` repack customers already perform to inject a corporate CA - but it puts them on a modified guest image for a module that should be present. |
+| Rebuild the confidential rootfs/initrd to add the module | **No longer a cheap option.** Repacking the initrd was once something customers already did to inject a corporate CA and registry auth, but that is obsolete: since OCP 4.20 registry credentials are served by Trustee and the CA is injected via `initdata`, so the supported flow involves no customer-side rebuild of the guest artefacts at all. Reintroducing one for a single module means leaving the supported path and owning a modified guest image. |
 | `kernel_modules` in `configuration.toml`, or the `io.katacontainers.config.agent.kernel_modules` annotation | No help: kata-agent's `modprobe` also resolves from the guest rootfs, so it can only load modules that are already there. |
 | Userspace NFS client (`fuse-nfs`, `libnfs`) | Needs no kernel module and `fuse` is present in the guest, but it is not packaged in RHEL, performs worse than the kernel client, and does not give POSIX locking. |
 | Kubernetes NFS volume or an NFS CSI driver | The kubelet mounts the share **on the host**, which defeats the entire requirement. |

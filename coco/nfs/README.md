@@ -92,7 +92,9 @@ since the module must match `uname -r` exactly, and for `kata-cc` it would mean
 loading host-supplied kernel code inside the TEE, which hands the host exactly
 the influence the confidential guest exists to deny. For CoCo the module has to
 ship in the attested guest rootfs, so the real fix is Red Hat shipping
-`nfsv4.ko` in it.
+`nfsv4.ko` in it - there is no customer-side path that keeps the module inside
+the measured boundary, since OCP 4.20 replaced the initrd rebuild with
+`initdata` and Trustee.
 
 ## Contents
 
@@ -382,9 +384,12 @@ client at all - start at 4.
    relink or that can call `nfs-ls`/`nfs-cp`; not a POSIX mount.
 3. **`fuse-nfs`** - gives you a real mountpoint via FUSE, and `fuse` is present
    in this guest kernel, so it is a live option.
-4. **Custom guest kernel / initrd** - possible, since the CoCo runbook already
-   rebuilds the layer image, but it puts you on an unsupported guest. Raise it
-   with Red Hat before going down this path.
+4. **Custom guest kernel / initrd** - possible but no longer cheap. Repacking
+   the initrd used to be something a CoCo deployment did anyway to inject a
+   corporate CA; since OCP 4.20 that is handled by `initdata` and Trustee, so
+   rebuilding it for one module means leaving the supported path. Raise it with
+   Red Hat instead - see
+   [GAP-nfsv4-guest-module.md](https://github.com/sadiquepp/openshift/blob/main/coco/nfs/GAP-nfsv4-guest-module.md).
 5. **Kubernetes NFS volume / CSI** - works today, but the kubelet mounts the
    share on the host, which defeats the requirement.
 

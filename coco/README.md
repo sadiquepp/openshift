@@ -374,6 +374,8 @@ io.katacontainers.config.hypervisor.default_memory: "4096"
 
 # Rebuild RHCOS Layer Image to Inject custom CA and Registry Auth - OCP 4.18 Only
 
+* This section applies to OCP 4.18 only and is redundant from 4.20 onwards, where registry credentials are pulled from Trustee and the CA is injected via initdata. That procedure is not documented here yet.
+
 * By default coco baremtal rhcos layer image only supports unauthenticated mirror registry that uses certificates signed by a Public CA. To support authenticated mirror registry that uses a certificate singed by internal corporate CA, both authentication credentials and Coporate CA certificate needs to be injected to the initrd within the layer image by rebuilding the image. Follow the below steps for that.
 
 * Mirror original rhcos layer image to mirror registry
