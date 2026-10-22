@@ -72,7 +72,7 @@ If it mounts under runc and fails under `kata`, the guest kernel is the cause.
 
 | Check | Result |
 |---|---|
-| **Direct in-pod NFSv4.2 mount under `kata`** | **Works.** Mounted `nfs4 vers=4.2,proto=tcp,rsize=1048576,wsize=1048576,hard,sec=sys` from inside the Kata guest over the pod network; read back the file the helper had seeded and wrote to the share. `df` showed the helper's filesystem, not the guest's virtiofs rootfs. Measured on OSC 1.13.1, guest kernel `5.14.0-687.39.1.el9_8.x86_64`, OCP 4.22 / RHCOS 9.8. |
+| **Direct in-pod NFSv4.2 mount under `kata`** | **Works.** Mounted `nfs4 vers=4.2,proto=tcp,rsize=1048576,wsize=1048576,hard,sec=sys` from inside the Kata guest over the pod network; read back the file the helper had seeded and wrote to the share. `df` showed the helper's filesystem, not the guest's virtiofs rootfs. Measured on OSC 1.13.1, guest kernel `5.14.0-687.39.1.el9_8.x86_64`, OCP 4.22 / RHCOS 9.8.20260812-0, three-node compact cluster. |
 | Two prerequisites, both mandatory | **1.** `modprobe nfsv4` in the guest first - the rootfs ships `nfs.ko`, `sunrpc.ko` and `grace.ko` but no `nfsv4.ko`/`nfsv3.ko`, so the kernel's on-demand `request_module` fails and every 4.x mount returns `Protocol not supported`. The kernel is capable; the rootfs is pruned. **2.** `insecure` on the export, per the SNAT'd source port above. With both in place the mount succeeded first try. |
 | The v4 callback address | The mount recorded `clientaddr=10.128.0.17` - the *pod* IP, unreachable from the server. Harmless on 4.1+, where the backchannel shares the connection; on 4.0 it would silently cost all delegations. |
 | Why `/proc/filesystems` is not the check | `nfs` and `nfs4` are registered by `nfs.ko` alone, before any version module is loaded - so that listing says nothing about whether a mount will work. `grep '^nfsv4 ' /proc/modules` is the check. `fuse` is also present, making `fuse-nfs` a live fallback. |
@@ -301,8 +301,10 @@ the node address; the helper never sees the pod IP. What that costs:
   client as `mount.nfs: Operation not permitted`. The pod cannot influence the
   translation, so the export has to allow a non-reserved port. Confirm what the
   server sees with `ss -Htn state all '( sport = :2049 )'` on the helper while
-  the mount is in flight; the same line also shows which address the SNAT used,
-  which need not be the node's kubelet IP.
+  the mount is in flight. The same line gives the source address, which is the
+  node IP of whichever node the pod landed on - check it against `oc get nodes
+  -o wide` rather than assuming a particular node, which is the other reason the
+  export ACL wants the node subnet and not a single address.
 * **Conntrack is stateful**, so an evicted entry would hang a `hard` mount.
   NFSv4 lease renewal (90s default) keeps the mapping warm on an active mount.
 * **Client identity.** Several pods behind one node IP are distinct clients from
