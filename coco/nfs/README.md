@@ -72,7 +72,7 @@ If it mounts under runc and fails under `kata`, the guest kernel is the cause.
 
 | Check | Result |
 |---|---|
-| **Direct in-pod NFSv4.2 mount under `kata`** | **Works.** Mounted `nfs4 vers=4.2,proto=tcp,rsize=1048576,wsize=1048576,hard,sec=sys` from inside the Kata guest over the pod network; read back the file the helper had seeded and wrote to the share. `df` showed the helper's filesystem, not the guest's virtiofs rootfs. Measured on OSC 1.13.1, `kata-containers-3.31.0-4.rhaos4.22.el9`, guest kernel `5.14.0-687.39.1.el9_8.x86_64`, OCP 4.22 / RHCOS 9.8.20260812-0, three-node compact cluster. |
+| **Direct in-pod NFSv4.2 mount under `kata`** | **Works.** Mounted `nfs4 vers=4.2,proto=tcp,rsize=1048576,wsize=1048576,hard,sec=sys` from inside the Kata guest over the pod network; read back the file the helper had seeded and wrote to the share. `df` showed the helper's filesystem, not the guest's virtiofs rootfs. First measured on OSC 1.13.1, `kata-containers-3.31.0-4.rhaos4.22.el9`, guest kernel `5.14.0-687.39.1.el9_8.x86_64`, RHCOS 9.8.20260812-0, three-node compact cluster - with the module workaround. Re-verified with no workaround at all on OCP 4.22.18 / `kata-containers-3.31.0-5`. |
 | Prerequisite | `insecure` on the export, per the SNAT'd source port above. That is the whole list from `kata-containers-3.31.0-5` onwards. On earlier builds a `modprobe nfsv4` was also needed, because the guest rootfs shipped `nfs.ko` with no version module and every 4.x mount returned `Protocol not supported` - see [Post-upgrade result](#post-upgrade-result---fixed). |
 | The v4 callback address | The mount recorded `clientaddr=10.128.0.17` - the *pod* IP, unreachable from the server. Harmless on 4.1+, where the backchannel shares the connection; on 4.0 it would silently cost all delegations. |
 | Why `/proc/filesystems` is not the check | `nfs` and `nfs4` are registered by `nfs.ko` alone, before any version module is loaded - so that listing says nothing about whether a mount will work. `grep '^nfsv4 ' /proc/modules` is the check. `fuse` is also present, making `fuse-nfs` a live fallback. |
@@ -211,8 +211,16 @@ node and after reading `systemctl cat`.
 
 `insecure` on the export is unrelated to this fix and still required.
 
-Still outstanding: re-running the end-to-end mount on the stripped-down
-manifests, and anything `kata-cc`, which needs an SNP node.
+The end-to-end mount was then re-run on the stripped-down manifest and passed:
+`nfsv4` auto-loaded at mount time (`/proc/modules` showed it `Live` with
+refcount 0, loaded by `request_module`, with `rpcsec_gss_krb5` and
+`auth_rpcgss` alongside), the export mounted `nfs4 vers=4.2`, the seeded file
+read back, and `df` inside the guest showed the helper's 255G filesystem
+distinct from the 150G virtiofs rootfs. No `modprobe`, no `hostPath`, no access
+to the host's modules.
+
+Still outstanding: the sidecar pattern, `sec=krb5p`, and anything `kata-cc`,
+which needs an SNP node.
 
 ## Contents
 

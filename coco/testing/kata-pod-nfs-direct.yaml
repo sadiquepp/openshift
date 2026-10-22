@@ -38,6 +38,12 @@ spec:
         value: "/mnt/nfs"
       - name: NFS_OPTS
         value: "vers=4.2,rw,hard,timeo=600,retrans=2,sec=sys"
+      # The off-the-shelf client image has no `hostname` binary, so take the
+      # pod name from the downward API rather than shelling out for it.
+      - name: POD_NAME
+        valueFrom:
+          fieldRef:
+            fieldPath: metadata.name
     command: ["/bin/bash", "-c"]
     args:
       - |
@@ -56,8 +62,10 @@ spec:
         echo "### 2. is the helper reachable over the pod network?"
         ip -4 addr show
         ip -4 route show
-        ping -c 2 "$NFS_SERVER" || true
-        nc -vz -w 5 "$NFS_SERVER" 2049
+        # bash's /dev/tcp rather than nc or ping, neither of which is in the
+        # off-the-shelf client image - and ICMP proves less than the real port.
+        timeout 5 bash -c "</dev/tcp/${NFS_SERVER}/2049" \
+          && echo "2049 reachable" || echo "2049 UNREACHABLE"
 
         echo "### 3. mount the export"
         mkdir -p "$MOUNTPOINT"
@@ -68,8 +76,8 @@ spec:
         echo "### 4. read what the helper seeded, then write from the pod"
         ls -l "$MOUNTPOINT"
         cat "$MOUNTPOINT/from-helper.txt"
-        echo "written by $(hostname) at $(date -Is)" > "${MOUNTPOINT}/from-pod-$(hostname).txt"
-        cat "${MOUNTPOINT}/from-pod-$(hostname).txt"
+        echo "written by ${POD_NAME} at $(date -Is)" > "${MOUNTPOINT}/from-pod-${POD_NAME}.txt"
+        cat "${MOUNTPOINT}/from-pod-${POD_NAME}.txt"
         df -hT "$MOUNTPOINT"
 
         echo "### NFS mount test PASSED - keeping the pod alive for inspection"
