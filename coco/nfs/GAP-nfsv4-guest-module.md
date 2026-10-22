@@ -21,7 +21,7 @@ consistent with all of it.
 |---|---|
 | Summary | Kata guest rootfs ships `nfs.ko` without `nfsv4.ko`/`nfsv3.ko`, so NFS mounts from inside the guest fail with `EPROTONOSUPPORT` |
 | Type | Bug (the shipped module set is internally inconsistent). May be re-triaged as an RFE if in-guest NFS was never intended to work - in that case the ask stands as a feature request, see **Request**. |
-| Component | openshift-sandboxed-containers / Kata guest image (osbuilder-generated rootfs, and the confidential rootfs shipped in the RHCOS layer image) |
+| Component | Kata guest images, as delivered by the `kata-containers` RPM in the `sandboxed-containers` RHCOS extension (OCP payload) - both the node-generated plain `kata` initrd and the prebuilt confidential artefacts under `/usr/share/kata-containers/`. Note this tracks the OCP z-stream, not the OSC operator version: the lab ran the latest OSC and was still affected. |
 | Priority justification | Blocks the documented pattern of mounting storage *inside* a confidential guest, which is the only way to keep the share unreadable by the host |
 
 ## Environment
@@ -205,9 +205,10 @@ Two consequences worth noting for triage:
 
 ## Request
 
-Include the NFS version modules in the Kata guest rootfs, for both the
-osbuilder-generated plain `kata` image and the confidential rootfs shipped in
-the RHCOS layer image:
+Include the NFS version modules in both Kata guest rootfs images - the
+`kata-osbuilder`-generated plain `kata` initrd and the prebuilt confidential
+rootfs - which on 4.20+ both come from the `kata-containers` RPM rather than
+from a layered image:
 
 - `kernel/fs/nfs/nfsv4.ko` - required for any NFSv4.x mount
 - `kernel/fs/nfs/nfsv3.ko` - if NFSv3 is to be usable at all
