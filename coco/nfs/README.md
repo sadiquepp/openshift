@@ -72,19 +72,27 @@ If it mounts under runc and fails under `kata`, the guest kernel is the cause.
 
 | Check | Result |
 |---|---|
-| NFS mount from a `kata` pod, as shipped | **Fails.** Every `vers=4`, `4.0`, `4.1`, `4.2` mount returns `mount.nfs: Protocol not supported`. Root cause: the guest rootfs (`kata.initrd`) carries `nfs.ko`, `sunrpc.ko` and `grace.ko` but **no `nfsv4.ko` or `nfsv3.ko`**, so the on-demand `request_module` for the version layer fails. The kernel is capable; the rootfs is pruned. Measured on OSC 1.8.1, guest kernel `5.14.0-687.39.1.el9_8.x86_64`. |
-| Why `/proc/filesystems` looked fine | `nfs` and `nfs4` are registered by `nfs.ko` alone, before any version module is loaded - so that listing is not evidence of mount support. `fuse` is also present, making `fuse-nfs` a live fallback. |
+| **Direct in-pod NFSv4.2 mount under `kata`** | **Works.** Mounted `nfs4 vers=4.2,proto=tcp,rsize=1048576,wsize=1048576,hard,sec=sys` from inside the Kata guest over the pod network; read back the file the helper had seeded and wrote to the share. `df` showed the helper's filesystem, not the guest's virtiofs rootfs. Measured on OSC 1.8.1, guest kernel `5.14.0-687.39.1.el9_8.x86_64`, OCP 4.22 / RHCOS 9.8. |
+| Two prerequisites, both mandatory | **1.** `modprobe nfsv4` in the guest first - the rootfs ships `nfs.ko`, `sunrpc.ko` and `grace.ko` but no `nfsv4.ko`/`nfsv3.ko`, so the kernel's on-demand `request_module` fails and every 4.x mount returns `Protocol not supported`. The kernel is capable; the rootfs is pruned. **2.** `insecure` on the export, per the SNAT'd source port above. With both in place the mount succeeded first try. |
+| The v4 callback address | The mount recorded `clientaddr=10.128.0.17` - the *pod* IP, unreachable from the server. Harmless on 4.1+, where the backchannel shares the connection; on 4.0 it would silently cost all delegations. |
+| Why `/proc/filesystems` is not the check | `nfs` and `nfs4` are registered by `nfs.ko` alone, before any version module is loaded - so that listing says nothing about whether a mount will work. `grep '^nfsv4 ' /proc/modules` is the check. `fuse` is also present, making `fuse-nfs` a live fallback. |
 | Pod-network path, export and ACL | **Good.** 2049 reachable from inside the guest (pod `10.128.0.17` SNAT'd to the node, server `192.168.122.202`), `showmount -e` lists the export with the script's own ACL, so nothing network-, firewall- or export-side is in the way. |
 | Client userspace | **Available off the shelf.** `quay.io/rh-ee-chbutler/ubi-storage-util:latest` ships `nfs-utils-2.8.3-5.el10_2` with `mount.nfs` and `mount.nfs4`, so no image build is needed. Note it is el10 userspace over an el9 guest kernel. |
 | Probe really ran in the VM | **Yes.** `/sys/class/dmi/id/sys_vendor` reads `Red Hat` (a RHEL KVM guest); the bare metal would read `Dell Inc.`. The guest kernel version matching the node's is expected for the RHEL-derived OSC guest kernel, and is not evidence of a runc fallback. |
 | `kata-cc` | **Not tested** - no SNP node available, and `kata-snp`'s configured `image = kata-containers-confidential.img` is not present on the node. Its el10 module tree shows the *same* `nfs.ko`-without-`nfsv4.ko` pattern, so expect the same failure until proven otherwise. |
-| The sidecar pattern and the write path | **Not tested** - blocked behind the module gap above. |
+| The sidecar pattern | **Not tested** - the single-container path is proven, the sidecar + shared-PID-namespace indirection is not. |
 
-So the requirement is not blocked by anything in NFS, the network or the server -
-it is blocked by one missing module in the guest rootfs. See
-[If the guest kernel has no NFS client](#if-the-guest-kernel-has-no-nfs-client)
-for the workaround that loads it from the pod, which is also the way to confirm
-the kernel itself is capable.
+So the requirement is feasible on plain sandboxed containers today, given the
+module load and the `insecure` export. How the module gets into the guest is the
+part that needs a real answer before this goes anywhere near production:
+`testing/kata-pod-nfs-direct.yaml` takes it from the host's module tree over a
+`hostPath`, which works because the plain `kata` guest kernel is built from the
+host's. That is a lab expedient twice over - it breaks on any kernel update,
+since the module must match `uname -r` exactly, and for `kata-cc` it would mean
+loading host-supplied kernel code inside the TEE, which hands the host exactly
+the influence the confidential guest exists to deny. For CoCo the module has to
+ship in the attested guest rootfs, so the real fix is Red Hat shipping
+`nfsv4.ko` in it.
 
 ## Contents
 

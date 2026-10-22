@@ -22,10 +22,17 @@ spec:
   restartPolicy: Never
   containers:
   - name: nfs-client
-    image: mirror.hub.mylab.com:8443/openshift_sandboxed_containers/ubi-nfs-util:latest
+    # Any image carrying nfs-utils works. quay.io/rh-ee-chbutler/ubi-storage-util
+    # ships nfs-utils and needs no build; coco/nfs/Containerfile builds one if you
+    # need it mirrored.
+    image: quay.io/rh-ee-chbutler/ubi-storage-util:latest
     securityContext:
-      privileged: true # mount(2) needs CAP_SYS_ADMIN, but only inside the Kata VM
+      privileged: true # mount(2) needs CAP_SYS_ADMIN, and modprobe needs CAP_SYS_MODULE - both only inside the Kata VM
       runAsUser: 0
+    volumeMounts:
+      - name: host-modules
+        mountPath: /usr/lib/modules
+        readOnly: true
     env:
       - name: NFS_SERVER
         value: "192.168.122.1"   # helper node IP. Use an IP - cluster DNS does not resolve helper names.
@@ -40,10 +47,17 @@ spec:
       - |
         set -x
 
-        echo "### 1. does the Kata guest kernel support the nfs client?"
-        grep -E 'nfs|nfs4' /proc/filesystems || modprobe nfs || true
-        grep -q nfs /proc/filesystems \
-          || echo "WARNING: no nfs filesystem in the guest kernel - the mount below will fail with 'unknown filesystem type'"
+        echo "### 1. load the NFSv4 version module into the guest kernel"
+        # The guest rootfs ships nfs.ko but NOT nfsv4.ko, so the kernel's
+        # on-demand request_module("nfsv4") fails and every 4.x mount returns
+        # EPROTONOSUPPORT ("Protocol not supported"). /proc/filesystems lists
+        # both nfs and nfs4 regardless, because nfs.ko registers those names
+        # before any version module is loaded - it is not evidence of support.
+        V=$(uname -r)
+        grep -E '^(nfs|nfsv4|sunrpc) ' /proc/modules || true
+        grep -q '^nfsv4 ' /proc/modules || modprobe -S "$V" nfsv4 \
+          || echo "WARNING: could not load nfsv4 for $V - the mount below will fail with 'Protocol not supported'"
+        grep -E '^(nfs|nfsv4|sunrpc) ' /proc/modules
 
         echo "### 2. is the helper reachable over the pod network?"
         ip -4 addr show
@@ -66,3 +80,13 @@ spec:
 
         echo "### NFS mount test PASSED - keeping the pod alive for inspection"
         sleep 36000
+  volumes:
+    # The plain kata handler boots a kernel built from the host's, so the host
+    # module tree matches the guest kernel exactly and nfsv4.ko loads from it.
+    # This does NOT hold for kata-cc: its guest kernel is a different build, and
+    # loading host-supplied kernel code into a confidential guest would hand the
+    # host exactly the influence the guest is meant to be protected from.
+    - name: host-modules
+      hostPath:
+        path: /usr/lib/modules
+        type: Directory

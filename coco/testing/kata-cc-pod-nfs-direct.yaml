@@ -74,7 +74,16 @@ spec:
       - |
         set -e # error out
         TARGETPOINT=/mnt/nfs
-        grep -q nfs /proc/filesystems || modprobe nfs || true
+        # nfs.ko alone registers the "nfs" and "nfs4" names, so /proc/filesystems
+        # proves nothing; the version module is what the mount needs. If nfsv4 is
+        # missing the mount fails with EPROTONOSUPPORT, "Protocol not supported".
+        # It has to come from inside the guest - do NOT hostPath the host's module
+        # tree into a confidential guest, which would load host-supplied kernel
+        # code inside the TEE. Ship the module in the guest rootfs instead.
+        V=$(uname -r)
+        grep -q '^nfsv4 ' /proc/modules || modprobe -S "$V" nfsv4 || true
+        grep -q '^nfsv4 ' /proc/modules \
+          || echo "WARNING: nfsv4 not loaded for $V - expect 'Protocol not supported'"
         if ! mount | grep -q " $TARGETPOINT "; then
             mkdir -p "$TARGETPOINT"
             mount -t nfs -o "$NFS_OPTS" "${NFS_SERVER}:${NFS_EXPORT}" "$TARGETPOINT"
