@@ -188,6 +188,56 @@ module arrived in both guest images:
 | `nfsv3.ko` | absent | still absent |
 | NFS built in? | no | no - still modular, loaded on demand |
 
+Recorded output, same commands as the baselines above (directory entries
+trimmed, `.ko` files kept):
+
+```
+# plain kata
+# rpm -q kata-containers
+kata-containers-3.31.0-5.rhaos4.22.el9.x86_64
+
+drwxr-xr-x. 2 root root 25 2026-10-22 14:56:34 5.14.0-687.55.1.el9_8.x86_64
+lrwxrwxrwx. 1 root root 40 2026-10-22 14:56:34 kata.initrd -> 5.14.0-687.55.1.el9_8.x86_64/kata.initrd
+lrwxrwxrwx. 1 root root 49 2026-10-22 14:56:34 kata.kernel -> /lib/modules/5.14.0-687.55.1.el9_8.x86_64/vmlinuz
+
+entries: 728
+usr/lib/modules/5.14.0-687.55.1.el9_8.x86_64/kernel/net/sunrpc/sunrpc.ko.xz
+usr/lib/modules/5.14.0-687.55.1.el9_8.x86_64/kernel/net/sunrpc/auth_gss/rpcsec_gss_krb5.ko.xz
+usr/lib/modules/5.14.0-687.55.1.el9_8.x86_64/kernel/net/sunrpc/auth_gss/auth_rpcgss.ko.xz
+usr/lib/modules/5.14.0-687.55.1.el9_8.x86_64/kernel/fs/nfs_common/grace.ko.xz
+usr/lib/modules/5.14.0-687.55.1.el9_8.x86_64/kernel/fs/nfs/nfsv4.ko.xz        <-- new
+usr/lib/modules/5.14.0-687.55.1.el9_8.x86_64/kernel/fs/nfs/nfs.ko.xz
+```
+
+```
+# confidential guest
+# grep -E '^\s*(kernel|initrd|image)\s*=' /etc/kata-containers/kata-snp/configuration.toml
+kernel = "/usr/share/kata-containers/osbuilder-images/kata-cc.kernel"
+initrd = "/usr/share/kata-containers/osbuilder-images/kata-cc.initrd"
+
+entries: 983
+usr/lib/modules/6.12.0-211.16.1.el10_2.x86_64/kernel/fs/nfs/nfs.ko.xz
+usr/lib/modules/6.12.0-211.16.1.el10_2.x86_64/kernel/fs/nfs/nfsv4.ko.xz       <-- new
+usr/lib/modules/6.12.0-211.16.1.el10_2.x86_64/kernel/fs/nfs_common/grace.ko.xz
+usr/lib/modules/6.12.0-211.16.1.el10_2.x86_64/kernel/fs/nfs_common/nfs_localio.ko.xz
+usr/lib/modules/6.12.0-211.16.1.el10_2.x86_64/kernel/net/sunrpc/auth_gss/auth_rpcgss.ko.xz
+usr/lib/modules/6.12.0-211.16.1.el10_2.x86_64/kernel/net/sunrpc/auth_gss/rpcsec_gss_krb5.ko.xz
+usr/lib/modules/6.12.0-211.16.1.el10_2.x86_64/kernel/net/sunrpc/sunrpc.ko.xz
+no nfs builtins
+```
+
+Note the `kata-snp` handler now reads `initrd = .../kata-cc.initrd`; the
+`image =` path it carried before was the legacy 4.18 location.
+
+And from inside a running `kata` pod at mount time, with nothing loaded by hand:
+
+```
+# grep -E '^(nfs|nfsv4|sunrpc) ' /proc/modules
+nfsv4 1290240 0 - Live
+nfs 626688 1 nfsv4, Live
+sunrpc 884736 5 nfsv4,nfs,lockd,rpcsec_gss_krb5,auth_rpcgss, Live
+```
+
 Three consequences:
 
 * **No `modprobe` and no `hostPath` are needed any more.** The kernel's
