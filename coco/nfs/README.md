@@ -154,11 +154,26 @@ should carry the fix into both runtimes - and into `kata-cc` it arrives inside
 the attested guest image, which is the only acceptable way for a confidential
 workload.
 
-Two things still unrecorded on the confidential side: whether NFS is instead
-compiled into `kata-cc.kernel` (check `modules.builtin` in its initrd), and
-whether the RPM ships the `kata-containers-confidential.img` that
-`kata-snp/configuration.toml` references but which is absent from the node
-(`rpm -ql kata-containers | grep -i confidential`).
+Both follow-up checks came back, and both matter:
+
+* **NFS is not compiled in either.** `modules.builtin` in `kata-cc.initrd` has no
+  NFS entries, so the confidential guest would fail exactly as the plain one
+  does. `kata-cc.kernel` is itself a symlink to a bundled
+  `6.12.0-211.16.1.el10_2.x86_64/vmlinuz`.
+* **`kata-snp` references a rootfs the RPM does not ship.** Its
+  `configuration.toml` has `image = /usr/share/kata-containers/kata-containers-confidential.img`
+  and no `initrd =` line, but `rpm -ql kata-containers` lists only
+  `kata-cc.initrd` and `kata-cc.kernel` - no `.img` at all, and the file is
+  absent from the node. Worth chasing on its own: it may be why the SNP handler
+  cannot run here, independently of NFS.
+
+The module list itself comes from dracut configs shipped in the same RPM, at
+`/usr/libexec/kata-containers/osbuilder/dracut/` (`dracut-kata-cc.conf` and
+siblings). For plain `kata`, whose initrd is generated on the node from that
+config, this is the lever the upstream fix most likely pulls - and possibly a
+local workaround via a drop-in plus a regenerate. It is not a lever for
+`kata-cc`, whose initrd ships prebuilt: rebuilding that locally would change
+what gets measured for attestation.
 
 After upgrading, re-run the same command and check:
 

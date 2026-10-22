@@ -182,6 +182,19 @@ kata-containers-3.31.0-4.rhaos4.22.el9.x86_64
 
 so a single fix in that package reaches both runtimes.
 
+NFS is not compiled into the confidential kernel either - `modules.builtin` in
+`kata-cc.initrd` has no NFS entries - so the confidential guest has neither a
+built-in client nor the version module. The module list for both images comes
+from dracut configs in the same RPM, at
+`/usr/libexec/kata-containers/osbuilder/dracut/`, which is where the fix
+presumably belongs.
+
+Unrelated observation from the same node, noted in case it is a separate
+packaging issue: `kata-snp/configuration.toml` specifies
+`image = /usr/share/kata-containers/kata-containers-confidential.img` with no
+`initrd =` line, but `rpm -ql kata-containers` ships no such image and the file
+is not on the node.
+
 Two caveats on this item, stated plainly rather than glossed:
 
 - It has not been reproduced on a *running* CoCo guest; no SNP node was
