@@ -39,6 +39,7 @@ oc exec <kata-pod> -- uname -r
 | | |
 |---|---|
 | OSC operator | `sandboxed-containers-operator.v1.13.1` |
+| Kata runtime | `kata-containers-3.31.0-4.rhaos4.22.el9.x86_64` (fix reported in `3.31.0-5`) |
 | OpenShift | 4.22 (`cri-o://1.35.6-4.rhaos4.22.git41f610b.el9`, kubelet `v1.35.6`) |
 | Node OS | Red Hat Enterprise Linux CoreOS 9.8.20260812-0 |
 | Runtime class | `kata` (plain sandboxed containers, non-confidential) |
@@ -108,7 +109,11 @@ netfs 65536 2 nfs,fscache, Live
 sunrpc 884736 3 nfsv4,nfs,lockd, Live
 ```
 
-and the guest rootfs confirms why - no `nfsv4.ko`, no `nfsv3.ko`:
+and the guest rootfs confirms why - no `nfsv4.ko`, no `nfsv3.ko` among its 721
+entries. Note also that `kata.kernel` is a symlink to the host's own `vmlinuz`
+and the initrd is cached per kernel version, so for the plain `kata` handler the
+guest *is* running the RHCOS kernel and only the initrd's module list is at
+issue:
 
 ```
 # on the node

@@ -72,7 +72,7 @@ If it mounts under runc and fails under `kata`, the guest kernel is the cause.
 
 | Check | Result |
 |---|---|
-| **Direct in-pod NFSv4.2 mount under `kata`** | **Works.** Mounted `nfs4 vers=4.2,proto=tcp,rsize=1048576,wsize=1048576,hard,sec=sys` from inside the Kata guest over the pod network; read back the file the helper had seeded and wrote to the share. `df` showed the helper's filesystem, not the guest's virtiofs rootfs. Measured on OSC 1.13.1, guest kernel `5.14.0-687.39.1.el9_8.x86_64`, OCP 4.22 / RHCOS 9.8.20260812-0, three-node compact cluster. |
+| **Direct in-pod NFSv4.2 mount under `kata`** | **Works.** Mounted `nfs4 vers=4.2,proto=tcp,rsize=1048576,wsize=1048576,hard,sec=sys` from inside the Kata guest over the pod network; read back the file the helper had seeded and wrote to the share. `df` showed the helper's filesystem, not the guest's virtiofs rootfs. Measured on OSC 1.13.1, `kata-containers-3.31.0-4.rhaos4.22.el9`, guest kernel `5.14.0-687.39.1.el9_8.x86_64`, OCP 4.22 / RHCOS 9.8.20260812-0, three-node compact cluster. |
 | Two prerequisites, both mandatory | **1.** `modprobe nfsv4` in the guest first - the rootfs ships `nfs.ko`, `sunrpc.ko` and `grace.ko` but no `nfsv4.ko`/`nfsv3.ko`, so the kernel's on-demand `request_module` fails and every 4.x mount returns `Protocol not supported`. The kernel is capable; the rootfs is pruned. **2.** `insecure` on the export, per the SNAT'd source port above. With both in place the mount succeeded first try. |
 | The v4 callback address | The mount recorded `clientaddr=10.128.0.17` - the *pod* IP, unreachable from the server. Harmless on 4.1+, where the backchannel shares the connection; on 4.0 it would silently cost all delegations. |
 | Why `/proc/filesystems` is not the check | `nfs` and `nfs4` are registered by `nfs.ko` alone, before any version module is loaded - so that listing says nothing about whether a mount will work. `grep '^nfsv4 ' /proc/modules` is the check. `fuse` is also present, making `fuse-nfs` a live fallback. |
@@ -95,6 +95,56 @@ ship in the attested guest rootfs, so the real fix is Red Hat shipping
 `nfsv4.ko` in it - there is no customer-side path that keeps the module inside
 the measured boundary, since OCP 4.20 replaced the initrd rebuild with
 `initdata` and Trustee.
+
+## Pre-upgrade baseline and post-upgrade validation
+
+Red Hat reports NFSv4 support landed in Kata **3.31.0-5**, reachable via the
+latest 4.22 z-stream or any of 4.22.11 - 4.22.18. Recorded baseline from the
+affected cluster, for comparison after the upgrade:
+
+```
+# oc debug node/<node> -- chroot /host bash -c '
+#   rpm -q kata-containers
+#   ls -l --time-style=full-iso /var/cache/kata-containers/osbuilder-images/
+#   I=/var/cache/kata-containers/osbuilder-images/kata.initrd
+#   echo "entries: $(zcat "$I" | cpio -it 2>/dev/null | wc -l)"
+#   zcat "$I" | cpio -it 2>/dev/null | grep -E "nfs|sunrpc" || echo "NO-NFS-MODULES"
+#   true'
+
+kata-containers-3.31.0-4.rhaos4.22.el9.x86_64
+
+drwxr-xr-x. 2 root root 25 2026-10-22 09:32:23 5.14.0-687.39.1.el9_8.x86_64
+lrwxrwxrwx. 1 root root 40 2026-10-22 09:32:23 kata.initrd -> 5.14.0-687.39.1.el9_8.x86_64/kata.initrd
+lrwxrwxrwx. 1 root root 49 2026-10-22 09:32:23 kata.kernel -> /lib/modules/5.14.0-687.39.1.el9_8.x86_64/vmlinuz
+
+entries: 721
+usr/lib/modules/5.14.0-687.39.1.el9_8.x86_64/kernel/net/sunrpc/sunrpc.ko.xz
+usr/lib/modules/5.14.0-687.39.1.el9_8.x86_64/kernel/fs/nfs_common/grace.ko.xz
+usr/lib/modules/5.14.0-687.39.1.el9_8.x86_64/kernel/fs/nfs/nfs.ko.xz
+```
+
+Two things that output settles. `kata.kernel` is a symlink to the host's own
+`vmlinuz`, so the plain `kata` guest boots the RHCOS kernel itself - the kernel's
+NFS capability was never in question, only which modules the initrd carries. And
+the initrd cache is a directory **keyed by kernel version**, so a z-stream that
+bumps the kernel forces a fresh build, while one that ships a new
+`kata-containers` RPM without a kernel change will reuse the existing directory
+and leave the old module list in place.
+
+After upgrading, re-run the same command and check:
+
+1. `rpm -q kata-containers` is 3.31.0-5 or later.
+2. The per-kernel directory's mtime is post-upgrade. If it is not, regenerate it
+   with no Kata pods on the node: `rm -rf /var/cache/kata-containers/osbuilder-images/*`
+   then `systemctl restart kata-osbuilder-generate.service` (read
+   `systemctl cat` first).
+3. `nfsv4.ko` appears in the listing.
+4. The same grep against
+   `/usr/share/kata-containers/osbuilder-images/kata-cc.initrd` for the
+   confidential guest, which ships prebuilt in the same RPM.
+5. `testing/kata-pod-nfs-direct.yaml` mounts with the `host-modules` volume and
+   the `modprobe` step removed. `insecure` on the export is still required - that
+   is the SNAT source port, unrelated to this fix.
 
 ## Contents
 
