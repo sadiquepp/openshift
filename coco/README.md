@@ -219,9 +219,9 @@ ps aux | grep qemu-kv
 
 * A pod can mount an NFS share from a remote server itself, from inside the Kata/CoCo guest, over the pod network. There is no PV, PVC or CSI driver involved and the share is never mounted on the worker node, so the host cannot read it. This is the NFS counterpart of the block device example at testing/kata-cc-pod-pv-block.yaml.
 
-* The full runbook, the helper node NFS server setup script, the nfs-utils client image and both test manifests are at https://github.com/sadiquepp/openshift/tree/main/coco/nfs
+* The full runbook, the NFS server setup script, the nfs-utils client image and both test manifests are at https://github.com/sadiquepp/openshift/tree/main/coco/nfs
 
-* Set up the export on the helper node.
+* Set up the export on the NFS server.
 
 ```
 cd nfs

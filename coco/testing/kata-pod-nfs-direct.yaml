@@ -1,14 +1,14 @@
 ---
 # Step 1 of the direct in-pod NFS mount test - single container, no sidecar.
 #
-# The pod mounts the NFS share served by the helper node itself, from inside the
+# The pod mounts the NFS share served by a remote NFS server itself, from inside the
 # Kata guest, over the pod network. There is no PV/PVC and no kubelet-side NFS
 # mount, so nothing is mounted on the worker node.
 #
 # Test with runtimeClassName "kata" first (exec and logs are unrestricted there),
 # then move to kata-cc using testing/kata-cc-pod-nfs-direct.yaml.
 #
-# Replace: image, NFS_SERVER (helper IP), NFS_EXPORT.
+# Replace: image, NFS_SERVER (the NFS server's IP), NFS_EXPORT.
 apiVersion: v1
 kind: Pod
 metadata:
@@ -31,7 +31,7 @@ spec:
       runAsUser: 0
     env:
       - name: NFS_SERVER
-        value: "192.168.122.1"   # helper node IP. Use an IP - cluster DNS does not resolve helper names.
+        value: "192.168.122.1"   # NFS server IP. Use an IP - cluster DNS does not resolve off-cluster names.
       - name: NFS_EXPORT
         value: "/srv/nfs/kata"
       - name: MOUNTPOINT
@@ -59,7 +59,7 @@ spec:
         uname -r
         grep -E '^(nfs|nfsv4|sunrpc) ' /proc/modules || echo "(nothing loaded yet - expected before the first mount)"
 
-        echo "### 2. is the helper reachable over the pod network?"
+        echo "### 2. is the NFS server reachable over the pod network?"
         ip -4 addr show
         ip -4 route show
         # bash's /dev/tcp rather than nc or ping, neither of which is in the
@@ -73,9 +73,9 @@ spec:
         findmnt "$MOUNTPOINT"
         nfsstat -m
 
-        echo "### 4. read what the helper seeded, then write from the pod"
+        echo "### 4. read what the NFS server seeded, then write from the pod"
         ls -l "$MOUNTPOINT"
-        cat "$MOUNTPOINT/from-helper.txt"
+        cat "$MOUNTPOINT/from-nfs-server.txt"
         echo "written by ${POD_NAME} at $(date -Is)" > "${MOUNTPOINT}/from-pod-${POD_NAME}.txt"
         cat "${MOUNTPOINT}/from-pod-${POD_NAME}.txt"
         df -hT "$MOUNTPOINT"

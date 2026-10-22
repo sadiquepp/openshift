@@ -3,7 +3,7 @@
 # testing/kata-cc-pod-pv-block.yaml.
 #
 # Instead of a raw block PVC that a sidecar formats and mounts, a sidecar mounts
-# an NFS export from the helper node over the pod network, and the application
+# an NFS export from a remote NFS server over the pod network, and the application
 # container reaches that mount through the shared PID namespace
 # (/proc/<sidecar-pid>/root/...), exactly as in the block device example. A mount
 # made in one container is not visible in another container's mount namespace,
@@ -13,7 +13,7 @@
 # Kata/CoCo guest, so the host (and kubelet) never see the share. That is the
 # point of the exercise for a confidential workload.
 #
-# Replace: images, NFS_SERVER (helper IP), NFS_EXPORT.
+# Replace: images, NFS_SERVER (the NFS server's IP), NFS_EXPORT.
 apiVersion: v1
 kind: Pod
 metadata:
@@ -64,7 +64,7 @@ spec:
     restartPolicy: Always  # Native sidecar so it doesn't block boot and keeps the mount alive
     env:
       - name: NFS_SERVER
-        value: "192.168.122.1"   # helper node IP. Use an IP - cluster DNS does not resolve helper names.
+        value: "192.168.122.1"   # NFS server IP. Use an IP - cluster DNS does not resolve off-cluster names.
       - name: NFS_EXPORT
         value: "/srv/nfs/kata"
       - name: NFS_OPTS

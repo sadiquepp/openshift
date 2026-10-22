@@ -72,7 +72,7 @@ If it mounts under runc and fails under `kata`, the guest kernel is the cause.
 
 | Check | Result |
 |---|---|
-| **Direct in-pod NFSv4.2 mount under `kata`** | **Works.** Mounted `nfs4 vers=4.2,proto=tcp,rsize=1048576,wsize=1048576,hard,sec=sys` from inside the Kata guest over the pod network; read back the file the helper had seeded and wrote to the share. `df` showed the helper's filesystem, not the guest's virtiofs rootfs. First measured on OSC 1.13.1, `kata-containers-3.31.0-4.rhaos4.22.el9`, guest kernel `5.14.0-687.39.1.el9_8.x86_64`, RHCOS 9.8.20260812-0, three-node compact cluster - with the module workaround. Re-verified with no workaround at all on OCP 4.22.18 / `kata-containers-3.31.0-5`. |
+| **Direct in-pod NFSv4.2 mount under `kata`** | **Works.** Mounted `nfs4 vers=4.2,proto=tcp,rsize=1048576,wsize=1048576,hard,sec=sys` from inside the Kata guest over the pod network; read back the file the NFS server had seeded and wrote to the share. `df` showed the NFS server's filesystem, not the guest's virtiofs rootfs. First measured on OSC 1.13.1, `kata-containers-3.31.0-4.rhaos4.22.el9`, guest kernel `5.14.0-687.39.1.el9_8.x86_64`, RHCOS 9.8.20260812-0, three-node compact cluster - with the module workaround. Re-verified with no workaround at all on OCP 4.22.18 / `kata-containers-3.31.0-5`. |
 | Prerequisite | `insecure` on the export, per the SNAT'd source port above. That is the whole list from `kata-containers-3.31.0-5` onwards. On earlier builds a `modprobe nfsv4` was also needed, because the guest rootfs shipped `nfs.ko` with no version module and every 4.x mount returned `Protocol not supported` - see [Post-upgrade result](#post-upgrade-result---fixed). |
 | The v4 callback address | The mount recorded `clientaddr=10.128.0.17` - the *pod* IP, unreachable from the server. Harmless on 4.1+, where the backchannel shares the connection; on 4.0 it would silently cost all delegations. |
 | Why `/proc/filesystems` is not the check | `nfs` and `nfs4` are registered by `nfs.ko` alone, before any version module is loaded - so that listing says nothing about whether a mount will work. `grep '^nfsv4 ' /proc/modules` is the check. `fuse` is also present, making `fuse-nfs` a live fallback. |
@@ -265,7 +265,7 @@ The end-to-end mount was then re-run on the stripped-down manifest and passed:
 `nfsv4` auto-loaded at mount time (`/proc/modules` showed it `Live` with
 refcount 0, loaded by `request_module`, with `rpcsec_gss_krb5` and
 `auth_rpcgss` alongside), the export mounted `nfs4 vers=4.2`, the seeded file
-read back, and `df` inside the guest showed the helper's 255G filesystem
+read back, and `df` inside the guest showed the NFS server's 255G filesystem
 distinct from the 150G virtiofs rootfs. No `modprobe`, no `hostPath`, no access
 to the host's modules.
 
@@ -276,7 +276,7 @@ which needs an SNP node.
 
 | File | Purpose |
 |---|---|
-| `setup-nfs-server.sh` | Stands up the kernel NFS server on the helper node and self-tests it |
+| `setup-nfs-server.sh` | Stands up the kernel NFS server and self-tests it |
 | `Containerfile` | Builds `ubi-nfs-util` (ubi9 + `nfs-utils`), the image that provides `mount.nfs` inside the pod |
 | [../testing/kata-pod-nfs-direct.yaml](https://github.com/sadiquepp/openshift/blob/main/coco/testing/kata-pod-nfs-direct.yaml) | Step 1 - single container, mounts and read/writes the share, prints every check |
 | [../testing/kata-cc-pod-nfs-direct.yaml](https://github.com/sadiquepp/openshift/blob/main/coco/testing/kata-cc-pod-nfs-direct.yaml) | Step 2 - sidecar mount + shared PID namespace, same pattern as the block example |
@@ -285,13 +285,13 @@ which needs an SNP node.
 
 * OSC operator installed and `KataConfig` applied, with the `kata` and `kata-cc`
   runtime classes present (see the [CoCo runbook](https://github.com/sadiquepp/openshift/tree/main/coco#install-osc-and-configure-coco)).
-* The helper node is reachable from the OpenShift nodes on `2049/tcp`.
+* The NFS server is reachable from the OpenShift nodes on `2049/tcp`.
 * A mirror registry the cluster can pull from (disconnected cluster) for the
   `ubi-nfs-util` image.
 
-## Step 1 - NFS server on the helper
+## Step 1 - Set up the NFS server
 
-Run on the helper node as root. It installs `nfs-utils`, creates and exports
+Run on the NFS server as root. It installs `nfs-utils`, creates and exports
 `/srv/nfs/kata`, sets the SELinux booleans, opens the firewall, and finishes
 with a loopback `mount -t nfs` self-test:
 
@@ -329,7 +329,7 @@ Verify by hand:
 ```
 exportfs -v
 ss -lntp | grep 2049
-cat /srv/nfs/kata/from-helper.txt     # seeded by the script, the pod will read this
+cat /srv/nfs/kata/from-nfs-server.txt     # seeded by the script, the pod will read this
 ```
 
 ## Step 2 - Build the NFS client image
@@ -338,7 +338,7 @@ cat /srv/nfs/kata/from-helper.txt     # seeded by the script, the pod will read 
 so the image has to carry `nfs-utils`. The Kata guest rootfs does not provide
 it, and the stock `origin-hello-openshift` / `ubi9` images do not either.
 
-Build on the helper (or any RHEL node with podman) and push to the mirror:
+Build on any RHEL node with podman and push to the mirror:
 
 ```
 cd coco/nfs
@@ -353,7 +353,7 @@ connected host and mirror the result).
 ## Step 3 - Single container test (`kata`)
 
 Edit [../testing/kata-pod-nfs-direct.yaml](https://github.com/sadiquepp/openshift/blob/main/coco/testing/kata-pod-nfs-direct.yaml)
-and replace the image, `NFS_SERVER` (helper IP) and `NFS_EXPORT`, then:
+and replace the image, `NFS_SERVER` (the server's IP) and `NFS_EXPORT`, then:
 
 ```
 oc apply -f ../testing/kata-pod-nfs-direct.yaml
@@ -369,13 +369,13 @@ breaks:
    and no `nfs.ko` ships in the guest rootfs, the mount fails with
    `unknown filesystem type 'nfs'` and no amount of server-side work will help.
    Find this out first - it decides whether the whole approach is viable.
-2. **Reachability** - pod addressing/routes, `ping`, and `nc -vz <helper> 2049`
+2. **Reachability** - pod addressing/routes, `ping`, and `nc -vz <nfs-server> 2049`
    from inside the guest.
 3. **Mount** - `mount -t nfs -o vers=4.2,...`, then `findmnt` and `nfsstat -m`.
-4. **Data path** - reads `from-helper.txt` (proves it is the remote share, not an
+4. **Data path** - reads `from-nfs-server.txt` (proves it is the remote share, not an
    `emptyDir`), writes `from-pod-<host>.txt` back, and prints `df -hT`.
 
-Confirm the write landed on the helper:
+Confirm the write landed on the NFS server:
 
 ```
 ls -l /srv/nfs/kata/
@@ -456,8 +456,8 @@ rest on the NFS server. Options, in rough order of effort:
 ## Does NFSv4 work over the pod network with NAT?
 
 Yes, and NFSv4 is the right version precisely because of the NAT. Traffic from
-the pod to the helper leaves the cluster network, so OVN-Kubernetes SNATs it to
-the node address; the helper never sees the pod IP. What that costs:
+the pod to the NFS server leaves the cluster network, so OVN-Kubernetes SNATs it to
+the node address; the server never sees the pod IP. What that costs:
 
 * **Nothing for the data path.** Everything rides one client-initiated TCP
   connection to 2049 - no rpcbind, no separate mountd/lockd/statd, and
@@ -480,7 +480,7 @@ the node address; the helper never sees the pod IP. What that costs:
   `nfsd_originating_port_ok()` then returns `nfserr_perm`, which reaches the
   client as `mount.nfs: Operation not permitted`. The pod cannot influence the
   translation, so the export has to allow a non-reserved port. Confirm what the
-  server sees with `ss -Htn state all '( sport = :2049 )'` on the helper while
+  server sees with `ss -Htn state all '( sport = :2049 )'` on the NFS server while
   the mount is in flight. The same line gives the source address, which is the
   node IP of whichever node the pod landed on - check it against `oc get nodes
   -o wide` rather than assuming a particular node, which is the other reason the
@@ -538,7 +538,7 @@ address list, and `sec=krb5p` if you need more than that.
 
 ### What the NAT costs the export ACL
 
-This is the part that matters for a confidential workload. After SNAT the helper
+This is the part that matters for a confidential workload. After SNAT the NFS server
 sees the node IP, so `sec=sys` plus an IP allow-list authorises **every pod on
 that node**, and the node itself - the export ACL no longer identifies the
 workload. Ways back, in rough order of effort:
@@ -559,13 +559,13 @@ workload. Ways back, in rough order of effort:
 | `mount.nfs: Protocol not supported`, for every `vers=4.x` | The version module is missing from the guest rootfs, not the kernel. `grep -iE 'nfs\|sunrpc' /proc/modules` shows `nfs` loaded without `nfsv4`; the handler's initrd has no `nfsv4.ko`. Load it from the pod (see below). |
 | `mount: unknown filesystem type 'nfs'` | Guest kernel has no NFS client. Check `zcat /proc/config.gz \| grep -i CONFIG_NFS` (if `CONFIG_IKCONFIG_PROC` is set), `cat /proc/filesystems`, `ls /lib/modules/$(uname -r)/kernel/fs/nfs`. If it is genuinely absent, the kernel-mount approach is out - see fallbacks below. |
 | `mount.nfs: command not found` / `helper program not found` | The container image lacks `nfs-utils` - use `ubi-nfs-util`, not the app image. |
-| `No route to host` / `nc` to 2049 times out | Firewall on the helper, or the node cannot reach the helper. Test from the node: `oc debug node/<node> -- chroot /host nc -vz <helper> 2049`. |
+| `No route to host` / `nc` to 2049 times out | Firewall on the NFS server, or the node cannot reach it. Test from the node: `oc debug node/<node> -- chroot /host nc -vz <nfs-server> 2049`. |
 | `access denied by server while mounting` | Export ACL does not cover the *node* IP (pod traffic is SNATed). Fix `NFS_CLIENT_CIDR` and `exportfs -rav`. |
 | `mount.nfs: Operation not permitted` | The export lacks `insecure` and SNAT moved the client off a reserved port, so `nfsd` returns `nfserr_perm`. Confirmed on this lab. Add `insecure` and `exportfs -rav`. |
 | `Operation not permitted` on mount | Container is not privileged, or the CoCo agent policy blocked it. |
 | Mount works, writes fail with `Permission denied` | `no_root_squash` missing, or the container runs as a UID the server does not map. Check `ls -ln` on the mount. |
-| Files show as `nobody:nobody` | NFSv4 idmapping - set the same `Domain =` in `/etc/idmapd.conf` on the helper and in the client image, or use numeric IDs (`nfs4_disable_idmapping=1`). |
-| Pod hangs in `Terminating`, or I/O blocks when the helper goes away | `hard` mounts block by design. Use `soft,timeo=100,retrans=2` for the test if you prefer failures over hangs, and remember the sidecar must outlive the app container. |
+| Files show as `nobody:nobody` | NFSv4 idmapping - set the same `Domain =` in `/etc/idmapd.conf` on the NFS server and in the client image, or use numeric IDs (`nfs4_disable_idmapping=1`). |
+| Pod hangs in `Terminating`, or I/O blocks when the NFS server goes away | `hard` mounts block by design. Use `soft,timeo=100,retrans=2` for the test if you prefer failures over hangs, and remember the sidecar must outlive the app container. |
 | Mount is invisible in the app container | Expected - the mount is per mount-namespace. Use the sidecar + `/proc/<pid>/root` pattern from the step 4 manifest. |
 | SELinux denials inside the guest | Add `-o context="system_u:object_r:nfs_t:s0"` to the mount options. |
 
@@ -627,7 +627,7 @@ oc delete -f ../testing/kata-cc-pod-nfs-direct.yaml --ignore-not-found
 oc delete -f ../testing/kata-pod-nfs-direct.yaml --ignore-not-found
 ```
 
-On the helper:
+On the NFS server:
 
 ```
 rm -f /etc/exports.d/kata-coco.exports

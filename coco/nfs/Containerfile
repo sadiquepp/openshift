@@ -1,10 +1,10 @@
-# NFS client helper image for the direct (in-pod) NFS mount test.
+# NFS client utility image for the direct (in-pod) NFS mount test.
 #
 # The mount(8) call inside the pod execs /sbin/mount.nfs from the *container*
 # image, so the image - not the Kata guest rootfs - has to provide nfs-utils.
 # The nfs/nfsv4 kernel module still has to come from the Kata guest kernel.
 #
-# Build on a RHEL node (or the helper) and push to the mirror registry:
+# Build on any RHEL node with podman and push to the mirror registry:
 #
 #   export NFS_UTIL_IMAGE="<mirror_registry>/openshift_sandboxed_containers/ubi-nfs-util:latest"
 #   podman build -t $NFS_UTIL_IMAGE -f Containerfile .

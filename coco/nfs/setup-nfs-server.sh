@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# Set up a kernel NFS server on the helper node to test direct (in-pod) NFS
+# Set up a kernel NFS server to test direct (in-pod) NFS
 # mounts from sandboxed containers / CoCo pods.
 #
-# Run this on the helper node (RHEL 8/9) as root. It is idempotent.
+# Run this on the NFS server (RHEL 8/9) as root. It is idempotent.
 #
 #   sudo ./setup-nfs-server.sh
 #
@@ -46,10 +46,10 @@ mkdir -p "${NFS_EXPORT_DIR}"
 # matters for non-root clients. 0777 keeps the test simple.
 chmod 0777 "${NFS_EXPORT_DIR}"
 
-# Seed a file so the pod can prove it is reading data served by the helper and
+# Seed a file so the pod can prove it is reading data served by the NFS server and
 # not a local emptyDir.
-if [[ ! -e "${NFS_EXPORT_DIR}/from-helper.txt" ]]; then
-  echo "written on $(hostname -f) at $(date -Is)" > "${NFS_EXPORT_DIR}/from-helper.txt"
+if [[ ! -e "${NFS_EXPORT_DIR}/from-nfs-server.txt" ]]; then
+  echo "written on $(hostname -f) at $(date -Is)" > "${NFS_EXPORT_DIR}/from-nfs-server.txt"
 fi
 
 if command -v getenforce >/dev/null 2>&1 && [[ "$(getenforce)" != "Disabled" ]]; then
