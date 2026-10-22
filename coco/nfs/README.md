@@ -27,7 +27,7 @@ then switch the same manifest to `kata-cc`.
 
 Note what the first step does *not* prove. The two handlers boot different
 kernel *generations*, not variants of one build, so nothing about the guest
-kernel transfers between them. On OSC 1.8.1:
+kernel transfers between them. On OSC 1.13.1:
 
 | Handler | Artefacts (from `/etc/kata-containers/<handler>/configuration.toml`) | Guest kernel |
 |---|---|---|
@@ -72,7 +72,7 @@ If it mounts under runc and fails under `kata`, the guest kernel is the cause.
 
 | Check | Result |
 |---|---|
-| **Direct in-pod NFSv4.2 mount under `kata`** | **Works.** Mounted `nfs4 vers=4.2,proto=tcp,rsize=1048576,wsize=1048576,hard,sec=sys` from inside the Kata guest over the pod network; read back the file the helper had seeded and wrote to the share. `df` showed the helper's filesystem, not the guest's virtiofs rootfs. Measured on OSC 1.8.1, guest kernel `5.14.0-687.39.1.el9_8.x86_64`, OCP 4.22 / RHCOS 9.8. |
+| **Direct in-pod NFSv4.2 mount under `kata`** | **Works.** Mounted `nfs4 vers=4.2,proto=tcp,rsize=1048576,wsize=1048576,hard,sec=sys` from inside the Kata guest over the pod network; read back the file the helper had seeded and wrote to the share. `df` showed the helper's filesystem, not the guest's virtiofs rootfs. Measured on OSC 1.13.1, guest kernel `5.14.0-687.39.1.el9_8.x86_64`, OCP 4.22 / RHCOS 9.8. |
 | Two prerequisites, both mandatory | **1.** `modprobe nfsv4` in the guest first - the rootfs ships `nfs.ko`, `sunrpc.ko` and `grace.ko` but no `nfsv4.ko`/`nfsv3.ko`, so the kernel's on-demand `request_module` fails and every 4.x mount returns `Protocol not supported`. The kernel is capable; the rootfs is pruned. **2.** `insecure` on the export, per the SNAT'd source port above. With both in place the mount succeeded first try. |
 | The v4 callback address | The mount recorded `clientaddr=10.128.0.17` - the *pod* IP, unreachable from the server. Harmless on 4.1+, where the backchannel shares the connection; on 4.0 it would silently cost all delegations. |
 | Why `/proc/filesystems` is not the check | `nfs` and `nfs4` are registered by `nfs.ko` alone, before any version module is loaded - so that listing says nothing about whether a mount will work. `grep '^nfsv4 ' /proc/modules` is the check. `fuse` is also present, making `fuse-nfs` a live fallback. |

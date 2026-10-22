@@ -20,7 +20,7 @@ consistent with all of it.
 
 | | |
 |---|---|
-| OSC operator | `sandboxed-containers-operator.v1.8.1` |
+| OSC operator | `sandboxed-containers-operator.v1.13.1` |
 | OpenShift | 4.22 (`cri-o://1.35.6-4.rhaos4.22.git41f610b.el9`, kubelet `v1.35.6`) |
 | Node OS | Red Hat Enterprise Linux CoreOS 9.8.20260812-0 |
 | Runtime class | `kata` (plain sandboxed containers, non-confidential) |
