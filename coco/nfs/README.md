@@ -312,6 +312,10 @@ The export is created as NFSv4-only on purpose - a single well-known port
 connection. Set `NFS_ENABLE_V3=y` only if you need to fall back to v3 (see
 [Troubleshooting](#troubleshooting)).
 
+The script also sets `insecure` on the export, which is required for a mount
+made from a pod and is not the alarming thing its name suggests - see
+[What `insecure` means, in plain terms](#what-insecure-means-in-plain-terms).
+
 **`NFS_CLIENT_CIDR` must cover the OpenShift *node* addresses, not the pod
 CIDR.** OVN-Kubernetes SNATs pod traffic leaving the cluster network to the node
 IP, so the NFS server sees the node address, not the pod IP:
@@ -492,6 +496,45 @@ the node address; the helper never sees the pod IP. What that costs:
 
 None of this differs between `runc`, `kata` and `kata-cc` - the guest gets the
 pod IP over a tap device, so the client's view is the same.
+
+### What `insecure` means, in plain terms
+
+The name is misleading. `insecure` does not turn off encryption, authentication,
+permissions, or the list of who may mount the share. It controls exactly one
+thing: **whether the server insists the client connect from a port number below
+1024.**
+
+Here is the background. On Unix, only the root user may open a port below 1024 -
+those are the "reserved" ports. Decades ago NFS borrowed that as a cheap trust
+signal: if a mount request arrives from a low port, then root on the client
+machine must have sent it, so it is probably the operating system's own NFS
+client rather than some program an ordinary user wrote. `secure` (the default)
+means "require a low port". `insecure` means "accept any port". That is the
+whole difference.
+
+It was never a strong check. Anyone with root on a client machine can open a low
+port and send whatever they like, so the test only ever separated *root on the
+client* from *an ordinary user on the client*. If you do not trust root on the
+machines in your export list, `secure` was not protecting you from them anyway.
+
+**Why the pod needs it.** The NFS client inside the Kata guest does the right
+thing and opens a reserved port. But the traffic leaves the cluster through
+OVN's address translation, which rewrites the source port on the way out - in
+this lab a mount arrived at the server from port 33839. The server sees a high
+port, concludes "untrusted program", and refuses with `Operation not permitted`.
+The pod cannot prevent this; the rewrite happens outside the guest, after the
+packet has left. So the choice is `insecure` or no mount at all.
+
+**What you still have.** Everything else about the export is unchanged: the IP
+allow-list still decides who may mount, `rw`/`ro` still applies, root squashing
+still applies, and the security flavour (`sec=sys`, `sec=krb5p`) is untouched.
+What you give up is the ability to tell root from non-root on the client - which
+in this topology was already gone, because every pod on a node reaches the
+server as that node's single address regardless.
+
+If it helps, read the option as "accept connections from high port numbers"
+rather than "be insecure". The real protection for this share is the export's
+address list, and `sec=krb5p` if you need more than that.
 
 ### What the NAT costs the export ACL
 
