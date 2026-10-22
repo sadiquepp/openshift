@@ -37,13 +37,14 @@ kernel transfers between them. On OSC 1.8.1:
 So re-run the `/proc/filesystems` check under `kata-cc`; a pass under `kata` only
 establishes the mechanics and the network path.
 
-**Do not infer kernel support from the `.ko` files in these images.** The plain
-`kata` initrd carries `sunrpc.ko`, `grace.ko` and `nfs.ko` with no `nfsv4.ko`,
-yet its running guest registers both `nfs` and `nfs4` - the NFS client is
-compiled *into* that kernel and the module tree alongside it is incidental. Read
-`usr/lib/modules/<ver>/modules.builtin` instead, and treat even that as strong
-evidence rather than proof, since the tree need not belong to the kernel the
-handler boots.
+**The `.ko` files in these images are the signal; `/proc/filesystems` is not.**
+`nfs.ko` registers *both* the `nfs` and `nfs4` filesystem names and then loads
+the version implementation on demand via `request_module("nfsv4")`. So `nfs4`
+appearing in `/proc/filesystems` proves only that `nfs.ko` is loaded. If
+`nfsv4.ko` is absent from the guest rootfs, that `request_module` fails and every
+4.x mount returns `EPROTONOSUPPORT` - `mount.nfs: Protocol not supported`. List
+the module tree in the handler's initrd or image and look for `nfsv4.ko` and
+`nfsv3.ko` by name.
 
 ### Which kernel is "the guest kernel"
 
@@ -71,16 +72,19 @@ If it mounts under runc and fails under `kata`, the guest kernel is the cause.
 
 | Check | Result |
 |---|---|
-| Guest kernel NFS client under `kata` | **Present.** `nfs` and `nfs4` are registered in `/proc/filesystems`, so they are built in - no `modprobe` needed. `fuse` is present too, so the `fuse-nfs` fallback is available. Measured on OSC 1.8.1, guest kernel `5.14.0-687.39.1.el9_8.x86_64`. |
+| NFS mount from a `kata` pod, as shipped | **Fails.** Every `vers=4`, `4.0`, `4.1`, `4.2` mount returns `mount.nfs: Protocol not supported`. Root cause: the guest rootfs (`kata.initrd`) carries `nfs.ko`, `sunrpc.ko` and `grace.ko` but **no `nfsv4.ko` or `nfsv3.ko`**, so the on-demand `request_module` for the version layer fails. The kernel is capable; the rootfs is pruned. Measured on OSC 1.8.1, guest kernel `5.14.0-687.39.1.el9_8.x86_64`. |
+| Why `/proc/filesystems` looked fine | `nfs` and `nfs4` are registered by `nfs.ko` alone, before any version module is loaded - so that listing is not evidence of mount support. `fuse` is also present, making `fuse-nfs` a live fallback. |
+| Pod-network path, export and ACL | **Good.** 2049 reachable from inside the guest (pod `10.128.0.17` SNAT'd to the node, server `192.168.122.202`), `showmount -e` lists the export with the script's own ACL, so nothing network-, firewall- or export-side is in the way. |
+| Client userspace | **Available off the shelf.** `quay.io/rh-ee-chbutler/ubi-storage-util:latest` ships `nfs-utils-2.8.3-5.el10_2` with `mount.nfs` and `mount.nfs4`, so no image build is needed. Note it is el10 userspace over an el9 guest kernel. |
 | Probe really ran in the VM | **Yes.** `/sys/class/dmi/id/sys_vendor` reads `Red Hat` (a RHEL KVM guest); the bare metal would read `Dell Inc.`. The guest kernel version matching the node's is expected for the RHEL-derived OSC guest kernel, and is not evidence of a runc fallback. |
-| Guest kernel NFS client under `kata-cc` | **Not tested** - no SNP node available. Check it statically from the node instead: compare `sha256sum /usr/share/kata-containers/vmlinuz*` (identical build means the result above carries over) and `file` each one for its version string. If the confidential image loads modules rather than built-ins, `zcat <initrd> \| cpio -it \| grep -i nfs` shows whether `nfs.ko` ships in it. |
-| Everything downstream of the kernel | **Not tested** - the helper export, the client image, the mount itself, the SNAT'd source port and the sidecar pattern are all as written, not as run. |
+| `kata-cc` | **Not tested** - no SNP node available, and `kata-snp`'s configured `image = kata-containers-confidential.img` is not present on the node. Its el10 module tree shows the *same* `nfs.ko`-without-`nfsv4.ko` pattern, so expect the same failure until proven otherwise. |
+| The sidecar pattern and the write path | **Not tested** - blocked behind the module gap above. |
 
-The `kata` leg covers everything that is not CoCo-specific: mount mechanics, client
-image, pod-network path, SNAT behaviour, server config. Three things remain
-`kata-cc`-only and have to be re-checked when an SNP node is available: the guest
-kernel (above), pulling `ubi-nfs-util` from inside the guest with the injected CA
-and registry auth, and the agent policy if you want `oc exec` rather than logs.
+So the requirement is not blocked by anything in NFS, the network or the server -
+it is blocked by one missing module in the guest rootfs. See
+[If the guest kernel has no NFS client](#if-the-guest-kernel-has-no-nfs-client)
+for the workaround that loads it from the pod, which is also the way to confirm
+the kernel itself is capable.
 
 ## Contents
 
@@ -317,6 +321,7 @@ workload. Ways back, in rough order of effort:
 
 | Symptom | Cause / fix |
 |---|---|
+| `mount.nfs: Protocol not supported`, for every `vers=4.x` | The version module is missing from the guest rootfs, not the kernel. `grep -iE 'nfs\|sunrpc' /proc/modules` shows `nfs` loaded without `nfsv4`; the handler's initrd has no `nfsv4.ko`. Load it from the pod (see below). |
 | `mount: unknown filesystem type 'nfs'` | Guest kernel has no NFS client. Check `zcat /proc/config.gz \| grep -i CONFIG_NFS` (if `CONFIG_IKCONFIG_PROC` is set), `cat /proc/filesystems`, `ls /lib/modules/$(uname -r)/kernel/fs/nfs`. If it is genuinely absent, the kernel-mount approach is out - see fallbacks below. |
 | `mount.nfs: command not found` / `helper program not found` | The container image lacks `nfs-utils` - use `ubi-nfs-util`, not the app image. |
 | `No route to host` / `nc` to 2049 times out | Firewall on the helper, or the node cannot reach the helper. Test from the node: `oc debug node/<node> -- chroot /host nc -vz <helper> 2049`. |
@@ -331,21 +336,49 @@ workload. Ways back, in rough order of effort:
 
 ### If the guest kernel has no NFS client
 
-In rough order of practicality:
+Distinguish two cases first, because they have different answers. If
+`/proc/modules` shows `nfs` loaded but a 4.x mount returns `Protocol not
+supported`, the kernel is capable and only the version module is missing - start
+at 1. If `nfs` is absent from `/proc/filesystems` altogether, the kernel has no
+client at all - start at 4.
 
-1. **Userspace NFS client (`libnfs`)** - no kernel support needed at all; the
+1. **Load the version module from the pod.** The node's own module tree has
+   `nfsv4.ko` for the exact guest kernel version, Red Hat signed, and a
+   privileged container can load a module from its own filesystem into the guest
+   kernel. Pull the tree off the node, drop it in the pod, `modprobe`, mount:
+
+   ```
+   V=$(oc exec <pod> -- uname -r)
+
+   oc debug node/<node> -- chroot /host tar czf - -C /usr/lib/modules/$V \
+       kernel/fs kernel/net modules.dep modules.dep.bin modules.alias \
+       modules.alias.bin modules.symbols modules.symbols.bin modules.builtin \
+       modules.builtin.bin modules.order > /tmp/nfsmods.tgz
+
+   oc cp /tmp/nfsmods.tgz <pod>:/tmp/nfsmods.tgz
+   oc exec <pod> -- bash -c "mkdir -p /usr/lib/modules/$V \
+       && tar xzf /tmp/nfsmods.tgz -C /usr/lib/modules/$V \
+       && modprobe -S $V nfsv4 && grep -iE 'nfs|sunrpc' /proc/modules"
+   ```
+
+   For a real workload, bake the same files into the client image and
+   `modprobe` in the mount sidecar before mounting. It works, but the module has
+   to match the guest kernel *exactly*, so it breaks on every kernel update -
+   treat it as a lab workaround and raise the missing module with Red Hat.
+2. **Userspace NFS client (`libnfs`)** - no kernel support needed at all; the
    library speaks NFS over TCP 2049 directly. Good for an application you can
    relink or that can call `nfs-ls`/`nfs-cp`; not a POSIX mount.
-2. **`fuse-nfs`** - gives you a real mountpoint via FUSE, but only if the guest
-   kernel has `CONFIG_FUSE_FS`. Check `/proc/filesystems` for `fuse` before
-   investing time here.
-3. **NFSv3** (`NFS_ENABLE_V3=y`, `-o vers=3`) - worth one attempt if the guest
-   kernel has `nfs` but not `nfs4`; needs `rpcbind`/`mountd`/`statd` reachable.
-4. **Custom guest kernel / initrd** with `CONFIG_NFS_FS=m` - possible, since the
-   CoCo runbook already rebuilds the layer image, but it puts you on an
-   unsupported guest. Raise it with Red Hat before going down this path.
+3. **`fuse-nfs`** - gives you a real mountpoint via FUSE, and `fuse` is present
+   in this guest kernel, so it is a live option.
+4. **Custom guest kernel / initrd** - possible, since the CoCo runbook already
+   rebuilds the layer image, but it puts you on an unsupported guest. Raise it
+   with Red Hat before going down this path.
 5. **Kubernetes NFS volume / CSI** - works today, but the kubelet mounts the
    share on the host, which defeats the requirement.
+
+NFSv3 is not on this list: `nfsv3.ko` is missing from the same rootfs, so it
+fails identically, and its lock recovery needs the server to call back to the
+pod IP, which the SNAT breaks.
 
 ## Teardown
 
