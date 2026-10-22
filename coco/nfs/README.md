@@ -21,9 +21,37 @@ share - the same reason the block-device example mounts the device in the guest
 rather than letting the kubelet do it.
 
 **This cannot be fully validated on `kata-cc` in one go, so test in two steps:**
-first with `runtimeClassName: kata` (ordinary sandboxed containers - same guest
-kernel and the same mount mechanics, but `oc exec` and logs are unrestricted),
+first with `runtimeClassName: kata` (ordinary sandboxed containers - same mount
+mechanics and the same network path, but `oc exec` and logs are unrestricted),
 then switch the same manifest to `kata-cc`.
+
+Note what the first step does *not* prove. OSC ships a confidential kernel and
+initrd for the CoCo handler and a non-confidential pair for plain `kata` - same
+source tree, different config fragments - so NFS client support can differ
+between them. Re-run the `/proc/filesystems` check under `kata-cc`; a pass under
+`kata` only establishes the mechanics and the network path.
+
+### Which kernel is "the guest kernel"
+
+Two kernels are involved. RHCOS boots on the bare metal and runs the node; the
+pod's VM boots a separate kernel that OSC ships under
+`/usr/share/kata-containers/` and launches per the handler's
+`configuration.toml` (for SNP, the files the CoCo runbook already edits at
+`/etc/kata-containers/snp/`). The container processes run against that inner
+kernel, so that is where `CONFIG_NFS_FS` has to be:
+
+```
+oc exec nfs-direct-check -- uname -r
+oc get node <node> -o jsonpath='{.status.nodeInfo.kernelVersion}'
+```
+
+Those differ. The `ubi-nfs-util` image supplies `mount.nfs` in userspace, but no
+container image can supply a filesystem driver - it is built into the guest
+kernel or loadable from the guest's `/lib/modules`.
+
+As a control, run the same manifest with no `runtimeClassName` at all: a
+privileged runc pod shares the RHCOS kernel, which certainly has an NFS client.
+If it mounts under runc and fails under `kata`, the guest kernel is the cause.
 
 ## Contents
 
