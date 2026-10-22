@@ -189,22 +189,17 @@ from dracut configs in the same RPM, at
 `/usr/libexec/kata-containers/osbuilder/dracut/`, which is where the fix
 presumably belongs.
 
-Unrelated observation from the same node, noted in case it is a separate
-packaging issue: `kata-snp/configuration.toml` specifies
-`image = /usr/share/kata-containers/kata-containers-confidential.img` with no
-`initrd =` line, but `rpm -ql kata-containers` ships no such image and the file
-is not on the node.
 
 Two caveats on this item, stated plainly rather than glossed:
 
 - It has not been reproduced on a *running* CoCo guest; no SNP node was
   available. The mount failure is inferred from the image contents, by the same
   mechanism proven in **Evidence 3 and 4**.
-- The file inspected is `kata-cc.initrd`, which is what the `kata-tdx` handler's
-  `configuration.toml` references. The `kata-snp` handler on this node
-  references `image = /usr/share/kata-containers/kata-containers-confidential.img`,
-  which was not present on the node and so could not be inspected. The two are
-  expected to be built from the same rootfs content, but that was not verified.
+- The file inspected is `kata-cc.initrd`, shipped by the `kata-containers` RPM
+  and symlinked from `/usr/share/kata-containers/osbuilder-images/`. It is the
+  confidential rootfs for this build; the `image =` path written in
+  `kata-snp/configuration.toml` is a legacy reference from the 4.18 layered-image
+  era and is not where current versions look.
 
 **And on the confidential side there is no workaround at all,** which is the
 part that makes this worth fixing rather than documenting. The runtime injection

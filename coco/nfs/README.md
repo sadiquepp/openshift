@@ -160,12 +160,12 @@ Both follow-up checks came back, and both matter:
   NFS entries, so the confidential guest would fail exactly as the plain one
   does. `kata-cc.kernel` is itself a symlink to a bundled
   `6.12.0-211.16.1.el10_2.x86_64/vmlinuz`.
-* **`kata-snp` references a rootfs the RPM does not ship.** Its
-  `configuration.toml` has `image = /usr/share/kata-containers/kata-containers-confidential.img`
-  and no `initrd =` line, but `rpm -ql kata-containers` lists only
-  `kata-cc.initrd` and `kata-cc.kernel` - no `.img` at all, and the file is
-  absent from the node. Worth chasing on its own: it may be why the SNP handler
-  cannot run here, independently of NFS.
+* **Ignore the `image =` path in `kata-snp/configuration.toml`.** It names a
+  `kata-containers-confidential.img` that the RPM does not ship and that is not
+  on the node, but that is a legacy reference from the 4.18 layered-image era -
+  the location changed in later versions, and its absence is not evidence of
+  anything. The confidential rootfs for this build is `kata-cc.initrd`, shipped
+  by the RPM.
 
 The module list itself comes from dracut configs shipped in the same RPM, at
 `/usr/libexec/kata-containers/osbuilder/dracut/` (`dracut-kata-cc.conf` and
