@@ -130,10 +130,42 @@ wsize=1048576,namlen=255,hard,proto=tcp,timeo=600,retrans=2,sec=sys,
 clientaddr=10.128.0.17,local_lock=none,addr=<server>)
 ```
 
-**5. The confidential guest shows the same pattern,** so the fix is needed in
-both images. Its module tree (`6.12.0-211.16.1.el10_2.x86_64`) also carries
-`nfs.ko` with no `nfsv4.ko`. Not yet reproduced on a running CoCo guest - no
-SNP node was available - so this part is a prediction from the image contents.
+**5. The confidential guest image shows the same pattern,** so the fix is needed
+in both images, and as two separate changes - they are different kernel builds,
+not variants of one:
+
+```
+# on the node
+# zcat /usr/share/kata-containers/osbuilder-images/kata-cc.initrd | cpio -it 2>/dev/null | grep -i nfs
+usr/lib/modules/6.12.0-211.16.1.el10_2.x86_64/kernel/fs/nfs
+usr/lib/modules/6.12.0-211.16.1.el10_2.x86_64/kernel/fs/nfs/nfs.ko.xz
+usr/lib/modules/6.12.0-211.16.1.el10_2.x86_64/kernel/fs/nfs_common
+usr/lib/modules/6.12.0-211.16.1.el10_2.x86_64/kernel/fs/nfs_common/grace.ko.xz
+usr/lib/modules/6.12.0-211.16.1.el10_2.x86_64/kernel/fs/nfs_common/nfs_localio.ko.xz
+```
+
+`nfs.ko` present, `nfsv4.ko` and `nfsv3.ko` absent - identical to the plain
+`kata` rootfs in **Evidence 3**, at a different kernel (`6.12.0-211.16.1.el10_2`,
+RHEL 10, against `5.14.0-687.39.1.el9_8`, RHEL 9, for plain `kata`).
+
+Two caveats on this item, stated plainly rather than glossed:
+
+- It has not been reproduced on a *running* CoCo guest; no SNP node was
+  available. The mount failure is inferred from the image contents, by the same
+  mechanism proven in **Evidence 3 and 4**.
+- The file inspected is `kata-cc.initrd`, which is what the `kata-tdx` handler's
+  `configuration.toml` references. The `kata-snp` handler on this node
+  references `image = /usr/share/kata-containers/kata-containers-confidential.img`,
+  which was not present on the node and so could not be inspected. The two are
+  expected to be built from the same rootfs content, but that was not verified.
+
+**And on the confidential side there is no workaround at all,** which is the
+part that makes this worth fixing rather than documenting. The runtime injection
+used in **Evidence 4** is not merely unacceptable inside a TEE - it is
+technically impossible: the host's module tree is `5.14.0-687.39.1.el9_8` while
+the confidential guest kernel is `6.12.0-211.16.1.el10_2`, so vermagic can never
+match. Obtaining modules for that exact el10 build means obtaining them from the
+confidential image itself, which is where `nfsv4.ko` is missing.
 
 ## Root cause (analysis)
 
@@ -181,8 +213,8 @@ currently no attested path for this at all.
 
 | Workaround | Why it does not close the gap |
 |---|---|
-| `hostPath` the host's `/usr/lib/modules` into the pod and `modprobe` | Works for plain `kata`, because its guest kernel is built from the host's. **Unacceptable for CoCo**: it loads host-supplied kernel code inside the TEE, which is precisely the influence a confidential guest exists to deny. Also needs `privileged` and `hostPath` in the SCC. |
-| Bake the `.ko` into the workload image | Must match the guest `uname -r` exactly, so it breaks on every kernel update; and for CoCo it is still code arriving from outside the attested image. |
+| `hostPath` the host's `/usr/lib/modules` into the pod and `modprobe` | Works for plain `kata`, because its guest kernel is built from the host's. **Unacceptable for CoCo** - it loads host-supplied kernel code inside the TEE, precisely the influence a confidential guest exists to deny - and in any case **impossible** there: the host tree is `5.14.0-687.39.1.el9_8` and the confidential guest kernel is `6.12.0-211.16.1.el10_2`, so vermagic can never match. Also needs `privileged` and `hostPath` in the SCC. |
+| Bake the `.ko` into the workload image | Must match the guest `uname -r` exactly, so it breaks on every kernel update; and for CoCo it is still code arriving from outside the attested image. For the confidential guest it is also unclear where a customer would obtain modules for the `6.12.0-211.16.1.el10_2` build other than from the confidential image itself, which is the image missing the module. |
 | Rebuild the confidential rootfs/initrd to add the module | **No longer a cheap option.** Repacking the initrd was once something customers already did to inject a corporate CA and registry auth, but that is obsolete: since OCP 4.20 registry credentials are served by Trustee and the CA is injected via `initdata`, so the supported flow involves no customer-side rebuild of the guest artefacts at all. Reintroducing one for a single module means leaving the supported path and owning a modified guest image. |
 | `kernel_modules` in `configuration.toml`, or the `io.katacontainers.config.agent.kernel_modules` annotation | No help: kata-agent's `modprobe` also resolves from the guest rootfs, so it can only load modules that are already there. |
 | Userspace NFS client (`fuse-nfs`, `libnfs`) | Needs no kernel module and `fuse` is present in the guest, but it is not packaged in RHEL, performs worse than the kernel client, and does not give POSIX locking. |
