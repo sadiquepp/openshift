@@ -1,0 +1,84 @@
+---
+# Step 1 of the direct in-pod NFS mount test - single container, no sidecar.
+#
+# The pod mounts the NFS share served by a remote NFS server itself, from inside the
+# Kata guest, over the pod network. There is no PV/PVC and no kubelet-side NFS
+# mount, so nothing is mounted on the worker node.
+#
+# Test with runtimeClassName "kata" first (exec and logs are unrestricted there),
+# then move to kata-cc using testing/kata-cc-pod-nfs-direct.yaml.
+#
+# Replace: image, NFS_SERVER (the NFS server's IP), NFS_EXPORT.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nfs-direct-check
+  labels:
+    app: nfs-direct-check
+  annotations:
+    io.katacontainers.config.hypervisor.default_memory: "4096"
+spec:
+  runtimeClassName: kata
+  restartPolicy: Never
+  containers:
+  - name: nfs-client
+    # Any image carrying nfs-utils works. quay.io/rh-ee-chbutler/ubi-storage-util
+    # ships nfs-utils and needs no build; coco/nfs/Containerfile builds one if you
+    # need it mirrored.
+    image: quay.io/rh-ee-chbutler/ubi-storage-util:latest
+    securityContext:
+      privileged: true # mount(2) needs CAP_SYS_ADMIN, and modprobe needs CAP_SYS_MODULE - both only inside the Kata VM
+      runAsUser: 0
+    env:
+      - name: NFS_SERVER
+        value: "192.168.122.1"   # NFS server IP. Use an IP - cluster DNS does not resolve off-cluster names.
+      - name: NFS_EXPORT
+        value: "/srv/nfs/kata"
+      - name: MOUNTPOINT
+        value: "/mnt/nfs"
+      - name: NFS_OPTS
+        value: "vers=4.2,rw,hard,timeo=600,retrans=2,sec=sys"
+      # The off-the-shelf client image has no `hostname` binary, so take the
+      # pod name from the downward API rather than shelling out for it.
+      - name: POD_NAME
+        valueFrom:
+          fieldRef:
+            fieldPath: metadata.name
+    command: ["/bin/bash", "-c"]
+    args:
+      - |
+        set -x
+
+        echo "### 1. NFS client in the guest kernel"
+        # nfsv4.ko ships in the guest rootfs from kata-containers 3.31.0-5
+        # onwards, so the kernel loads it on demand at mount time and nothing
+        # has to be done here. Before that release it was absent and every 4.x
+        # mount failed with EPROTONOSUPPORT - note that /proc/filesystems lists
+        # nfs and nfs4 either way, because nfs.ko registers those names before
+        # any version module loads, so it is not the check. /proc/modules is.
+        uname -r
+        grep -E '^(nfs|nfsv4|sunrpc) ' /proc/modules || echo "(nothing loaded yet - expected before the first mount)"
+
+        echo "### 2. is the NFS server reachable over the pod network?"
+        ip -4 addr show
+        ip -4 route show
+        # bash's /dev/tcp rather than nc or ping, neither of which is in the
+        # off-the-shelf client image - and ICMP proves less than the real port.
+        timeout 5 bash -c "</dev/tcp/${NFS_SERVER}/2049" \
+          && echo "2049 reachable" || echo "2049 UNREACHABLE"
+
+        echo "### 3. mount the export"
+        mkdir -p "$MOUNTPOINT"
+        mount -t nfs -o "$NFS_OPTS" "${NFS_SERVER}:${NFS_EXPORT}" "$MOUNTPOINT"
+        findmnt "$MOUNTPOINT"
+        nfsstat -m
+
+        echo "### 4. read what the NFS server seeded, then write from the pod"
+        ls -l "$MOUNTPOINT"
+        cat "$MOUNTPOINT/from-nfs-server.txt"
+        echo "written by ${POD_NAME} at $(date -Is)" > "${MOUNTPOINT}/from-pod-${POD_NAME}.txt"
+        cat "${MOUNTPOINT}/from-pod-${POD_NAME}.txt"
+        df -hT "$MOUNTPOINT"
+
+        echo "### NFS mount test PASSED - keeping the pod alive for inspection"
+        sleep 36000
