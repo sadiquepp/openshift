@@ -58,10 +58,13 @@
       - _mc_which.rc == 0
     fail_msg: >-
       `{{ minio_mc_bin }}` not found on {{ minio_mc_host }}. Bucket, policy and
-      user creation are MinIO admin-API calls, which only mc can make. Install
-      it (https://dl.min.io/client/mc/release/linux-amd64/mc, chmod +x), or
-      point -e minio_mc_host at the MinIO VM itself - hcp-backup-restore's
-      `setup-minio` role already puts mc at /usr/local/bin/mc there.
+      user creation are MinIO admin-API calls, which only mc can make. Get it
+      from the last community release and chmod +x:
+      https://github.com/minio/mc/releases/download/{{ minio_mc_release }}/mc.linux-amd64.{{ minio_mc_release }}
+      - or point -e minio_mc_host at the MinIO VM itself, which usually has it
+      already. NOTE: dl.min.io no longer serves these binaries (HTTP 410); the
+      open-source mc was archived in July 2026 and GitHub Releases is what is
+      left.
     quiet: true
 
 - name: Build the mc command prefix

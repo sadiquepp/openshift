@@ -25,6 +25,7 @@ not give you.
 - [Disconnected: MinIO instead of AWS S3](#disconnected-minio-instead-of-aws-s3)
   - [What changes, and what does not](#what-changes-and-what-does-not)
   - [Stand up MinIO](#stand-up-minio)
+  - [It does not have to be MinIO](#it-does-not-have-to-be-minio)
   - [Run the MinIO storage phase](#run-the-minio-storage-phase)
   - [Reaching MinIO from the cluster](#reaching-minio-from-the-cluster)
   - [HTTPS and a private CA](#https-and-a-private-ca)
@@ -468,6 +469,53 @@ That leaves MinIO on `http://minio.<hub_domain>:9000` with the root credentials
 from its `vault.yaml`, and `mc` at `/usr/local/bin/mc` on the VM. Any other
 MinIO works just as well — all this role needs is an endpoint and the root
 credentials.
+
+> **MinIO's open-source builds are gone.** MinIO Inc. archived the community
+> server, `mc` and KES: the [`minio/minio`](https://github.com/minio/minio)
+> repository went read-only on 25 Apr 2026,
+> [`minio/mc`](https://github.com/minio/mc) on 14 Jul 2026, and `dl.min.io`
+> now answers **HTTP 410 Gone** for every community binary. So any playbook
+> that fetched from `dl.min.io` fails until it is repointed.
+>
+> - **`mc`** is still published on GitHub Releases, which is where this role's
+>   "mc not found" message now sends you:
+>   `https://github.com/minio/mc/releases/download/RELEASE.2025-08-13T08-35-41Z/mc.linux-amd64.RELEASE.2025-08-13T08-35-41Z`
+> - **The server binary is not** — GitHub Releases carries only source
+>   archives for it. The last community release's own notes say to build it:
+>   `go install -v github.com/minio/minio@RELEASE.2025-10-15T17-29-55Z`
+>   (needs Go 1.24; the module's `toolchain` directive pulls 1.24.8 on its own).
+
+### It does not have to be MinIO
+
+Nothing downstream of phase 1 knows what serves the endpoint — Loki and Tempo
+speak plain S3 to whatever `s3-credentials.yml` names. That file is an ordinary
+YAML file, so an S3-compatible store this automation has no role for — Ceph RGW
+(radosgw-admin), Garage, SeaweedFS, or a bucket on a NAS — is a matter of
+writing it by hand and running the cluster phase alone:
+
+```yaml
+# s3-credentials.yml - chmod 0600, gitignored
+observability_s3_backends:
+  logging:
+    bucket: logging-loki-s3-xipio
+    endpoint: https://rgw.lab.example.com
+    region: us-east-1
+    access_key_id: …
+    secret_access_key: …
+  netobserv: { … }      # only with netobserv_use_loki: true
+  tempo:     { … }      # only with tracing_enabled: true
+```
+
+```bash
+ansible-playbook cluster.yml -e suffix=xipio -e s3_provider=minio
+```
+
+`s3_provider: minio` is the right setting for any non-AWS endpoint: all it does
+in the cluster phase is pick the preflight checks, which verify this file rather
+than talk to AWS. Preflight will warn that it cannot reach
+`<endpoint>/minio/health/live` — harmless against a non-MinIO store, since the
+path simply does not exist there — and the mismatch guard only insists that a
+non-AWS provider has a non-`amazonaws.com` endpoint.
 
 ### Run the MinIO storage phase
 

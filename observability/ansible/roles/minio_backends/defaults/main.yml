@@ -59,5 +59,12 @@ minio_mc_insecure: false
 # Length of the generated secret keys. MinIO requires at least 8.
 minio_secret_key_length: 40
 
+# The mc release this role names when the binary is missing. The open-source mc
+# was archived in July 2026 and dl.min.io stopped serving binaries (HTTP 410),
+# so GitHub Releases is the remaining source - this is the last community tag
+# published there. Nothing is downloaded by this role; the value only appears in
+# the "mc not found" message, so bump it if a newer tag ever shows up.
+minio_mc_release: RELEASE.2025-08-13T08-35-41Z
+
 observability_backends: []
 s3_credentials_file: "{{ playbook_dir }}/s3-credentials.yml"
