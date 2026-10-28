@@ -461,7 +461,7 @@ and `mc` as a systemd service (`setup-minio`):
 
 ```bash
 # in the hcp-backup-restore checkout
-ansible-playbook setup_minio.yaml --ask-vault-pass
+ansible-playbook -i inventory/hosts setup_minio.yaml --ask-vault-pass
 ```
 
 That leaves MinIO on `http://minio.<hub_domain>:9000` with the root credentials
