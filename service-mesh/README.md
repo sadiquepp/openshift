@@ -17,3 +17,12 @@ sidecar overlay needs no second control plane. Do not apply `sidecar/03-istio.ya
 top of an ambient install, because it is the same `Istio/default` resource.
 
 **For only one of them,** use that directory alone. Each README is self-contained.
+
+## The two data planes
+
+Both diagrams show the same request, checkoutservice calling paymentservice on another
+node, so they line up box for box.
+
+![Ambient mode: checkoutservice calling paymentservice through ztunnel on each node, with an optional waypoint](images/ambient-mode.png)
+
+![Sidecar mode: checkoutservice calling paymentservice through an Envoy sidecar in each pod](images/sidecar-mode.png)

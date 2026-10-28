@@ -14,6 +14,10 @@ You can use it in two ways:
   sidecar overlay deploys into its own namespace, `online-boutique-sidecar`, next to the
   ambient `online-boutique-ambient`. Then follow [Compare the two](#6-compare-the-two).
 
+![Sidecar mode: checkoutservice calling paymentservice through an Envoy sidecar in each pod](../images/sidecar-mode.png)
+
+The same request in ambient mode is drawn in [`../ambient`](../ambient/README.md).
+
 ## Contents
 
 - [Requirements](#requirements)

@@ -14,6 +14,8 @@ The traditional sidecar variant of the same walkthrough is in [`../sidecar`](../
 It can run beside this one on the same cluster, in namespace `online-boutique-sidecar`,
 so you can compare the two directly.
 
+![Ambient mode: checkoutservice calling paymentservice through ztunnel on each node, with an optional waypoint](../images/ambient-mode.png)
+
 ## Contents
 
 - [Requirements](#requirements)
