@@ -1,5 +1,5 @@
 # A throwaway client inside the mesh, with its OWN service account -- so it has
-# its own SPIFFE identity (spiffe://cluster.local/ns/online-boutique/sa/mesh-client)
+# its own SPIFFE identity (spiffe://cluster.local/ns/online-boutique-ambient/sa/mesh-client)
 # that the policies in this directory can allow or deny.
 #
 # None of the shop's own images can do this job: frontend and friends are
@@ -11,18 +11,18 @@
 # disconnected cluster, and pin a digest if you keep this around.
 #
 #   oc apply -f mesh-client.yaml
-#   oc -n online-boutique wait --for=condition=Ready pod/mesh-client
+#   oc -n online-boutique-ambient wait --for=condition=Ready pod/mesh-client
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: mesh-client
-  namespace: online-boutique
+  namespace: online-boutique-ambient
 ---
 apiVersion: v1
 kind: Pod
 metadata:
   name: mesh-client
-  namespace: online-boutique
+  namespace: online-boutique-ambient
   labels:
     app: mesh-client
 spec:

@@ -17,7 +17,7 @@ apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy
 metadata:
   name: paymentservice-charge-from-checkout-only
-  namespace: online-boutique
+  namespace: online-boutique-ambient
 spec:
   targetRefs:
     - kind: Service
@@ -28,7 +28,7 @@ spec:
     - from:
         - source:
             principals:
-              - cluster.local/ns/online-boutique/sa/checkoutservice
+              - cluster.local/ns/online-boutique-ambient/sa/checkoutservice
       to:
         - operation:
             methods: ["POST"]

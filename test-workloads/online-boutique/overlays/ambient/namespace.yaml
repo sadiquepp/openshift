@@ -1,0 +1,19 @@
+# Enrolling the namespace is all it takes to put the workload in the mesh:
+#
+#   istio.io/dataplane-mode: ambient  -> istio-cni redirects every pod's
+#                                         traffic to its node's ztunnel. Pods
+#                                         that are already running are enrolled
+#                                         too -- no restart.
+#   istio-discovery: enabled          -> matches the Istio resource's
+#                                         discoverySelectors; without it istiod
+#                                         ignores the namespace and ztunnel never
+#                                         learns these workloads exist
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: online-boutique-ambient
+  labels:
+    app.kubernetes.io/part-of: online-boutique
+    app.kubernetes.io/instance: online-boutique-ambient
+    istio.io/dataplane-mode: ambient
+    istio-discovery: enabled

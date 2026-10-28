@@ -12,7 +12,7 @@ You can use it in two ways:
 - **Side by side with ambient.** If you have already installed [`../ambient`](../ambient),
   **skip the install**. An ambient-profile istiod injects sidecars as well, so the
   sidecar overlay deploys into its own namespace, `online-boutique-sidecar`, next to the
-  ambient `online-boutique`. Then follow [Compare the two](#6-compare-the-two).
+  ambient `online-boutique-ambient`. Then follow [Compare the two](#6-compare-the-two).
 
 ## Contents
 
@@ -331,7 +331,7 @@ This needs both variants running: the ambient mesh, plus `overlays/ambient` and
 **Containers:**
 
 ```bash
-oc get pods -n online-boutique          # 1/1 everywhere
+oc get pods -n online-boutique-ambient  # 1/1 everywhere
 oc get pods -n online-boutique-sidecar  # 2/2 everywhere
 ```
 
@@ -342,7 +342,7 @@ waypoint, if you deployed one.
 ```bash
 oc adm top pods -n online-boutique-sidecar --containers | awk 'NR==1 || $2=="istio-proxy"'
 oc adm top pods -n ztunnel
-oc adm top pods -n online-boutique -l gateway.networking.k8s.io/gateway-name=waypoint
+oc adm top pods -n online-boutique-ambient -l gateway.networking.k8s.io/gateway-name=waypoint
 ```
 
 **What the data plane reserves.** Requests are what the scheduler holds back, whether

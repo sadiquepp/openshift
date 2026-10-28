@@ -16,7 +16,7 @@ apiVersion: security.istio.io/v1
 kind: PeerAuthentication
 metadata:
   name: default
-  namespace: online-boutique
+  namespace: online-boutique-ambient
 spec:
   mtls:
     mode: STRICT

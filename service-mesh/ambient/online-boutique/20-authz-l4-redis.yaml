@@ -17,7 +17,7 @@ apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy
 metadata:
   name: redis-cart-from-cartservice-only
-  namespace: online-boutique
+  namespace: online-boutique-ambient
 spec:
   selector:
     matchLabels:
@@ -27,4 +27,4 @@ spec:
     - from:
         - source:
             principals:
-              - cluster.local/ns/online-boutique/sa/cartservice
+              - cluster.local/ns/online-boutique-ambient/sa/cartservice

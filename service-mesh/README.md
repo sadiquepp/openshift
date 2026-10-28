@@ -6,7 +6,7 @@ mTLS to L4 and L7 authorization policy.
 | | [`ambient/`](ambient) | [`sidecar/`](sidecar) |
 |---|---|---|
 | Data plane | ztunnel per node (L4), plus a waypoint Envoy per namespace where you need L7 | An Envoy container in every pod |
-| App namespace | `online-boutique` | `online-boutique-sidecar` |
+| App namespace | `online-boutique-ambient` | `online-boutique-sidecar` |
 | OpenShift | 4.19+, OVN local gateway mode, no FIPS | 4.19+ as written (4.18 with Gateway API CRDs), FIPS supported |
 | Service Mesh | 3.2+ | 3.0+ |
 | Explains | [How ambient differs from sidecar](ambient/README.md#how-ambient-differs-from-sidecar-mode), [how ztunnel works](ambient/README.md#how-ztunnel-works) | [How the sidecar works](sidecar/README.md#how-the-sidecar-works), [side-by-side comparison](sidecar/README.md#6-compare-the-two) |

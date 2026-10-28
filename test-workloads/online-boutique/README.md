@@ -105,7 +105,7 @@ base/
 overlays/
   default/                    namespace + labels           <- start here
   tracing/                    default + OTLP tracing env vars
-  ambient/                    default, enrolled in an Istio ambient mesh
+  ambient/                    the same in an ambient mesh, namespace online-boutique-ambient
   sidecar/                    the same in a sidecar mesh, namespace online-boutique-sidecar
   no-loadgenerator/           default minus the traffic generator
   hardened/                   default, rebuilt on Red Hat Hardened Images
@@ -190,9 +190,9 @@ spans by the collector's `spanmetrics` connector; both are covered in the observ
 oc apply -k test-workloads/online-boutique/overlays/ambient
 ```
 
-This puts the shop in an OpenShift Service Mesh 3 **ambient** mesh: mTLS between every
-service with no sidecars and no change to the Deployments. The overlay labels the
-namespace, adds a Gateway API ingress gateway, and points the `frontend` Route at that
+This puts the shop in an OpenShift Service Mesh 3 **ambient** mesh, in namespace
+`online-boutique-ambient`: mTLS between every service with no sidecars and no change to
+the Deployments. The overlay labels the namespace, adds a Gateway API ingress gateway, and points the `frontend` Route at that
 gateway instead of the frontend pods. The mesh must be installed first. The full walkthrough
 is [`../../service-mesh/ambient`](../../service-mesh/ambient), which covers installing the
 mesh, adding L4 and L7 policy step by step, and how ambient differs from sidecar mode.

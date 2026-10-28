@@ -161,9 +161,9 @@ oc apply -k test-workloads/online-boutique/overlays/ambient
 ```
 
 ```bash
-oc -n online-boutique rollout status deploy --timeout=5m
-oc -n online-boutique wait --for=condition=Programmed gateway/boutique-gateway --timeout=2m
-oc get route frontend -n online-boutique -o jsonpath='https://{.spec.host}{"\n"}'
+oc -n online-boutique-ambient rollout status deploy --timeout=5m
+oc -n online-boutique-ambient wait --for=condition=Programmed gateway/boutique-gateway --timeout=2m
+oc get route frontend -n online-boutique-ambient -o jsonpath='https://{.spec.host}{"\n"}'
 ```
 
 What the overlay adds to `overlays/default` (the reasons are in the overlay's
@@ -179,8 +179,9 @@ What the overlay adds to `overlays/default` (the reasons are in the overlay's
    Service. The browser path becomes:
    router → gateway Envoy → (HBONE) → frontend.
 
-> **You can enrol an app that is already running.** Deploy `overlays/default`, then
-> run `oc label ns online-boutique istio.io/dataplane-mode=ambient istio-discovery=enabled`.
+> **You can enrol an app that is already running.** Deploy `overlays/default` (namespace
+> `online-boutique`), then run
+> `oc label ns online-boutique istio.io/dataplane-mode=ambient istio-discovery=enabled`.
 > No pod restarts. The next connection from each pod goes through ztunnel. In sidecar
 > mode, the same change needs a rollout of every Deployment, because the proxy is
 > added to the pod at creation time.
@@ -190,13 +191,13 @@ What the overlay adds to `overlays/default` (the reasons are in the overlay's
 **No sidecars.** Every pod is `1/1`. In sidecar mode it would be `2/2`.
 
 ```bash
-oc get pods -n online-boutique
+oc get pods -n online-boutique-ambient
 ```
 
 **Each pod has been captured.** istio-cni annotates every pod it has redirected:
 
 ```bash
-oc get pods -n online-boutique -o \
+oc get pods -n online-boutique-ambient -o \
   jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.metadata.annotations.ambient\.istio\.io/redirection}{"\n"}{end}'
 ```
 
@@ -210,8 +211,8 @@ so it is not captured a second time.
 namespace:
 
 ```bash
-FE=$(oc get pod -n online-boutique -l app=frontend -o name)
-kubectl debug -n online-boutique -it $FE --image=quay.io/curl/curl:latest \
+FE=$(oc get pod -n online-boutique-ambient -l app=frontend -o name)
+kubectl debug -n online-boutique-ambient -it $FE --image=quay.io/curl/curl:latest \
   --profile=restricted -- netstat -tln
 ```
 
@@ -234,16 +235,16 @@ namespace.
 traffic:
 
 ```bash
-oc logs -n ztunnel -l app=ztunnel --tail=500 | grep 'access' | grep online-boutique | head -5
+oc logs -n ztunnel -l app=ztunnel --tail=500 | grep 'access' | grep online-boutique-ambient | head -5
 ```
 
 One line, abridged and wrapped:
 
 ```
 info  access  connection complete  src.addr=10.128.2.31:48266 src.workload="checkoutservice-…"
-  src.namespace="online-boutique" src.identity="spiffe://cluster.local/ns/online-boutique/sa/checkoutservice"
-  dst.addr=10.131.0.22:15008 dst.hbone_addr=10.131.0.22:50051 dst.service="paymentservice.online-boutique.svc.cluster.local"
-  dst.workload="paymentservice-…" dst.identity="spiffe://cluster.local/ns/online-boutique/sa/paymentservice"
+  src.namespace="online-boutique-ambient" src.identity="spiffe://cluster.local/ns/online-boutique-ambient/sa/checkoutservice"
+  dst.addr=10.131.0.22:15008 dst.hbone_addr=10.131.0.22:50051 dst.service="paymentservice.online-boutique-ambient.svc.cluster.local"
+  dst.workload="paymentservice-…" dst.identity="spiffe://cluster.local/ns/online-boutique-ambient/sa/paymentservice"
   direction="outbound" bytes_sent=… bytes_recv=… duration="3ms"
 ```
 
@@ -255,7 +256,7 @@ pod's Kubernetes service account.
 **With `istioctl`**
 
 ```bash
-istioctl -n ztunnel ztunnel-config workloads | grep online-boutique
+istioctl -n ztunnel ztunnel-config workloads | grep online-boutique-ambient
 ```
 
 `PROTOCOL` is `HBONE` for every pod. Remove the namespace label and the same command
@@ -269,11 +270,11 @@ account, `mesh-client`, which none of the policies below allow.
 ```bash
 D=service-mesh/ambient/online-boutique
 oc apply -f $D/mesh-client.yaml
-oc -n online-boutique wait --for=condition=Ready pod/mesh-client
+oc -n online-boutique-ambient wait --for=condition=Ready pod/mesh-client
 ```
 
 ```bash
-mc() { oc -n online-boutique exec mesh-client -- "$@"; }
+mc() { oc -n online-boutique-ambient exec mesh-client -- "$@"; }
 ```
 
 ### 5.1 STRICT mTLS
@@ -289,7 +290,7 @@ before and after the change:
 oc new-project not-in-mesh
 oc run probe -n not-in-mesh --image=quay.io/curl/curl:latest --command -- sleep infinity
 oc -n not-in-mesh wait --for=condition=Ready pod/probe
-out() { oc -n not-in-mesh exec probe -- curl -sS -m 5 -o /dev/null -w '%{http_code}\n' http://frontend.online-boutique:80/; }
+out() { oc -n not-in-mesh exec probe -- curl -sS -m 5 -o /dev/null -w '%{http_code}\n' http://frontend.online-boutique-ambient:80/; }
 ```
 
 **2. Before: plaintext is accepted.** The namespace is still PERMISSIVE, so the frontend
@@ -376,17 +377,17 @@ destination opts in.
 
 ```bash
 oc apply -f $D/30-waypoint.yaml
-oc -n online-boutique wait --for=condition=Programmed gateway/waypoint --timeout=2m
+oc -n online-boutique-ambient wait --for=condition=Programmed gateway/waypoint --timeout=2m
 ```
 
 **Before you enrol the namespace, opt redis-cart out:**
 
 ```bash
-oc -n online-boutique label service redis-cart istio.io/use-waypoint=none
+oc -n online-boutique-ambient label service redis-cart istio.io/use-waypoint=none
 ```
 
 ```bash
-oc label namespace online-boutique istio.io/use-waypoint=waypoint
+oc label namespace online-boutique-ambient istio.io/use-waypoint=waypoint
 ```
 
 Why redis-cart is opted out: with a waypoint in the path, a connection becomes
@@ -401,7 +402,7 @@ Confirm the traffic now passes through the waypoint:
 
 ```bash
 oc logs -n ztunnel -l app=ztunnel --tail=500 | grep access | grep 'dst.workload="waypoint' | head -2
-istioctl -n ztunnel ztunnel-config services | grep online-boutique   # WAYPOINT column
+istioctl -n ztunnel ztunnel-config services | grep online-boutique-ambient   # WAYPOINT column
 ```
 
 ### 5.4 L7 policy in the waypoint
@@ -439,7 +440,7 @@ client connects directly to a pod IP, the connection goes ztunnel → ztunnel an
 waypoint never sees it:
 
 ```bash
-PAY_IP=$(oc get pod -n online-boutique -l app=paymentservice -o jsonpath='{.items[0].status.podIP}')
+PAY_IP=$(oc get pod -n online-boutique-ambient -l app=paymentservice -o jsonpath='{.items[0].status.podIP}')
 mc curl -sS -m 5 --http2-prior-knowledge -o /dev/null -D - -X POST \
   -H 'content-type: application/grpc' --data-binary '' \
   http://$PAY_IP:50051/hipstershop.PaymentService/Charge | grep -i '^grpc-'
@@ -652,7 +653,7 @@ control plane.
 ```bash
 M=service-mesh/ambient
 oc delete -f $M/online-boutique/ --ignore-not-found
-oc label namespace online-boutique istio.io/use-waypoint- istio.io/dataplane-mode-
+oc label namespace online-boutique-ambient istio.io/use-waypoint- istio.io/dataplane-mode-
 oc delete -k test-workloads/online-boutique/overlays/ambient
 ```
 

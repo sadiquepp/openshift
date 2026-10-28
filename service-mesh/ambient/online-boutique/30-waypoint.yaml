@@ -6,12 +6,12 @@
 # and ServiceAccount, all named `waypoint`, in this namespace.
 #
 #   oc apply -f 30-waypoint.yaml
-#   oc -n online-boutique wait --for=condition=Programmed gateway/waypoint
+#   oc -n online-boutique-ambient wait --for=condition=Programmed gateway/waypoint
 #
 # Creating it routes nothing through it. Opt destinations in with a label --
 # the README does this for the whole namespace:
 #
-#   oc label namespace online-boutique istio.io/use-waypoint=waypoint
+#   oc label namespace online-boutique-ambient istio.io/use-waypoint=waypoint
 #
 # `istio.io/waypoint-for: service` means it handles traffic addressed to a
 # Service (VIP). Traffic sent straight to a pod IP skips it -- see
@@ -20,7 +20,7 @@ apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
   name: waypoint
-  namespace: online-boutique
+  namespace: online-boutique-ambient
   labels:
     istio.io/waypoint-for: service
 spec:
