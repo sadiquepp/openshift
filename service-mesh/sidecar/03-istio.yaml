@@ -1,0 +1,42 @@
+# The control plane: istiod, in the default (sidecar) profile. Apply after
+# 01's CSV is Succeeded and 02 exists.
+#
+#   oc wait --for=condition=Ready istio/default --timeout=5m
+#
+# ALREADY INSTALLED THE AMBIENT MESH? Do not apply this -- it is the same
+# resource (Istio/default) and would switch it out of ambient. An ambient
+# istiod injects sidecars as well, so the sidecar overlay works against it
+# unchanged. That is the way to run both variants side by side.
+apiVersion: sailoperator.io/v1
+kind: Istio
+metadata:
+  name: default
+spec:
+  namespace: istio-system
+
+  # No `profile:` -- the default profile is sidecar mode. (The operator layers
+  # the OpenShift platform profile on top by itself.)
+
+  # No `version:` on purpose -- the operator defaults to the newest Istio it
+  # supports. Pin it for anything you want to be reproducible, and set the same
+  # value on IstioCNI. `oc explain istio.spec.version` lists what it accepts.
+  # version: v1.28-latest
+
+  # InPlace: one control plane, upgraded in place. Sidecar mode could also use
+  # RevisionBased (a canary istiod per version, with namespaces moved across by
+  # an `istio.io/rev` label), which ambient cannot. InPlace keeps this simple
+  # and is what lets the overlay use the plain `istio-injection=enabled`
+  # label: it selects the revision named `default`, which only exists with
+  # InPlace and an Istio resource named `default`.
+  updateStrategy:
+    type: InPlace
+
+  values:
+    meshConfig:
+      # istiod watches only namespaces carrying this label. Without it, it
+      # watches -- and pushes config to every sidecar about -- every Service
+      # in the cluster. In sidecar mode that cost is paid in EVERY pod's
+      # memory, so scoping discovery matters even more than in ambient.
+      discoverySelectors:
+        - matchLabels:
+            istio-discovery: enabled

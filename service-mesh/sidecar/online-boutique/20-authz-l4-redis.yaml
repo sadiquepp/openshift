@@ -1,0 +1,29 @@
+# Step 2 -- an identity-based (L4) AuthorizationPolicy. Enforced by
+# redis-cart's own sidecar.
+#
+# Only cartservice may connect to redis-cart. Word for word the same policy as
+# the ambient variant, apart from the namespace. Two differences you can't see
+# in the YAML:
+#
+#   - The enforcer is the Envoy inside the redis-cart pod, which every
+#     connection to that pod must pass -- whether it was addressed to the
+#     Service or straight to the pod IP. There is no path around it.
+#   - Nothing else ever sits between the two pods, so the source identity is
+#     always cartservice's own. In ambient, adding a waypoint changes the
+#     identity the destination sees, and this policy has to be kept away from
+#     the waypoint. Here that problem does not exist.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: redis-cart-from-cartservice-only
+  namespace: online-boutique-sidecar
+spec:
+  selector:
+    matchLabels:
+      app: redis-cart
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - cluster.local/ns/online-boutique-sidecar/sa/cartservice

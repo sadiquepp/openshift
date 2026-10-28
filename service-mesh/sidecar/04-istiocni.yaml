@@ -1,0 +1,22 @@
+# The istio-cni node agent. Apply after 03.
+#
+#   oc wait --for=condition=Ready istiocni/default --timeout=5m
+#
+# In sidecar mode this is a CNI plugin, chained in through Multus: when a pod
+# that has been injected with a sidecar is created, the plugin writes iptables
+# rules into the new pod's network namespace sending all its TCP to the
+# sidecar Envoy (outbound to 15001, inbound to 15006). It does that once, at
+# pod creation, before any container runs. That timing matters -- see the
+# loadgenerator patch in test-workloads/online-boutique/overlays/sidecar.
+#
+# Injected pods carry `k8s.v1.cni.cncf.io/networks: default/istio-cni`; this
+# resource creates that NetworkAttachmentDefinition in the `default`
+# namespace, so application namespaces need no per-namespace setup.
+apiVersion: sailoperator.io/v1
+kind: IstioCNI
+metadata:
+  name: default
+spec:
+  namespace: istio-cni
+  # Must match the Istio resource. See 03-istio.yaml.
+  # version: v1.28-latest

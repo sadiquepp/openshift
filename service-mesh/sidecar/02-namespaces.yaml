@@ -1,0 +1,27 @@
+# The two namespaces a sidecar mesh lives in:
+#
+#   istio-system  istiod -- the control plane. Issues certificates, pushes
+#                 config, and runs the webhook that injects the sidecars.
+#   istio-cni     istio-cni node agent DaemonSet. On OpenShift it is required
+#                 for sidecar mode too: it installs each pod's traffic
+#                 redirection, the job the privileged `istio-init` container
+#                 does on other platforms. restricted-v2 does not grant the
+#                 NET_ADMIN that istio-init needs.
+#
+# No `ztunnel` namespace -- there is no ztunnel in sidecar mode.
+#
+# `istio-discovery: enabled` is the label 03-istio.yaml's discoverySelectors
+# match on. The application namespace needs it too; the online-boutique sidecar
+# overlay sets it.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: istio-system
+  labels:
+    istio-discovery: enabled
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: istio-cni

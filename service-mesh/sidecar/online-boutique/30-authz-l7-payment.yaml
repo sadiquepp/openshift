@@ -1,0 +1,37 @@
+# Step 3 -- an L7 AuthorizationPolicy. Enforced by paymentservice's own
+# sidecar. No waypoint, no extra deployment, nothing to enrol.
+#
+# Only checkoutservice may call paymentservice, and only the Charge RPC. gRPC
+# is HTTP/2 and every RPC is a POST to /<package>.<Service>/<Method>.
+#
+# Compare with the ambient variant (../../ambient/online-boutique/), which
+# needed three files to get here:
+#   30-waypoint.yaml                            deploy an L7 proxy
+#   40-authz-l7-payment.yaml                    attach the rule to it (targetRefs)
+#   45-authz-paymentservice-via-waypoint.yaml   stop clients bypassing it by pod IP
+#
+# Every sidecar is already a full L7 proxy, so a plain `selector` policy can use
+# methods and paths, and because the proxy lives in the destination pod there
+# is no bypass to close. That is the sidecar model's strength. The cost is that
+# every pod pays for an L7 proxy, including the ones that never need one.
+#
+# Upstream names the port `grpc`, which tells the sidecar to parse it as HTTP/2.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: paymentservice-charge-from-checkout-only
+  namespace: online-boutique-sidecar
+spec:
+  selector:
+    matchLabels:
+      app: paymentservice
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - cluster.local/ns/online-boutique-sidecar/sa/checkoutservice
+      to:
+        - operation:
+            methods: ["POST"]
+            paths: ["/hipstershop.PaymentService/Charge"]

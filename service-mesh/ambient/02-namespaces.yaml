@@ -1,0 +1,35 @@
+# The three namespaces an ambient mesh lives in. One per component, because each
+# is a different trust level:
+#
+#   istio-system  istiod -- the control plane. Issues certificates, pushes config.
+#   istio-cni     istio-cni node agent DaemonSet -- privileged, rewires pod
+#                 networking on every node.
+#   ztunnel       ztunnel DaemonSet -- the L4 data plane, one per node. Holds
+#                 the private keys of every meshed workload on its node.
+#
+# `istio-discovery: enabled` is the label 03-istio.yaml's discoverySelectors
+# match on. istiod ignores any namespace without it -- including its own and
+# ztunnel's -- so both must carry it BEFORE ztunnel starts, or ztunnel's
+# certificate requests fail (https://github.com/istio/istio/issues/52057).
+#
+# The application namespace needs the same label; the online-boutique ambient
+# overlay sets it.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: istio-system
+  labels:
+    istio-discovery: enabled
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: istio-cni
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ztunnel
+  labels:
+    istio-discovery: enabled
