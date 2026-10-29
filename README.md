@@ -20,7 +20,7 @@ applying. Never commit `terraform.tfvars`, secrets, SSH keys or an
 |---|---|
 | [`aws/`](aws) | Self-managed IPI/UPI, ROSA, load balancers, IAM policies |
 | [`azure/`](azure), [`gcp/`](gcp), [`ibmcloud/`](ibmcloud) | Connected/disconnected environments |
-| [`cloud/`](cloud) | Generic multi-cloud Ansible role variant |
+| [`cloud/`](cloud) | Shared Ansible layer driving all bastions |
 | [`hcp/`](hcp) | Hosted Control Planes (HyperShift), disconnected |
 | [`sno/`](sno), [`assisted-installer/`](assisted-installer), [`acm/`](acm) | SNO, Assisted Installer, Hive clusters |
 | [`disconnected/`](disconnected), [`quay/`](quay) | Mirroring, image policies, registry |
@@ -33,15 +33,14 @@ applying. Never commit `terraform.tfvars`, secrets, SSH keys or an
 `aws/`, `azure/`, `gcp/` and `ibmcloud/` share a three-layer shape under
 `self-managed/{connected,disconnected}/`:
 
-1. **`deploy.sh`** — entry point; runs Terraform then Ansible, e.g.
+1. **`deploy.sh`** — entry point; runs Terraform, then Ansible, e.g.
    `./deploy.sh --pull-secret-file ~/pull-secret.json --openshift-version 4.18.20`.
-   Extra args pass through to the playbook.
 2. **`terraform/`** — VPC/VNet, subnets, NAT/IGW (or Transit Gateway when
-   disconnected), IAM/identity, and a bastion VM. Driven by a local
-   `terraform.tfvars`; outputs feed the Ansible layer.
-3. **`setup-bastion-*.yaml`** — installs `oc`, `openshift-install`, `ccoctl`,
-   `rosa` and (disconnected) a mirror registry on the bastion, then renders an
-   `install-dir/`.
+   disconnected), IAM/identity and a bastion VM, driven by a local
+   `terraform.tfvars`. Outputs are written to `ansible-vars.json`.
+3. **Ansible** — the shared playbook in [`cloud/`](cloud), invoked with
+   `-e cloud_provider=<cloud>`: installs `oc`, `openshift-install`, `ccoctl`,
+   `rosa` and (disconnected) a mirror registry, then renders `install-dir/`.
 
 Disconnected variants also run `oc mirror` to sync release images (30–60 min)
 before the install directory is usable.
@@ -98,20 +97,25 @@ for the AWS API and the security groups an API NLB needs.
 ## azure/, gcp/, ibmcloud/
 
 The same `self-managed/` pattern on each cloud: Terraform for VNet/VPC,
-identity and bastion, plus a bastion playbook and install templates. Azure and
-GCP ship both `connected/` and `disconnected/` (mirror registry) variants; IBM
-Cloud ships `connected/` only, building a VPC with public gateways, security
-groups and a bastion VSI carrying CCO credentials.
+identity and bastion, plus install templates and a standalone
+`setup-bastion-*.yaml` (inline vars, for running the bastion work directly
+instead of through `cloud/`). Azure and GCP ship both `connected/` and
+`disconnected/` (mirror registry) variants; IBM Cloud ships `connected/` only,
+building a VPC with public gateways, security groups and a bastion VSI carrying
+CCO credentials.
 
 ## cloud/
 
-An older, generic variant of the per-cloud environments: one Ansible role tree
-(`bastion_base`, `installer_prep_connected`, `openshift_installer_prep`,
-`mirror_registry`, `hcp_provisioning`, `letsencrypt_certs`,
-`olm_catalog_suppression`) with per-cloud templates for AWS, Azure, GCP and IBM
-Cloud, driven by `setup-bastion-vm-connected.yaml` or `setup-bastion.yaml`.
-`moved-to-roles/` keeps the pre-refactor task files. Prefer the per-cloud
-directories for new work.
+The shared Ansible layer that drives bastion work for every cloud from one
+place. `self-managed/{connected,disconnected}/` each hold a single playbook —
+`setup-bastion-vm-connected.yaml` and `setup-bastion.yaml` — which the `aws/`,
+`azure/`, `gcp/` and `ibmcloud/` `deploy.sh` scripts call with
+`-e cloud_provider=<cloud>` plus that cloud's `ansible-vars.json`. It loads
+`vars/common.yaml` and `vars/<cloud>.yaml`, then runs the common roles:
+`bastion_base`, `installer_prep_connected` or `openshift_installer_prep`,
+`mirror_registry`, `hcp_provisioning`, `olm_catalog_suppression` and
+`letsencrypt_certs`. Per-cloud templates live alongside the roles;
+`moved-to-roles/` keeps pre-refactor task files.
 
 ## hcp/
 
