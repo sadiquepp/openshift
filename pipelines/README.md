@@ -125,13 +125,37 @@ manifest uses `generateName`.
 Done when the run is green and the image is in your registry with its labels:
 
 ```bash
+# $REGISTRY is still exported from the run above; the build id is the REVISION
+# the run used, which `oc get pipelinerun -o jsonpath` will tell you:
+BUILD_ID=$(oc -n boutique-ci get pipelinerun --sort-by=.metadata.creationTimestamp \
+  -o jsonpath='{.items[-1:].spec.params[?(@.name=="REVISION")].value}')
+
 skopeo inspect --format '{{json .Labels}}' \
-  docker://registry.example.com:8443/online-boutique/frontend:v0.10.6-b20261021 | jq
+  "docker://$REGISTRY/online-boutique/frontend:v0.10.6-$BUILD_ID" | jq
 ```
+
+Expect all seven: both `*.base.name`/`*.base.digest` pairs,
+`org.opencontainers.image.version`, `org.opencontainers.image.revision` and
+`online-boutique.build.base-set`.
+
+If the host running `skopeo` does not trust the registry CA, add
+`--cert-dir=<dir holding ca.crt>` — the same certificate the pipeline needs,
+and a third trust store after the nodes and the build pod.
 
 Those labels are what `check-bases.sh` reads. If they are present and correct,
 the pipeline has reproduced what `build-push.sh` produces, and the rest is
 fan-out.
+
+**One gap to know about now, because phase 4 depends on it.**
+`check-bases.sh` inspects the *floating* tag — `$VERSION$TAG_SUFFIX`, e.g.
+`:v0.10.6` — and the pipeline pushes only the immutable
+`:v0.10.6-<build-id>`. So it reports a pipeline-built service as
+`ABSENT ... never built?` even though the image is there. Dropping the
+floating tag was deliberate, so the fix is not to start pushing it again.
+Either teach `check-bases.sh` a tag argument, or have phase 4 read the digests
+from the GitOps overlay, which is where they will live once phase 3 writes them
+back. The second is better — it compares what is *deployed* against the current
+base, rather than what happens to be tagged.
 
 ### What it does
 

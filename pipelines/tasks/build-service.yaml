@@ -158,8 +158,11 @@ spec:
           "$(params.IMAGE)" \
           "docker://$(params.IMAGE)"
 
-        tee "$(results.IMAGE_DIGEST.path)" < /tmp/image-digest
-        printf '%s' "$(params.IMAGE)" | tee "$(results.IMAGE_URL.path)"
+        digest="$(cat /tmp/image-digest)"
+        printf '%s' "$digest"           > "$(results.IMAGE_DIGEST.path)"
+        printf '%s' "$(params.IMAGE)"   > "$(results.IMAGE_URL.path)"
+        echo
+        echo "pushed $(params.IMAGE)@${digest}"
       volumeMounts:
         - name: varlibcontainers
           mountPath: /var/lib/containers
