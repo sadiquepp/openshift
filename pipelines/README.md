@@ -82,6 +82,62 @@ The two `resolve-*` tasks run `skopeo inspect` on the base tags **before** the
 build, so the digest stamped into the image is the base the build actually
 used, not whatever the tag points at when the build finishes.
 
+### Seeing runs in the web console
+
+The operator ships a dynamic console plugin that adds the Pipelines pages to
+the OpenShift console. Whether it is enabled for you depends on your version —
+check before changing anything:
+
+```bash
+oc get consoleplugin pipelines-console-plugin                    # does it exist?
+oc get console.operator.openshift.io cluster -o jsonpath='{.spec.plugins}{"\n"}'
+```
+
+If `pipelines-console-plugin` is already in that list, you are done. Otherwise
+**append** to the list:
+
+```bash
+oc patch console.operator.openshift.io cluster --type=json \
+  -p '[{"op":"add","path":"/spec/plugins/-","value":"pipelines-console-plugin"}]'
+```
+
+If the first command printed nothing for `spec.plugins` — no list at all — the
+path has to create it instead:
+
+```bash
+oc patch console.operator.openshift.io cluster --type=json \
+  -p '[{"op":"add","path":"/spec/plugins","value":["pipelines-console-plugin"]}]'
+```
+
+> **Do not use a merge patch here.**
+> `oc patch ... --type=merge -p '{"spec":{"plugins":["pipelines-console-plugin"]}}'`
+> **replaces** the whole list and silently turns off every other console plugin
+> on the cluster. On a cluster that also runs Logging or GitOps, those pages
+> just vanish, with nothing in the console to say why. The `/spec/plugins/-`
+> JSON-patch path appends, which is why it is used above.
+>
+> The append is also not idempotent — run it twice and the name is listed
+> twice. That is why the check comes first.
+
+The console redeploys, which takes a minute or two, and the browser needs a
+hard refresh before the new pages appear:
+
+```bash
+oc rollout status -n openshift-console deploy/console
+```
+
+Two known issues worth recognising rather than debugging from scratch:
+
+- The plugin needs OpenShift 4.15 or later.
+- From Pipelines 1.18 the Results API is enabled by default, and the
+  operator's default Tekton Results TLS secret produced a bad-certificate
+  error that broke the plugin ([SRVKP-7859](https://issues.redhat.com/browse/SRVKP-7859)).
+  If the Pipelines pages load but show no data, look at the
+  `pipelines-console-plugin` and Results pods before suspecting your pipeline.
+
+The statistics on the Pipelines overview page need Tekton Results installed;
+without it those panels stay empty, which is not a plugin fault.
+
 ## Decisions, and why
 
 ### Our own build task rather than the shipped `buildah`
