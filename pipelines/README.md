@@ -429,14 +429,22 @@ exercise.
 
 Off by default. A build does not change what is deployed unless asked:
 
+Both stack runs carry the parameters already, set to off and dry. Turn it on
+for one run without editing the committed file:
+
 ```bash
-# see the diff, push nothing
-oc -n boutique-ci create -f - <<'RUN'
-# ... the build-stack run, plus:
-#   - name: WRITE_BACK          value: "true"
-#   - name: DEPLOY_PATH         value: hub1/hardened
-#   - name: WRITE_BACK_DRY_RUN  value: "true"
-RUN
+sed -e "s|registry.example.com:8443|$REGISTRY|" \
+    -e "s|b20261030|b$(date -u +%Y%m%d%H%M)|" \
+    -e '/name: WRITE_BACK$/{n;s|"false"|"true"|;}' \
+    runs/build-stack-hardened.yaml | oc -n boutique-ci create -f -
+```
+
+That clones the deploy repository, pins the digests, prints the diff and pushes
+nothing, because `WRITE_BACK_DRY_RUN` is still `"true"`. Read the diff; when it
+is right, flip that one too:
+
+```bash
+    -e '/name: WRITE_BACK_DRY_RUN$/{n;s|"true"|"false"|;}' \
 ```
 
 The credential goes in a secret, never a parameter:

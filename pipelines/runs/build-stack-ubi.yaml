@@ -47,6 +47,21 @@ spec:
       value: registry.access.redhat.com/ubi9/dotnet-100:latest
     - name: DOTNET_RUNTIME
       value: registry.access.redhat.com/ubi9/dotnet-100-runtime:latest
+    # Write-back: off, and dry by default. Flip WRITE_BACK to "true" to pin
+    # this run's digests into sadiquepp/boutique-deploy; leave
+    # WRITE_BACK_DRY_RUN at "true" for the first few runs -- it clones, pins and
+    # prints the diff without pushing, which is the cheap way to find out that
+    # the credential or the path is wrong.
+    #
+    #   sed -e 's|WRITE_BACK$|WRITE_BACK|' ...   # see ../README.md
+    - name: WRITE_BACK
+      value: "false"
+    - name: WRITE_BACK_DRY_RUN
+      value: "true"
+    - name: DEPLOY_PATH
+      value: hub1/ubi
+    - name: DEPLOY_REVISION
+      value: main
     - name: RECIPES_REVISION
       value: claude/vigilant-babbage-4qxa4j
   workspaces:
@@ -65,3 +80,7 @@ spec:
     - name: registrycerts
       configMap:
         name: registry-ca
+    # Harmless when WRITE_BACK is "false" -- the pipeline declares it optional.
+    - name: gitauth
+      secret:
+        secretName: boutique-deploy-git
