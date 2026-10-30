@@ -396,6 +396,34 @@ of the GitOps path at all.
 
 ### Deploying
 
+**The nodes must trust the registry CA first.** This is separate from the CA the
+build pod uses -- a third trust store for the same certificate, after the nodes
+and the build pod. Without it Argo CD syncs perfectly and every pod sits in
+`ImagePullBackOff` with
+
+```
+pinging container registry ...: tls: failed to verify certificate:
+x509: certificate signed by unknown authority
+```
+
+which looks like a GitOps problem and is not one. Check whether the field is
+already claimed, because replacing it drops any CA already there:
+
+```bash
+oc get image.config.openshift.io/cluster -o jsonpath='{.spec.additionalTrustedCA.name}{"\n"}'
+
+# if empty -- the key is the registry host with ':' written as '..'
+oc -n boutique-ci get cm registry-ca -o jsonpath='{.data.ca\.crt}' > registry-ca.crt
+oc -n openshift-config create configmap registry-cas \
+  --from-file=registry.example.com..8443=registry-ca.crt
+oc patch image.config.openshift.io/cluster --type=merge \
+  -p '{"spec":{"additionalTrustedCA":{"name":"registry-cas"}}}'
+
+oc get mcp -w        # this reboots nodes in sequence; wait for it
+```
+
+If the field already names a ConfigMap, add your key to that one instead.
+
 ```bash
 oc apply -f gitops/01-namespaces.yaml          # platform admin
 oc apply -f gitops/02-application-hardened.yaml
