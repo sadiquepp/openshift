@@ -78,6 +78,13 @@ spec:
     - name: SKOPEO_IMAGE
       type: string
       default: registry.redhat.io/rhel9/skopeo:latest
+    - name: CACHE_MOUNT_OPTS
+      type: string
+      default: ""
+      description: >-
+        Appended to each cache -v mount, e.g. ":z" if SELinux refuses the
+        build access to the volume. Empty works when the build container
+        shares the step's SELinux context, which it does here.
   results:
     - name: IMAGE_DIGEST
       description: Digest of the image just pushed. This is what GitOps pins.
@@ -103,6 +110,14 @@ spec:
         files. Needed when the push fails with "x509: certificate signed by
         unknown authority": the NODES trusting your registry does not make this
         pod trust it.
+      optional: true
+    - name: cache
+      description: >-
+        Dependency caches, shared across runs. Mounted INTO the buildah build
+        rather than used by this task, because the downloading happens inside
+        the build. Every builder stage here runs as USER 0, so the paths are
+        the root defaults and need no per-language knowledge -- all six are
+        mounted for every service and the irrelevant ones are simply unused.
       optional: true
   volumes:
     - name: varlibcontainers
@@ -177,6 +192,30 @@ spec:
           CERTS=(--cert-dir "$(workspaces.registrycerts.path)")
         fi
 
+        # Dependency caches, mounted into the build. `buildah bud -v` is
+        # build-time only -- nothing here is committed to the image.
+        #
+        # All six go in for every service. A Go build with an empty /root/.npm
+        # mounted costs nothing, and the alternative is teaching this task
+        # which language each service is, which the matrix already knows and
+        # would then have to pass down.
+        #
+        # Concurrency: the four Go builds share one module cache, which Go is
+        # designed for (it locks). Gradle and NuGet are each used by exactly
+        # one service, so those paths have a single writer.
+        CACHE=()
+        if [ "$(workspaces.cache.bound)" = "true" ]; then
+          C="$(workspaces.cache.path)"
+          O="$(params.CACHE_MOUNT_OPTS)"
+          for d in go-mod go-build npm pip gradle nuget; do mkdir -p "$C/$d"; done
+          CACHE=(-v "$C/go-mod:/root/go/pkg/mod$O"
+                 -v "$C/go-build:/root/.cache/go-build$O"
+                 -v "$C/npm:/root/.npm$O"
+                 -v "$C/pip:/root/.cache/pip$O"
+                 -v "$C/gradle:/root/.gradle$O"
+                 -v "$C/nuget:/root/.nuget/packages$O")
+        fi
+
         # Point buildah at the mounted credentials if the workspace is bound.
         # Both key names are accepted because `oc create secret
         # docker-registry` writes .dockerconfigjson while a hand-made secret
@@ -194,7 +233,7 @@ spec:
         fi
 
         buildah --storage-driver=$(params.STORAGE_DRIVER) bud \
-          "${CERTS[@]}" \
+          "${CERTS[@]}" "${CACHE[@]}" \
           "${BUILD_ARGS[@]}" \
           --label "org.opencontainers.image.base.name=$(params.RUNTIME_BASE)" \
           --label "org.opencontainers.image.base.digest=$(cat /digests/runtime)" \

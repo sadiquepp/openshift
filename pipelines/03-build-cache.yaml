@@ -1,0 +1,35 @@
+---
+# Dependency cache for the builds, shared across pipeline runs.
+#
+# A volumeClaimTemplate is wrong for this: it is owned by the PipelineRun and
+# deleted with it, which is exactly what a cache must not be. So this is a
+# standing claim the runs bind by name.
+#
+# What it holds, under one subdirectory each: Go modules and build cache, npm,
+# pip, Gradle and NuGet. The build task mounts all six into every build; the
+# ones a given service does not use stay empty.
+#
+# ReadWriteOnce is enough and is what most lab storage offers. The consequence
+# is that two PipelineRuns using it must land on the same node, which Tekton's
+# affinity assistant arranges WITHIN a run but not across two -- so do not run
+# the hardened and UBI stacks at the same time. They should not be run
+# together anyway: twenty-two concurrent builds starved the module fetch and
+# failed a Go build.
+#
+# If your storage offers ReadWriteMany, use it and that constraint disappears.
+#
+#   oc apply -f 03-build-cache.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: boutique-build-cache
+  namespace: boutique-ci
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      # Go modules for four services dominate; the .NET and Gradle caches are
+      # the next largest. 20Gi has room for all six with the images' own
+      # layers kept elsewhere.
+      storage: 20Gi

@@ -213,9 +213,43 @@ spec:
 
         git config user.name  "$(params.GIT_USER_NAME)"
         git config user.email "$(params.GIT_USER_EMAIL)"
-        git commit -q -am "$(params.DEPLOY_PATH): pin digests from pipeline build"
-        git -c credential.helper="store --file=$(workspaces.gitauth.path)/.git-credentials" \
-            push origin "HEAD:$(params.DEPLOY_REVISION)"
+        MSG="$(params.DEPLOY_PATH): pin digests from pipeline build"
+        git commit -q -am "$MSG"
+
+        # Two runs -- the two base sets, or a scheduled rebuild of both --
+        # push to the same branch, and the second is rejected non-fast-forward.
+        # They touch DIFFERENT files, so there is no content conflict to
+        # resolve; the loser just needs the other's tip as its base.
+        #
+        # Reset onto the new tip and re-apply this run's one file, rather than
+        # rebase: the clone is --depth 1, and rebasing onto a commit whose
+        # history the shallow clone does not contain is exactly where shallow
+        # rebases fail. Re-applying one file is also precisely correct here,
+        # because one file is all this task ever changes.
+        TARGET="$(params.DEPLOY_PATH)/kustomization.yaml"
+        n=0
+        until git -c credential.helper="store --file=$(workspaces.gitauth.path)/.git-credentials" \
+                 push origin "HEAD:$(params.DEPLOY_REVISION)"; do
+          n=$((n+1))
+          if [ "$n" -ge 5 ]; then
+            echo "push still rejected after $n attempts" >&2
+            exit 1
+          fi
+          echo "push rejected; taking the new tip and re-applying $TARGET (attempt $n)"
+          cp "$TARGET" /tmp/ours
+          git fetch --depth 1 origin "$(params.DEPLOY_REVISION)"
+          git reset --hard FETCH_HEAD
+          cp /tmp/ours "$TARGET"
+          if git diff --quiet; then
+            # The other run pushed the same content. Nothing of ours is left to
+            # add, which is success, not a failure to push.
+            echo "the new tip already carries these digests -- nothing to push"
+            git rev-parse HEAD | tr -d '\n' > "$(results.COMMIT.path)"
+            exit 0
+          fi
+          git commit -q -am "$MSG"
+          sleep 2
+        done
 
         git rev-parse HEAD | tr -d '\n' > "$(results.COMMIT.path)"
         echo

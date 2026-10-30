@@ -266,9 +266,55 @@ build task absorbs a single transient failure, but it cannot absorb twenty-two
 builds competing for one network path. A build that fails twice is failing for
 a reason — the retry is not cover for a real error.
 
-A module cache would fix this properly rather than working around it: a second
-workspace holding `GOMODCACHE`, `~/.npm`, `~/.m2` and the NuGet cache, reused
-across runs. It is also what a disconnected cluster needs. Not built here yet.
+### The dependency cache
+
+[`03-build-cache.yaml`](03-build-cache.yaml) is a standing PVC the runs bind by
+name, holding Go modules and build cache, npm, pip, Gradle and NuGet. Apply it
+once:
+
+```bash
+oc apply -f 03-build-cache.yaml
+```
+
+It is mounted **into the buildah build**, not used by the task — the
+downloading happens inside the build, so step environment variables would
+achieve nothing. Every builder stage runs as `USER 0`, which is what makes this
+simple: the cache paths are the root defaults, so all six are mounted for every
+service and the irrelevant ones stay empty. No per-language plumbing, and the
+matrix does not have to pass the language down.
+
+Not a `volumeClaimTemplate`: that is owned by the PipelineRun and deleted with
+it, which is the one thing a cache must not be.
+
+Two consequences worth knowing:
+
+- **ReadWriteOnce means two runs must share a node.** Tekton's affinity
+  assistant arranges that within one run, not across two, so the hardened and
+  UBI stacks still must not run at the same time — which they should not anyway.
+  ReadWriteMany removes the constraint.
+- **Concurrency within a run is fine.** The four Go builds share one module
+  cache, which Go locks for exactly this. Gradle and NuGet have one writer each,
+  since only `adservice` and `cartservice` use them.
+
+`--no-cache` stays on the buildah build: that discards *layer* caching, which
+is deliberate, and is unrelated to the dependency caches mounted here.
+
+### Two runs pushing to one branch
+
+The write-back retries. Both base sets push to the same branch and the second is
+rejected non-fast-forward — today harmless because the runs are serialised, and
+a real hazard once a schedule fires both.
+
+It does not rebase: the clone is `--depth 1`, and rebasing onto a commit the
+shallow clone does not have in its history is exactly where shallow rebases
+fail. Instead it keeps its one file, resets hard onto the new tip, re-applies
+the file and commits again — correct by construction, because one file is all
+this task ever changes, and the two runs change different files. Up to five
+attempts; if the new tip already carries the same digests it reports that and
+exits successfully rather than pushing an empty commit.
+
+Verified with two local clones racing a push: first succeeded, second was
+rejected, the retry landed, and the remote ended up with **both** changes.
 
 `matrix.include` in [`pipeline-build-stack.yaml`](pipeline-build-stack.yaml) is
 the pipeline's copy of `recipe()` in `build-push.sh` — same eleven services,

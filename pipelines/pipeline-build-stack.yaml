@@ -129,6 +129,12 @@ spec:
     - name: gitauth
       description: .git-credentials for the deploy repository. Only needed with WRITE_BACK=true.
       optional: true
+    - name: cache
+      description: >-
+        Dependency caches, kept between runs. Optional -- without it every
+        build downloads everything again, which is slower and is where a
+        transient module-proxy failure comes from.
+      optional: true
   tasks:
     - name: clone-upstream
       taskRef:
@@ -192,6 +198,8 @@ spec:
           workspace: dockerconfig
         - name: registrycerts
           workspace: registrycerts
+        - name: cache
+          workspace: cache
       # Each entry carries its own IMAGE, Containerfile and context. IMAGE
       # cannot be a shared param built from $(params.SERVICE): a matrix
       # param is not visible to the sibling params of the same PipelineTask,

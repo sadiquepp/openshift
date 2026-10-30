@@ -65,3 +65,8 @@ spec:
     - name: gitauth
       secret:
         secretName: boutique-deploy-git
+    # Bound by name, not a volumeClaimTemplate: a cache deleted with the run
+    # is not a cache. See ../03-build-cache.yaml.
+    - name: cache
+      persistentVolumeClaim:
+        claimName: boutique-build-cache
