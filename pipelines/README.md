@@ -47,10 +47,32 @@ oc -n boutique-ci create secret docker-registry registry-auth \
 
 oc apply -f tasks/ -f pipeline-build-service.yaml
 
-# edit runs/build-frontend-hardened.yaml for your registry first
-oc -n boutique-ci create -f runs/build-frontend-hardened.yaml
+# 3. start a run. The committed example carries the placeholder registry, as
+#    everything in this repo does, so substitute rather than edit it -- that
+#    keeps your real host out of a commit and gives each run a fresh build id.
+export REGISTRY=registry.example.com:8443          # yours; see registry.env
+sed -e "s|registry.example.com:8443|$REGISTRY|" \
+    -e "s|b20261021|b$(date -u +%Y%m%d)|" \
+    runs/build-frontend-hardened.yaml | oc -n boutique-ci create -f -
+
 tkn -n boutique-ci pipelinerun logs -L -f
 ```
+
+If you would rather keep a filled-in copy, name it `runs/local-<something>.yaml`
+— that pattern is gitignored here.
+
+**The registry string has to agree in three places**, and two of them fail in
+ways that do not mention the registry:
+
+| where | value |
+|---|---|
+| the `REGISTRY` param above | `host:port/namespace` |
+| `--docker-server` on the `registry-auth` secret | `host:port` only |
+| the kustomize overlays, later, via `set-registry.sh` | `host:port/namespace` |
+
+`--docker-server` must match the host and port **exactly** as they appear in
+the image reference. A mismatch means buildah finds no credential entry for
+that host and the push fails as a plain 401, which reads like a wrong password.
 
 `oc create`, not `oc apply`, for the run: a PipelineRun is immutable and the
 manifest uses `generateName`.

@@ -1,0 +1,4 @@
+# Filled-in copies of runs/, with a real registry in them. The committed
+# examples keep placeholder values (see the repo CLAUDE.md), so keep your own
+# here instead of editing those and risking the real host in a commit.
+runs/local-*.yaml
