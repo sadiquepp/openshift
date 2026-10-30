@@ -33,7 +33,13 @@ buildah-on-OpenShift build goes wrong here too, and is far easier to read in
 one TaskRun than in one of twenty-two.
 
 ```bash
-oc apply -f 01-rbac.yaml
+# 1. the operator. Confirm the channel against your catalog first -- the file
+#    says how, and there is no stable channel for this one.
+oc apply -f 01-operator.yaml
+oc get tektonconfig config -w        # wait for Ready before continuing
+
+# 2. namespace, service account, SCC
+oc apply -f 02-rbac.yaml
 
 oc -n boutique-ci create secret docker-registry registry-auth \
   --docker-server=registry.example.com:8443 \
@@ -139,7 +145,7 @@ SCC.
 **Do not reach for that here without thinking.** These pipelines exist to
 produce hardened images; a privileged builder is the first thing a reviewer
 will point at. Order of preference, with the ladder written out in
-[`01-rbac.yaml`](01-rbac.yaml): `pipelines-scc` first, then the documented
+[`02-rbac.yaml`](02-rbac.yaml): `pipelines-scc` first, then the documented
 unprivileged buildah setup for your version, then the `buildah-ns` task that
 OpenShift Pipelines 1.20 added, and only then `privileged`, with a reason.
 
@@ -153,8 +159,11 @@ for the version you run rather than from here or a blog.
 `BASE_SET` stays a pipeline parameter, so two PipelineRuns cover both sets. The
 per-service recipe (Containerfile, context, extra build args) moves out of the
 PipelineRun and into the matrix, mirroring `recipe()` in `build-push.sh`.
-Check `enable-api-fields` in the `feature-flags` ConfigMap first — Matrix was
-alpha, then beta, and your version decides whether it needs the flag.
+Matrix was alpha, then beta, so your version decides whether it needs a
+feature level. Set it on the `TektonConfig` the operator created, not on the
+`feature-flags` ConfigMap — `spec.pipeline` is projected into that ConfigMap, so
+a hand edit there is liable to be reconciled away. The command is in
+[`01-operator.yaml`](01-operator.yaml).
 
 `cache` is the exception, as it is in `build-push.sh`: mirrored with
 `skopeo-copy` unless `CACHE_BUILD=1`, in which case it is a normal build from

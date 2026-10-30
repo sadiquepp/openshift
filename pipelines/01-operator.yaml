@@ -1,0 +1,62 @@
+# Red Hat OpenShift Pipelines operator. Apply first, wait for the CSV to reach
+# Succeeded and for TektonConfig to be ready, then 02.
+#
+# Confirm the channel against your cluster before applying -- there is no
+# stable channel for this operator, and the available ones vary by OpenShift
+# version and by whether the catalog is mirrored:
+#
+#   oc get packagemanifest openshift-pipelines-operator-rh -n openshift-marketplace \
+#     -o jsonpath='{.status.defaultChannel}{"\n"}{range .status.channels[*]}{.name}{"\n"}{end}'
+#
+# `preview` and `stable` were removed in OpenShift 4.11. Current catalogs offer
+# `latest` plus a `pipelines-<version>` channel per release; pinning to
+# `pipelines-<version>` is the better choice here, because the version decides
+# two things this directory depends on -- whether Matrix needs a feature flag
+# (phase 2) and whether the BUILD_EXTRA_ARGS fixes are in. `latest` moves those
+# under you.
+#
+# If the packagemanifest query returns nothing, the operator is not in the
+# cluster's catalog. On a disconnected cluster it has to be mirrored into your
+# registry and published through a CatalogSource first -- see ../disconnected/
+# in this repo -- and `source` below becomes that CatalogSource's name.
+---
+# No Namespace and no OperatorGroup here, unlike ../acs/01-operator.yaml:
+# openshift-operators already exists with a cluster-wide OperatorGroup, and
+# this operator installs there. Creating a second OperatorGroup in a namespace
+# that has one puts both into a conflict state and neither reconciles.
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: openshift-pipelines-operator-rh
+  namespace: openshift-operators
+spec:
+  channel: latest
+  installPlanApproval: Automatic
+  name: openshift-pipelines-operator-rh
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+---
+# The operator creates a TektonConfig named `config` by itself, with profile
+# `all` (Pipelines, Triggers, Chains and Results). Do NOT add one here: a
+# second TektonConfig is not how you configure it, and the install is not
+# finished until the operator's own one is ready.
+#
+#   oc get csv -n openshift-operators -l operators.coreos.com/openshift-pipelines-operator-rh.openshift-operators
+#   oc get tektonconfig config
+#
+# Configure it by patching that object, not by editing the ConfigMaps it
+# manages -- spec.pipeline is projected into the pipelines feature-flags
+# ConfigMap, so a hand edit there is liable to be reconciled away.
+#
+# Phase 2 (matrix fan-out over the eleven services) needs this if your version
+# still gates Matrix behind a feature level:
+#
+#   oc patch tektonconfig config --type=merge \
+#     -p '{"spec":{"pipeline":{"enable-api-fields":"beta"}}}'
+#
+# Check what it is first; if it already reads beta or stable, change nothing:
+#
+#   oc get tektonconfig config -o jsonpath='{.spec.pipeline.enable-api-fields}{"\n"}'
+#
+# `alpha` enables considerably more than Matrix. Prefer beta, and only go to
+# alpha if your version documents Matrix as alpha.
