@@ -52,9 +52,17 @@ spec:
       description: "true prints the diff and pushes nothing."
     - name: GIT_IMAGE
       type: string
-      # Must contain git, bash and awk. ubi9/ubi does not ship git on every
-      # release, so the step checks and says what to do rather than failing
-      # with "git: command not found" three steps deep.
+      description: >-
+        Needs git and a POSIX sh -- nothing more, because the rewriting happens
+        in a separate step on a different image. The image the cluster's own
+        git-clone task uses is the obvious choice and is already on every node
+        that has run a clone:
+          oc get task git-clone -n openshift-pipelines -o jsonpath='{.spec.steps[0].image}'
+      default: registry.redhat.io/openshift-pipelines/pipelines-git-init-rhel9:latest
+    - name: PIN_IMAGE
+      type: string
+      description: >-
+        Needs bash and awk, and no git. Any UBI will do.
       default: registry.access.redhat.com/ubi9/ubi:latest
   results:
     - name: COMMIT
@@ -68,75 +76,92 @@ spec:
         token is never passed as an argument, so it stays out of the process
         list and the run's parameters.
       optional: true
+  volumes:
+    # The clone passes between steps here. Steps share the pod but not /tmp.
+    - name: deploy
+      emptyDir: {}
   steps:
-    - name: pin-and-push
+    # ---- 1. clone. Needs git; deliberately not bash or awk. ----------------
+    - name: clone
       image: $(params.GIT_IMAGE)
-      workingDir: $(workspaces.source.path)
-      args: ["$(params.IMAGE_REFS[*])"]
+      volumeMounts:
+        - name: deploy
+          mountPath: /deploy
       script: |
-        #!/usr/bin/env bash
-        set -euo pipefail
-
-        # The default image may not ship git. On a connected cluster it can
-        # install it -- the ubi repositories need no subscription -- which
-        # costs ~20s per run. Setting GIT_IMAGE to an image that already has
-        # git skips this, and on a disconnected cluster it is the only option.
-        if ! command -v git >/dev/null; then
-          echo "git not found in $(params.GIT_IMAGE); trying to install it" >&2
-          if command -v microdnf >/dev/null; then
-            microdnf -y --nodocs install git >/dev/null 2>&1 || true
-          elif command -v dnf >/dev/null; then
-            dnf -y --nodocs --setopt=install_weak_deps=0 install git >/dev/null 2>&1 || true
-          fi
-        fi
+        #!/bin/sh
+        # sh, not bash: the git images worth using here are UBI-minimal based
+        # and a hardened one would have no shell at all. Keeping this step
+        # POSIX widens the set of images that work.
+        set -eu
 
         command -v git >/dev/null || {
-          echo "git is not in $(params.GIT_IMAGE), and could not be installed." >&2
-          echo "Set GIT_IMAGE to an image that has git, bash and awk. The one" >&2
-          echo "the cluster's own git-clone task uses is a safe choice:" >&2
+          echo "git is not in $(params.GIT_IMAGE)." >&2
+          echo "Set GIT_IMAGE to an image with git and sh. The one the" >&2
+          echo "cluster's own git-clone task uses is already on the nodes:" >&2
           echo "  oc get task git-clone -n openshift-pipelines -o jsonpath='{.spec.steps[0].image}'" >&2
-          exit 2
-        }
-
-        PIN="$(workspaces.source.path)/$(params.RECIPES_PATH)"
-        [ -x "$PIN" ] || [ -f "$PIN" ] || {
-          echo "pin-digests.sh not found at $PIN -- is this repository cloned into the source workspace?" >&2
+          echo "A hardened image such as hi/git will NOT work: distroless" >&2
+          echo "means no shell, and a Tekton script step needs one." >&2
           exit 2
         }
 
         # Credentials from the workspace, never from the command line. The
-        # workspace is optional on this task so that a build-stack run with
-        # WRITE_BACK=false need not bind one; reaching this step without it is
-        # a configuration error, not a reason to carry on.
-        [ "$(workspaces.gitauth.bound)" = "true" ] || {
+        # workspace is optional on this task so a build with WRITE_BACK=false
+        # need not bind one; reaching this step without it is a configuration
+        # error, not a reason to carry on.
+        if [ "$(workspaces.gitauth.bound)" != "true" ]; then
           echo "write-back ran but no gitauth workspace is bound." >&2
           echo "Bind the credential secret in the PipelineRun:" >&2
           echo "    - name: gitauth" >&2
           echo "      secret:" >&2
           echo "        secretName: boutique-deploy-git" >&2
           exit 2
-        }
+        fi
         CRED="$(workspaces.gitauth.path)/.git-credentials"
-        [ -f "$CRED" ] || {
+        if [ ! -f "$CRED" ]; then
           echo "the gitauth workspace holds no .git-credentials file." >&2
           echo "The secret's key must be exactly .git-credentials:" >&2
           echo "  oc -n boutique-ci get secret boutique-deploy-git -o jsonpath='{.data}' | jq keys" >&2
           exit 2
-        }
+        fi
 
-        rm -rf /tmp/deploy
         git -c credential.helper="store --file=$CRED" \
             clone --depth 1 --branch "$(params.DEPLOY_REVISION)" \
-            "$(params.DEPLOY_REPO)" /tmp/deploy
-        git config --global --add safe.directory /tmp/deploy
+            "$(params.DEPLOY_REPO)" /deploy
+        # The clone is owned by a uid that does not own the directory under
+        # pipelines-scc, and git refuses to work on a repo it thinks belongs to
+        # someone else: "detected dubious ownership".
+        git config --global --add safe.directory /deploy
 
-        TARGET="/tmp/deploy/$(params.DEPLOY_PATH)/kustomization.yaml"
+    # ---- 2. pin. Needs bash and awk; deliberately not git. -----------------
+    - name: pin
+      image: $(params.PIN_IMAGE)
+      workingDir: $(workspaces.source.path)
+      args: ["$(params.IMAGE_REFS[*])"]
+      volumeMounts:
+        - name: deploy
+          mountPath: /deploy
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        PIN="$(workspaces.source.path)/$(params.RECIPES_PATH)"
+        [ -f "$PIN" ] || {
+          echo "pin-digests.sh not found at $PIN -- is this repository cloned into the source workspace?" >&2
+          exit 2
+        }
+        TARGET="/deploy/$(params.DEPLOY_PATH)/kustomization.yaml"
         [ -f "$TARGET" ] || { echo "no kustomization at $TARGET" >&2; exit 2; }
-
-        # One line per image, from the matrix results.
         printf '%s\n' "$@" | bash "$PIN" "$TARGET"
 
-        cd /tmp/deploy
+    # ---- 3. commit and push. Needs git again. ------------------------------
+    - name: commit-push
+      image: $(params.GIT_IMAGE)
+      volumeMounts:
+        - name: deploy
+          mountPath: /deploy
+      script: |
+        #!/bin/sh
+        set -eu
+        cd /deploy
         if git diff --quiet; then
           echo "no digest changed -- nothing to commit"
           printf 'none' > "$(results.COMMIT.path)"
@@ -154,7 +179,7 @@ spec:
         git config user.name  "$(params.GIT_USER_NAME)"
         git config user.email "$(params.GIT_USER_EMAIL)"
         git commit -q -am "$(params.DEPLOY_PATH): pin digests from pipeline build"
-        git -c credential.helper="store --file=$CRED" \
+        git -c credential.helper="store --file=$(workspaces.gitauth.path)/.git-credentials" \
             push origin "HEAD:$(params.DEPLOY_REVISION)"
 
         git rev-parse HEAD | tr -d '\n' > "$(results.COMMIT.path)"

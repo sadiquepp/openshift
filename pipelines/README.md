@@ -462,6 +462,24 @@ shred -u /tmp/gc
 and is bound to the run's `gitauth` workspace. Set `WRITE_BACK_DRY_RUN=false`
 once the diff looks right.
 
+**Three steps on two images**, because no single image has everything the task
+needs. `clone` and `commit-push` need git and a POSIX `sh`; `pin` needs bash
+and awk and no git. Steps in a Task each have their own image, so requiring one
+image to carry git, bash and awk was a self-inflicted constraint — and a
+revealing one:
+
+| candidate for `GIT_IMAGE` | works? |
+|---|---|
+| the cluster's own `pipelines-git-init-rhel9` | yes — git and `sh`, already on every node that has cloned |
+| `ubi9/ubi` | only after installing git |
+| **`hi/git`** | **no** — distroless means no shell, and a Tekton `script` step needs one |
+
+That last row is worth sitting with. The hardened image is the *right* image for
+a step whose only job is to run git, and it cannot be used, because the step is
+expressed as a shell script. A `command:`/`args:` step with no shell could use
+it. That is the distroless trade-off this whole directory is measuring, met from
+the other side.
+
 **The rewriting is [`pin-digests.sh`](pin-digests.sh), not inline task script**,
 so it can be run against the real files outside a cluster. It edits lines
 rather than loading the YAML, so all 27 comments in the deploy repository's
