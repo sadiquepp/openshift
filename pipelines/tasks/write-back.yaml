@@ -56,9 +56,14 @@ spec:
         Needs git and a POSIX sh -- nothing more, because the rewriting happens
         in a separate step on a different image. The image the cluster's own
         git-clone task uses is the obvious choice and is already on every node
-        that has run a clone:
+        that has run a clone, so read your own -- the digest below is tied to
+        one OpenShift Pipelines version:
           oc get task git-clone -n openshift-pipelines -o jsonpath='{.spec.steps[0].image}'
-      default: registry.redhat.io/openshift-pipelines/pipelines-git-init-rhel9:latest
+        It must be a DIGEST or an explicit version. These repositories refuse
+        :latest outright -- "This repository does not use the latest tag to
+        track the most recent image" -- which surfaces as ErrImagePull and
+        mentions tags only at the very end of a long message.
+      default: registry.redhat.io/openshift-pipelines/pipelines-git-init-rhel9@sha256:c68bcae03c8df30c59b2940518dbdf97d21349b0a7824ffd608a884c6cbc7c4d
     - name: PIN_IMAGE
       type: string
       description: >-
