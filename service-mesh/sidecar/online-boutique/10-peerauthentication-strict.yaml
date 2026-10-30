@@ -1,0 +1,19 @@
+# Step 1 -- STRICT mTLS for the namespace. Enforced by every pod's sidecar.
+#
+# Sidecars already use mTLS with each other by default (auto mTLS). What
+# PERMISSIVE still allows is PLAINTEXT from outside the mesh -- a pod in a
+# namespace without injection, a hostNetwork pod, the OpenShift router. STRICT
+# makes each pod's inbound Envoy refuse that.
+#
+# Identical in effect to ../../ambient/online-boutique/10-*.yaml; only the
+# enforcer differs (the destination's sidecar here, the destination node's
+# ztunnel there). One real difference: here `mode: DISABLE` is honoured and
+# sidecars will talk plaintext; ambient ignores it.
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: default
+  namespace: online-boutique-sidecar
+spec:
+  mtls:
+    mode: STRICT

@@ -1,0 +1,76 @@
+apiVersion: observability.openshift.io/v1
+kind: ClusterLogForwarder
+metadata:
+  name: instance
+  namespace: {{ logging_namespace }}
+spec:
+  serviceAccount:
+    name: logging-collector
+  outputs:
+    - name: kafka-out
+      type: kafka
+      kafka:
+        # The scheme carries the transport: tls:// for an encrypted listener,
+        # tcp:// for a plaintext one. The path is the topic, and `topic:` below
+        # says the same thing explicitly - Vector takes the field over the path,
+        # and having both means the resource still reads correctly if someone
+        # rewrites the URL later.
+        url: {{ 'tls' if (kafka_tls_effective | bool) else 'tcp' }}://{{ kafka_bootstrap_effective | first }}/{{ kafka_topic_logs }}
+        topic: {{ kafka_topic_logs }}
+{% if kafka_bootstrap_effective | length > 1 %}
+        brokers:
+{% for b in kafka_bootstrap_effective %}
+          - {{ 'tls' if (kafka_tls_effective | bool) else 'tcp' }}://{{ b }}
+{% endfor %}
+{% endif %}
+{% if kafka_sasl_effective | bool %}
+        authentication:
+          sasl:
+            mechanism: {{ kafka_sasl_mechanism }}
+            username:
+              secretName: {{ kafka_sasl_secret_name }}
+              key: {{ kafka_sasl_username_key }}
+            password:
+              secretName: {{ kafka_sasl_secret_name }}
+              key: {{ kafka_sasl_password_key }}
+{% endif %}
+{% if kafka_tls_effective | bool %}
+        tls:
+{% if kafka_tls_insecure_skip_verify | bool %}
+          insecureSkipVerify: true
+{% else %}
+          ca:
+            secretName: {{ kafka_ca_secret_name }}
+            key: {{ kafka_ca_secret_key }}
+{% endif %}
+{% endif %}
+  filters:
+    # Stack traces arrive from the container runtime one line per record. Left
+    # alone they reach the topic as a dozen unrelated messages; this rejoins
+    # them into the single record a consumer can actually index.
+    - name: multiline-exceptions
+      type: detectMultilineException
+  pipelines:
+    - name: all-logs-to-kafka
+      inputRefs:
+        - application
+        - infrastructure
+{% if logging_include_audit | bool %}
+        - audit
+{% endif %}
+      outputRefs:
+        - kafka-out
+      filters:
+        - multiline-exceptions
+{#
+  ONE topic for all three inputs, which is what the diagram shows and what most
+  consumers want - the records carry log_type, so a consumer can split them
+  itself. To fan out instead, add an output per topic (each with its own
+  `topic:`) and one pipeline per input; the RBAC above is already the same.
+
+  NOT here, on purpose:
+    - a lokiStack output, and the logging-collector-logs-writer binding it needs
+    - a LogFileMetricExporter, which produces per-container log-volume metrics
+      for the platform Prometheus. It stores nothing, so add it back if you want
+      those series; it is left out because it is not part of the export path.
+#}

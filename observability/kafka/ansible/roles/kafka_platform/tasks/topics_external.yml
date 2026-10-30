@@ -1,0 +1,65 @@
+---
+# External broker: there is no Topic Operator watching this cluster, so
+# KafkaTopic resources would sit there unreconciled. Topics are created the way
+# they would be from a laptop - bin/kafka-topics.sh --create --if-not-exists -
+# but from a Job on the cluster, so it runs from inside the network that can
+# actually reach the broker and reuses the operator's own Kafka image.
+
+- name: Remove any previous topic-admin Job
+  kubernetes.core.k8s:
+    state: absent
+    api_version: batch/v1
+    kind: Job
+    name: kafka-create-topics
+    namespace: "{{ kafka_namespace }}"
+    wait: true
+    wait_timeout: 120
+  # A Job's pod template is immutable, so re-applying a changed one fails with
+  # "field is immutable" rather than re-running. Delete and recreate is the
+  # whole idempotency story here; the script itself is --if-not-exists, so a
+  # second run against unchanged topics is a no-op at the broker.
+
+- name: Run the topic-admin Job
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('ansible.builtin.template', 'topic-admin-job.yaml.j2') | from_yaml }}"
+
+- name: Wait for the topics to be created
+  kubernetes.core.k8s_info:
+    api_version: batch/v1
+    kind: Job
+    name: kafka-create-topics
+    namespace: "{{ kafka_namespace }}"
+  register: _topic_job
+  retries: 30
+  delay: 10
+  until: >-
+    _topic_job.resources | length > 0
+    and (((_topic_job.resources[0].status.succeeded | default(0)) | int) > 0
+         or ((_topic_job.resources[0].status.failed | default(0)) | int) > 0)
+
+- name: Read the Job's output
+  kubernetes.core.k8s_log:
+    api_version: batch/v1
+    kind: Job
+    name: kafka-create-topics
+    namespace: "{{ kafka_namespace }}"
+  register: _topic_job_log
+  failed_when: false
+
+- name: Fail with the broker's own error if the Job did not succeed
+  ansible.builtin.assert:
+    that:
+      - ((_topic_job.resources[0].status.succeeded | default(0)) | int) > 0
+    fail_msg: |-
+      Creating the topics on {{ kafka_bootstrap_effective | join(',') }} failed.
+      This is the first thing in the run that actually talks to the broker, so
+      it is where a wrong address, a firewall, a wrong CA or wrong SASL
+      credentials shows up. The Job's own output:
+
+      {{ _topic_job_log.log | default('(no log - the pod may not have started; oc describe job/kafka-create-topics -n ' ~ kafka_namespace ~ ')') }}
+    quiet: true
+
+- name: Report the topics
+  ansible.builtin.debug:
+    msg: "{{ (_topic_job_log.log | default('')).splitlines() }}"

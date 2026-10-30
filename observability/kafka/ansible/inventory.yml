@@ -1,0 +1,26 @@
+---
+# Everything runs from the control node: the kubernetes.core modules talk to the
+# cluster in your current kubeconfig context. There is no managed host to reach
+# over SSH, and - unlike ../../ansible - no AWS phase, because nothing in this
+# stack has an object store behind it.
+all:
+  hosts:
+    localhost:
+      ansible_connection: local
+
+      # Run modules under the SAME Python that is running ansible-playbook,
+      # rather than whatever interpreter discovery settles on.
+      #
+      # This matters because `localhost` is declared explicitly here. Ansible's
+      # *implicit* localhost gets `sys.executable` for free; an explicit one
+      # does not - it goes through normal discovery and lands on the system
+      # interpreter, typically /usr/bin/python3.
+      #
+      # Inside a virtualenv that is a trap: you pip install kubernetes into the
+      # venv, Ansible runs the module under /usr/bin/python3 instead, and
+      # reports the library as missing. With this, the library only ever has to
+      # be installed next to Ansible.
+      #
+      # Override with -e ansible_python_interpreter=/usr/bin/python3.11 if you
+      # deliberately want it somewhere else.
+      ansible_python_interpreter: "{{ ansible_playbook_python }}"

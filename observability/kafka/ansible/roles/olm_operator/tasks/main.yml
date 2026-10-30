@@ -1,0 +1,93 @@
+---
+- name: "{{ olm_subscription_name }}: create namespace {{ olm_namespace }}"
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ olm_namespace }}"
+        labels: "{{ olm_namespace_labels }}"
+  when: olm_create_namespace | bool
+
+- name: "{{ olm_subscription_name }}: create the OperatorGroup"
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition:
+      apiVersion: operators.coreos.com/v1
+      kind: OperatorGroup
+      metadata:
+        name: "{{ olm_operator_group_name }}"
+        namespace: "{{ olm_namespace }}"
+      spec:
+        upgradeStrategy: Default
+  when: olm_operator_group_name | length > 0
+
+- name: "{{ olm_subscription_name }}: create the Subscription"
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition:
+      apiVersion: operators.coreos.com/v1alpha1
+      kind: Subscription
+      metadata:
+        name: "{{ olm_subscription_name }}"
+        namespace: "{{ olm_namespace }}"
+      spec:
+        channel: "{{ olm_channel }}"
+        installPlanApproval: Automatic
+        name: "{{ olm_package }}"
+        source: "{{ olm_source }}"
+        sourceNamespace: "{{ olm_source_namespace }}"
+
+- name: "{{ olm_subscription_name }}: wait for the Subscription to resolve"
+  kubernetes.core.k8s_info:
+    api_version: operators.coreos.com/v1alpha1
+    kind: Subscription
+    name: "{{ olm_subscription_name }}"
+    namespace: "{{ olm_namespace }}"
+  register: _olm_sub
+  retries: "{{ ((olm_wait_timeout | int) / 10) | int }}"
+  delay: 10
+  until: >-
+    _olm_sub.resources | length > 0
+    and (_olm_sub.resources[0].status.currentCSV | default('')) | length > 0
+  # A Subscription that cannot resolve never gets a currentCSV, so this is where
+  # a wrong channel shows up. If it times out:
+  #   oc describe subscription {{ olm_subscription_name }} -n {{ olm_namespace }}
+  # and look for a ResolutionFailed condition.
+
+- name: "{{ olm_subscription_name }}: wait for {{ _olm_sub.resources[0].status.currentCSV }} to reach Succeeded"
+  kubernetes.core.k8s_info:
+    api_version: operators.coreos.com/v1alpha1
+    kind: ClusterServiceVersion
+    name: "{{ _olm_sub.resources[0].status.currentCSV }}"
+    namespace: "{{ olm_namespace }}"
+  register: _olm_csv
+  retries: "{{ ((olm_wait_timeout | int) / 10) | int }}"
+  delay: 10
+  until: >-
+    _olm_csv.resources | length > 0
+    and (_olm_csv.resources[0].status.phase | default('')) == 'Succeeded'
+  # The CSV name is read from the Subscription rather than derived from the
+  # package name, because for several of these operators they differ: the
+  # `amq-streams` package installs `amqstreams.vX.Y.Z-N` and
+  # `opentelemetry-product` installs `opentelemetry-operator.vX.Y.Z`.
+
+- name: "{{ olm_subscription_name }}: wait for the CRDs to be Established"
+  kubernetes.core.k8s_info:
+    api_version: apiextensions.k8s.io/v1
+    kind: CustomResourceDefinition
+    name: "{{ item }}"
+  register: _olm_crd
+  retries: 30
+  delay: 5
+  until: >-
+    _olm_crd.resources | length > 0
+    and (_olm_crd.resources[0].status.conditions | default([]))
+        | selectattr('type', 'equalto', 'Established')
+        | selectattr('status', 'equalto', 'True')
+        | list | length > 0
+  loop: "{{ olm_wait_for_crds }}"

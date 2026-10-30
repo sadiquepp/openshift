@@ -1,0 +1,49 @@
+# The control plane: istiod, in ambient mode. Apply after 01's CSV is Succeeded
+# and 02 exists.
+#
+#   oc wait --for=condition=Ready istio/default --timeout=5m
+apiVersion: sailoperator.io/v1
+kind: Istio
+metadata:
+  name: default
+spec:
+  namespace: istio-system
+
+  # `ambient` turns on what istiod needs to serve ztunnel and waypoints: the
+  # workload-oriented xDS API ztunnel consumes, and the istio-waypoint
+  # GatewayClass.
+  profile: ambient
+
+  # No `version:` on purpose -- the operator defaults to the newest Istio it
+  # supports, which keeps this file valid across Service Mesh 3.2, 3.3 and on.
+  # Pin it for anything you want to be reproducible. List what your operator
+  # accepts with:
+  #
+  #   oc explain istio.spec.version
+  #
+  # Set the same value on IstioCNI and ZTunnel: the three must match.
+  # version: v1.28-latest
+
+  # Ambient supports InPlace only. ztunnel is a cluster-wide singleton, so there
+  # is no second data plane to canary a RevisionBased upgrade onto.
+  updateStrategy:
+    type: InPlace
+
+  values:
+    pilot:
+      # istiod only issues certificates for OTHER service accounts to ztunnel's
+      # service account in this namespace. ztunnel asks istiod for a
+      # certificate on behalf of each pod on its node; this is the line that
+      # says which namespace is allowed to do that impersonation. Must match
+      # ZTunnel's spec.namespace. The OpenShift platform profile defaults it to
+      # kube-system, so leaving it out breaks every certificate request.
+      trustedZtunnelNamespace: ztunnel
+
+    meshConfig:
+      # istiod watches only namespaces carrying this label. Without it istiod
+      # watches every namespace in the cluster -- hundreds on OpenShift, almost
+      # none of them in the mesh -- and `istioctl ztunnel-config workloads`
+      # lists every openshift-* pod.
+      discoverySelectors:
+        - matchLabels:
+            istio-discovery: enabled

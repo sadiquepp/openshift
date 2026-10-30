@@ -1,0 +1,56 @@
+---
+# ── kafka_platform ────────────────────────────────────────────────────────────
+# Red Hat Streams for Apache Kafka (the OLM package is still called
+# `amq-streams`), and the topics every producer in this stack writes to.
+#
+#   kafka_mode: external   -> operator only, then a Job that runs
+#                             bin/kafka-topics.sh against YOUR bootstrap servers
+#   kafka_mode: incluster  -> operator, a KRaft Kafka cluster, and KafkaTopic
+#                             custom resources the Topic Operator reconciles
+#
+# The operator is installed in both modes. In external mode it is not managing
+# a broker, but it is what puts the Kafka CRDs on the cluster and - more
+# usefully - what tells us which Kafka container image to run the admin CLI
+# from, so the client version always matches the operator you just installed.
+
+- name: Install Streams for Apache Kafka
+  ansible.builtin.include_role:
+    name: olm_operator
+  vars:
+    olm_namespace: "{{ kafka_operator_namespace }}"
+    # openshift-operators already has a global OperatorGroup, so neither the
+    # namespace nor an OperatorGroup is ours to create. Point
+    # kafka_operator_namespace elsewhere and both come back.
+    olm_create_namespace: "{{ kafka_operator_namespace != 'openshift-operators' }}"
+    olm_operator_group_name: "{{ '' if kafka_operator_namespace == 'openshift-operators' else 'amq-streams' }}"
+    olm_subscription_name: "{{ kafka_operator_package }}"
+    olm_channel: "{{ kafka_channel }}"
+    olm_wait_for_crds:
+      - kafkas.kafka.strimzi.io
+      - kafkatopics.kafka.strimzi.io
+      - kafkanodepools.kafka.strimzi.io
+
+- name: Create the {{ kafka_namespace }} namespace
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ kafka_namespace }}"
+
+- name: Resolve the Kafka container image
+  ansible.builtin.include_tasks: image.yml
+  when: kafka_admin_image | default('') | length == 0
+
+- name: Create the admin client configuration
+  ansible.builtin.include_tasks: client_config.yml
+
+- name: Deploy the lab broker
+  ansible.builtin.include_tasks: incluster.yml
+  when: kafka_mode == 'incluster'
+
+- name: Create the topics on the external broker
+  ansible.builtin.include_tasks: topics_external.yml
+  when: kafka_mode == 'external'

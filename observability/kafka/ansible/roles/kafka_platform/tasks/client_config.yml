@@ -1,0 +1,26 @@
+---
+# The admin client configuration, used by the topic-creation Job and by
+# verify.yml. Created in both modes: in `incluster` mode it resolves to
+# PLAINTEXT against the operator's bootstrap Service, which is still what
+# kafka-topics.sh and kafka-get-offsets.sh need to be handed.
+
+- name: Create the admin client configuration
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: kafka-admin-config
+        namespace: "{{ kafka_namespace }}"
+      type: Opaque
+      stringData:
+        client.properties: "{{ lookup('ansible.builtin.template', 'client.properties.j2') }}"
+  no_log: true
+
+- name: Create the CA bundle for the admin Jobs
+  ansible.builtin.include_role:
+    name: kafka_client_secrets
+  vars:
+    kafka_secret_namespace: "{{ kafka_namespace }}"

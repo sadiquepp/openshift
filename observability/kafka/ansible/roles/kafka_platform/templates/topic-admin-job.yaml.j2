@@ -1,0 +1,82 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kafka-create-topics
+  namespace: {{ kafka_namespace }}
+spec:
+  backoffLimit: 2
+  # Keep the pod around long enough to read its logs after a failure, then let
+  # the cluster reap it.
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app: kafka-create-topics
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: kafka-topics
+          image: {{ kafka_admin_image }}
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -o pipefail
+              CFG=/etc/kafka-admin/client.properties
+              BS={{ kafka_bootstrap_effective | join(',') }}
+              rc=0
+{% for t in kafka_topics if t.enabled | bool %}
+
+              echo "==> {{ t.name }} ({{ t.partitions }} partitions, replication {{ kafka_topic_replication_factor }})"
+              bin/kafka-topics.sh --bootstrap-server "$BS" --command-config "$CFG" \
+                --create --if-not-exists \
+                --topic {{ t.name }} \
+                --partitions {{ t.partitions }} \
+                --replication-factor {{ kafka_topic_replication_factor }} \
+{% for k, v in kafka_topic_config.items() %}
+                --config {{ k }}={{ v }} \
+{% endfor %}
+                || rc=1
+{% endfor %}
+
+              echo
+              echo "==> topics on the broker"
+              bin/kafka-topics.sh --bootstrap-server "$BS" --command-config "$CFG" --list || rc=1
+              exit $rc
+              # --if-not-exists makes a re-run a no-op, but it also means an
+              # existing topic keeps its CURRENT partition count and config.
+              # Changing either on a topic that already exists is deliberate
+              # work for whoever operates the broker - `kafka-topics.sh --alter`
+              # can add partitions but never remove them, and re-partitioning
+              # changes which key lands on which partition.
+          volumeMounts:
+            - name: admin-config
+              mountPath: /etc/kafka-admin
+              readOnly: true
+{% if (kafka_tls_effective | bool) and not (kafka_tls_insecure_skip_verify | bool) %}
+            - name: kafka-ca
+              mountPath: /etc/kafka-ca
+              readOnly: true
+{% endif %}
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+      volumes:
+        - name: admin-config
+          secret:
+            secretName: kafka-admin-config
+{% if (kafka_tls_effective | bool) and not (kafka_tls_insecure_skip_verify | bool) %}
+        - name: kafka-ca
+          secret:
+            secretName: {{ kafka_ca_secret_name }}
+{% endif %}

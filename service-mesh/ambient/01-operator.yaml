@@ -1,0 +1,32 @@
+# OpenShift Service Mesh 3 operator (the productised Sail operator). Apply
+# first, wait for the CSV to reach Succeeded, then 02.
+#
+# Ambient mode is GA from Service Mesh 3.2 and needs OpenShift 4.19 or later.
+# Confirm the channel against your cluster before applying -- it varies with the
+# catalog, and a mirrored catalog may not carry it at all:
+#
+#   oc get packagemanifest servicemeshoperator3 -n openshift-marketplace \
+#     -o jsonpath='{.status.defaultChannel}{"\n"}{range .status.channels[*]}{.name}{"\n"}{end}'
+#
+# On a disconnected cluster, mirror the operator into your registry and publish
+# it through a CatalogSource first -- see ../../disconnected/ -- then change
+# `source` below to that CatalogSource's name.
+#
+# There is no Namespace or OperatorGroup here: openshift-operators already has
+# the cluster-wide OperatorGroup, which is what this operator needs. It
+# reconciles Istio, IstioCNI and ZTunnel into three different namespaces.
+#
+# Do not install this on a cluster that already runs Service Mesh 2.x. The 2.x
+# and 3.x operators manage overlapping resources, and ambient is not supported
+# alongside a 2.6-or-earlier control plane.
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: servicemeshoperator3
+  namespace: openshift-operators
+spec:
+  channel: stable
+  installPlanApproval: Automatic
+  name: servicemeshoperator3
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace

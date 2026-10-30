@@ -1,0 +1,43 @@
+# Ingress for the shop: a Gateway API Gateway, implemented by the mesh.
+#
+# gatewayClassName `istio` is created by istiod (`oc get gatewayclass`). For
+# each Gateway of that class istiod deploys an Envoy Deployment and a Service,
+# both named <gateway name>-istio, into the Gateway's namespace -- here
+# boutique-gateway-istio.
+#
+# OpenShift 4.19 and later ship the Gateway API CRDs, managed by the Ingress
+# Operator, so there is nothing to install. Do not apply the upstream
+# standard-install.yaml on top: the cluster owns those CRDs.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: boutique-gateway
+  annotations:
+    # istiod defaults the gateway's Service to type LoadBalancer. ClusterIP,
+    # because the OpenShift router is the edge here -- the Route in
+    # ../../base/route.yaml (repointed by this overlay) fronts this Service and
+    # terminates TLS, exactly as it did for frontend.
+    networking.istio.io/service-type: ClusterIP
+spec:
+  gatewayClassName: istio
+  listeners:
+    - name: http
+      port: 80
+      protocol: HTTP
+      allowedRoutes:
+        namespaces:
+          from: Same
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: frontend
+spec:
+  parentRefs:
+    - name: boutique-gateway
+  # No `hostnames:` -- match whatever host the OpenShift Route was given, which
+  # keeps this portable between clusters the same way route.yaml is.
+  rules:
+    - backendRefs:
+        - name: frontend
+          port: 80

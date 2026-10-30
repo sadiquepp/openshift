@@ -1,0 +1,31 @@
+# Step 5 (optional) -- close the bypass around the waypoint.
+#
+# Step 4's policy lives in the waypoint, and the waypoint only sees traffic
+# addressed to the paymentservice SERVICE. A client that connects straight to a
+# paymentservice POD IP goes ztunnel -> ztunnel and never meets the waypoint,
+# so step 4 never runs.
+#
+# This policy is the matching guard at L4, on the destination ztunnel: accept
+# connections to paymentservice pods only when the peer is the waypoint. Once a
+# waypoint is in the path, the destination ztunnel sees the WAYPOINT's identity,
+# not the original caller's -- so this rule allows the waypoint, and the
+# waypoint applies the per-caller rule.
+#
+# The same fact is why step 2's redis-cart policy needs redis-cart opted out of
+# the waypoint (see the README): with the waypoint in the path, ztunnel would
+# see `sa/waypoint`, not `sa/cartservice`, and refuse the cart's connection.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: paymentservice-only-via-waypoint
+  namespace: online-boutique-ambient
+spec:
+  selector:
+    matchLabels:
+      app: paymentservice
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - cluster.local/ns/online-boutique-ambient/sa/waypoint

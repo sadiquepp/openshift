@@ -59,6 +59,12 @@
 > This document remains the source of truth for *why* each resource looks the
 > way it does.
 
+> **No in-cluster storage?** [`kafka/README.md`](kafka/README.md) is this stack
+> with every store removed: traces, span metrics, federated metrics, logs and
+> network flows all leave the cluster as Kafka topics, so there is no LokiStack,
+> no TempoStack and no S3 bucket to run. Same operators, same collectors —
+> only the terminus of each pipeline differs.
+
 ## OpenShift Logging
 
 This Document describes the pre-requisites for installing and configuring the OpenShift Logging using AWS S3 as the storage backend.
