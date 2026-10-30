@@ -419,7 +419,26 @@ oc -n openshift-config create configmap registry-cas \
 oc patch image.config.openshift.io/cluster --type=merge \
   -p '{"spec":{"additionalTrustedCA":{"name":"registry-cas"}}}'
 
-oc get mcp -w        # this reboots nodes in sequence; wait for it
+```
+
+No MachineConfigPool rollout happens and no node reboots -- registry CAs are
+among the files the Machine Config Operator writes in place. (ICSP, IDMS and
+`registries.conf` changes are the ones that drain and reboot.) So `oc get mcp`
+is not the thing to watch; check that the certificate reached a node, where the
+directory name carries the real colon rather than the `..` of the ConfigMap key:
+
+```bash
+NODE=$(oc get nodes -o name | head -1)
+oc debug "$NODE" -q -- chroot /host ls /etc/docker/certs.d/
+oc debug "$NODE" -q -- chroot /host \
+  head -1 '/etc/docker/certs.d/registry.example.com:8443/ca.crt'
+```
+
+Then the pods recover as the pull backoff retries; deleting them is quicker:
+
+```bash
+oc -n boutique-hi delete pod --all
+oc -n boutique-ubi delete pod --all
 ```
 
 If the field already names a ConfigMap, add your key to that one instead.
