@@ -156,6 +156,13 @@ spec:
     # One PipelineTask, eleven TaskRuns.
     - name: build
       runAfter: [clone-recipes]
+      # Eleven builds pulling Go modules, npm packages, pip wheels, Maven and
+      # NuGet at once make transient egress failures normal -- a
+      # "proxy.golang.org: TLS handshake timeout" is contention, not a broken
+      # Containerfile. A retry costs one build; a failed run costs eleven.
+      # This is NOT cover for a real failure: a build that fails twice is
+      # failing for a reason.
+      retries: 2
       taskRef:
         name: build-service
       workspaces:

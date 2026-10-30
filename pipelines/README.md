@@ -237,12 +237,38 @@ in [`01-operator.yaml`](01-operator.yaml).
 oc apply -f tasks/ -f pipeline-build-stack.yaml
 
 export REGISTRY=registry.example.com:8443
-for set in hardened ubi; do
+
+start() {
   sed -e "s|registry.example.com:8443|$REGISTRY|" \
       -e "s|b20261030|b$(date -u +%Y%m%d%H%M)|" \
-      runs/build-stack-$set.yaml | oc -n boutique-ci create -f -
-done
+      "runs/build-stack-$1.yaml" | oc -n boutique-ci create -f -
+}
+
+start hardened
+oc -n boutique-ci wait --for=condition=Succeeded --timeout=60m \
+  pipelinerun -l tekton.dev/pipeline=build-stack
+start ubi
 ```
+
+**Run the two sets one after the other, not together.** Both at once is
+twenty-two concurrent builds on one node, every one of them pulling Go modules,
+npm packages, pip wheels, Maven artifacts or NuGet packages through that node
+at the same moment. The failure that produces is an egress timeout in whichever
+build loses the race:
+
+```
+go: cloud.google.com/go@v0.123.0: Get "https://proxy.golang.org/...":
+net/http: TLS handshake timeout
+```
+
+which reads like a broken Containerfile and is not one. `retries: 2` on the
+build task absorbs a single transient failure, but it cannot absorb twenty-two
+builds competing for one network path. A build that fails twice is failing for
+a reason — the retry is not cover for a real error.
+
+A module cache would fix this properly rather than working around it: a second
+workspace holding `GOMODCACHE`, `~/.npm`, `~/.m2` and the NuGet cache, reused
+across runs. It is also what a disconnected cluster needs. Not built here yet.
 
 `matrix.include` in [`pipeline-build-stack.yaml`](pipeline-build-stack.yaml) is
 the pipeline's copy of `recipe()` in `build-push.sh` — same eleven services,

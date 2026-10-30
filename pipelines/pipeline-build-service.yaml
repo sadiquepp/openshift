@@ -149,6 +149,8 @@ spec:
       # edge. Results do; files do not. Without this the build could start
       # before the Containerfiles existed.
       runAfter: [clone-recipes]
+      # One retry for a transient registry or module-proxy failure.
+      retries: 2
       taskRef:
         name: build-service
       workspaces:
