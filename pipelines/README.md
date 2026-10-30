@@ -425,6 +425,61 @@ no ordering here yet, so expect `cartservice` to restart a few times on the
 first sync — a sync wave annotation on `redis-cart` is the fix, and a good
 exercise.
 
+### Closing the loop: the write-back
+
+Off by default. A build does not change what is deployed unless asked:
+
+```bash
+# see the diff, push nothing
+oc -n boutique-ci create -f - <<'RUN'
+# ... the build-stack run, plus:
+#   - name: WRITE_BACK          value: "true"
+#   - name: DEPLOY_PATH         value: hub1/hardened
+#   - name: WRITE_BACK_DRY_RUN  value: "true"
+RUN
+```
+
+The credential goes in a secret, never a parameter:
+
+```bash
+# a token with push access to boutique-deploy ONLY -- that is the point of the
+# repository split. Read it from a prompt so it is not in shell history.
+read -rs TOKEN
+printf 'https://%s:%s@github.com\n' sadiquepp "$TOKEN" > /tmp/gc
+oc -n boutique-ci create secret generic boutique-deploy-git \
+  --from-file=.git-credentials=/tmp/gc
+shred -u /tmp/gc
+```
+
+and is bound to the run's `gitauth` workspace. Set `WRITE_BACK_DRY_RUN=false`
+once the diff looks right.
+
+**The rewriting is [`pin-digests.sh`](pin-digests.sh), not inline task script**,
+so it can be run against the real files outside a cluster. It edits lines
+rather than loading the YAML, so all 27 comments in the deploy repository's
+kustomization survive a rewrite — verified, along with: only the `digest:` line
+changes, `--check` exits 1 when the file is stale (so it works as a CI gate),
+and it **fails** rather than doing less than asked when a service on stdin
+matches no entry in the file. That last one is the whole hazard of this design:
+an override that matches nothing leaves the old digest in place and the mistake
+only shows up as a pod running something unexpected.
+
+Two things it will not let you do: pipe both base sets in at once (every
+service name appears twice, and one would overwrite the other), or pin an entry
+carrying both `digest:` and `newTag:`.
+
+### One commit, not eleven
+
+The write-back runs once after the whole matrix and consumes
+`$(tasks.build.results.IMAGE_REF[*])` — a single array of
+`image:tag@sha256:...` strings. The build task emits that as one result
+precisely so this does not pair `IMAGE_URL[*]` with `IMAGE_DIGEST[*]` by index:
+a matrixed task's results come back as flat arrays and nothing documents their
+ordering, so an index pairing is an assumption that would fail silently and
+deploy one service's digest under another's name.
+
+Eleven separate commits to one file would also collide with themselves.
+
 ## Decisions, and why
 
 ### Our own build task rather than the shipped `buildah`

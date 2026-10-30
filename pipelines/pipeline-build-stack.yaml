@@ -99,6 +99,23 @@ spec:
     - name: TLS_VERIFY
       type: string
       default: "true"
+    - name: WRITE_BACK
+      type: string
+      default: "false"
+      description: >-
+        "true" pins this run's digests into the deploy repository and pushes.
+        Off by default so a build never changes what is deployed unless asked.
+    - name: DEPLOY_PATH
+      type: string
+      default: ""
+      description: Directory in the deploy repository, e.g. hub1/hardened
+    - name: DEPLOY_REVISION
+      type: string
+      default: main
+    - name: WRITE_BACK_DRY_RUN
+      type: string
+      default: "false"
+      description: '"true" prints the diff and pushes nothing.'
   workspaces:
     - name: source
       description: >-
@@ -108,6 +125,9 @@ spec:
     - name: dockerconfig
       optional: true
     - name: registrycerts
+      optional: true
+    - name: gitauth
+      description: .git-credentials for the deploy repository. Only needed with WRITE_BACK=true.
       optional: true
   tasks:
     - name: clone-upstream
@@ -339,3 +359,32 @@ spec:
           value: $(params.BASE_SET)
         - name: TLS_VERIFY
           value: $(params.TLS_VERIFY)
+
+    # Closes the loop: the digests this run produced become the deployed state.
+    # One commit for all eleven services, not one per service -- concurrent
+    # per-service commits to the same file is how write-back collides with
+    # itself.
+    - name: write-back
+      runAfter: [build]
+      when:
+        - input: $(params.WRITE_BACK)
+          operator: in
+          values: ["true"]
+      taskRef:
+        name: write-back
+      workspaces:
+        - name: source
+          workspace: source
+        - name: gitauth
+          workspace: gitauth
+      params:
+        # One array of self-describing refs. See IMAGE_REF on the build task
+        # for why this is not two arrays paired by index.
+        - name: IMAGE_REFS
+          value: ["$(tasks.build.results.IMAGE_REF[*])"]
+        - name: DEPLOY_PATH
+          value: $(params.DEPLOY_PATH)
+        - name: DEPLOY_REVISION
+          value: $(params.DEPLOY_REVISION)
+        - name: DRY_RUN
+          value: $(params.WRITE_BACK_DRY_RUN)

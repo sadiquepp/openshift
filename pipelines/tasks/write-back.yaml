@@ -1,0 +1,135 @@
+---
+# Pin the digests this run produced into the deploy repository, and push.
+#
+# This is the step that closes the GitOps loop. Without it the pipeline builds
+# images that nothing deploys, and the deploy repository pins whatever digests
+# were last written by hand -- the same staleness the ACS measurement kept
+# tripping over, moved one layer along.
+#
+# The rewriting itself is ../pin-digests.sh, not inline script. It is run and
+# tested against the real files outside a cluster, which is the only way to
+# know that an override matches what it is meant to before a pipeline depends
+# on it.
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: write-back
+  namespace: boutique-ci
+spec:
+  description: >-
+    Clone the deploy repository, pin the image digests this run produced into
+    one overlay, and push a single commit.
+  params:
+    - name: IMAGE_REFS
+      type: array
+      description: One image:tag@sha256:... per element, from the build results.
+    - name: DEPLOY_REPO
+      type: string
+      default: https://github.com/sadiquepp/boutique-deploy
+    - name: DEPLOY_REVISION
+      type: string
+      default: main
+      description: Branch to commit on. See the README on push versus pull request.
+    - name: DEPLOY_PATH
+      type: string
+      description: Directory holding the kustomization to pin, e.g. hub1/hardened
+    - name: RECIPES_PATH
+      type: string
+      default: recipes/pipelines/pin-digests.sh
+      description: pin-digests.sh inside the source workspace.
+    - name: GIT_USER_NAME
+      type: string
+      default: boutique-ci
+      description: >-
+        A bot identity, deliberately not a person's. Who changed the deployed
+        image set is then answerable from the history alone.
+    - name: GIT_USER_EMAIL
+      type: string
+      default: boutique-ci@users.noreply.github.com
+    - name: DRY_RUN
+      type: string
+      default: "false"
+      description: "true prints the diff and pushes nothing."
+    - name: GIT_IMAGE
+      type: string
+      # Must contain git, bash and awk. ubi9/ubi does not ship git on every
+      # release, so the step checks and says what to do rather than failing
+      # with "git: command not found" three steps deep.
+      default: registry.access.redhat.com/ubi9/ubi:latest
+  results:
+    - name: COMMIT
+      description: The commit pushed, or "none" when nothing changed.
+  workspaces:
+    - name: source
+      description: Holds the clone of this repository, for pin-digests.sh.
+    - name: gitauth
+      description: >-
+        A .git-credentials file for the deploy repository. Mount a secret; the
+        token is never passed as an argument, so it stays out of the process
+        list and the run's parameters.
+  steps:
+    - name: pin-and-push
+      image: $(params.GIT_IMAGE)
+      workingDir: $(workspaces.source.path)
+      args: ["$(params.IMAGE_REFS[*])"]
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        command -v git >/dev/null || {
+          echo "git is not in $(params.GIT_IMAGE)." >&2
+          echo "Set GIT_IMAGE to an image that has git, bash and awk. The one" >&2
+          echo "the cluster's own git-clone task uses is a safe choice:" >&2
+          echo "  oc get task git-clone -n openshift-pipelines -o jsonpath='{.spec.steps[0].image}'" >&2
+          exit 2
+        }
+
+        PIN="$(workspaces.source.path)/$(params.RECIPES_PATH)"
+        [ -x "$PIN" ] || [ -f "$PIN" ] || {
+          echo "pin-digests.sh not found at $PIN -- is this repository cloned into the source workspace?" >&2
+          exit 2
+        }
+
+        # Credentials from the workspace, never from the command line.
+        CRED="$(workspaces.gitauth.path)/.git-credentials"
+        [ -f "$CRED" ] || {
+          echo "no .git-credentials in the gitauth workspace" >&2
+          exit 2
+        }
+
+        rm -rf /tmp/deploy
+        git -c credential.helper="store --file=$CRED" \
+            clone --depth 1 --branch "$(params.DEPLOY_REVISION)" \
+            "$(params.DEPLOY_REPO)" /tmp/deploy
+        git config --global --add safe.directory /tmp/deploy
+
+        TARGET="/tmp/deploy/$(params.DEPLOY_PATH)/kustomization.yaml"
+        [ -f "$TARGET" ] || { echo "no kustomization at $TARGET" >&2; exit 2; }
+
+        # One line per image, from the matrix results.
+        printf '%s\n' "$@" | bash "$PIN" "$TARGET"
+
+        cd /tmp/deploy
+        if git diff --quiet; then
+          echo "no digest changed -- nothing to commit"
+          printf 'none' > "$(results.COMMIT.path)"
+          exit 0
+        fi
+        git --no-pager diff --stat
+        git --no-pager diff -- "$(params.DEPLOY_PATH)"
+
+        if [ "$(params.DRY_RUN)" = "true" ]; then
+          echo "DRY_RUN=true -- not pushing"
+          printf 'none' > "$(results.COMMIT.path)"
+          exit 0
+        fi
+
+        git config user.name  "$(params.GIT_USER_NAME)"
+        git config user.email "$(params.GIT_USER_EMAIL)"
+        git commit -q -am "$(params.DEPLOY_PATH): pin digests from pipeline build"
+        git -c credential.helper="store --file=$CRED" \
+            push origin "HEAD:$(params.DEPLOY_REVISION)"
+
+        git rev-parse HEAD | tr -d '\n' > "$(results.COMMIT.path)"
+        echo
+        echo "pushed $(git rev-parse --short HEAD) to $(params.DEPLOY_REVISION)"

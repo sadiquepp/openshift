@@ -83,6 +83,13 @@ spec:
       description: Digest of the image just pushed. This is what GitOps pins.
     - name: IMAGE_URL
       description: The image reference that was pushed.
+    - name: IMAGE_REF
+      description: >-
+        image:tag@digest in one string. The write-back consumes this rather
+        than IMAGE_URL and IMAGE_DIGEST separately: a matrixed task's results
+        come back as flat arrays, and pairing two of them by index assumes an
+        ordering nothing documents. One self-describing element cannot be
+        mispaired.
   workspaces:
     - name: source
       description: Holds both clones -- upstream application source and this repo.
@@ -215,5 +222,6 @@ spec:
         digest="$(cat /tmp/image-digest)"
         printf '%s' "$digest"         > "$(results.IMAGE_DIGEST.path)"
         printf '%s' "$(params.IMAGE)" > "$(results.IMAGE_URL.path)"
+        printf '%s@%s' "$(params.IMAGE)" "$digest" > "$(results.IMAGE_REF.path)"
         echo
         echo "pushed $(params.IMAGE)@${digest}"
