@@ -1,0 +1,334 @@
+---
+# Phase 2: all eleven services, one base set per run.
+#
+# The matrix is `include` rather than a cartesian product, because the services
+# are not interchangeable -- each has its own Containerfile, context and, for
+# node and python, an entrypoint. `include` names each combination explicitly,
+# which makes this block the pipeline's copy of recipe() in build-push.sh. Keep
+# the two in step.
+#
+# TWO THINGS THE MATRIX DICTATES, both visible below:
+#
+#   Matrix params are strings. An array param cannot be set from a matrix,
+#   which is why the one per-service build arg is the scalar ENTRY and not an
+#   element of BUILD_ARGS.
+#
+#   The base images are pipeline params referenced from the include entries,
+#   not literals in them. That is what lets ONE matrix serve both base sets:
+#   the defaults below are the hardened set, and the UBI run overrides all ten.
+#   Writing the bases into the entries would have meant twenty-two of them.
+#
+# `cache` is absent, exactly as in build-push.sh: it is mirrored rather than
+# built unless CACHE_BUILD=1. Mirror it with the shipped skopeo-copy task, or
+# build it with the single-service pipeline and Containerfile.valkey.
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: build-stack
+  namespace: boutique-ci
+spec:
+  description: >-
+    Clone upstream source and this repository once, then build and push all
+    eleven services from one base set in parallel.
+  params:
+    - name: BASE_SET
+      type: string
+      default: hardened
+    - name: TAG_SUFFIX
+      type: string
+      default: ""
+      description: Empty for hardened, "-ubi" for the UBI set, matching bases.env.
+    - name: REGISTRY
+      type: string
+      description: Registry and namespace, e.g. registry.example.com:8443/online-boutique
+    - name: VERSION
+      type: string
+      default: v0.10.6
+    - name: REVISION
+      type: string
+      description: Build id, e.g. b20261030. Unique per build to stay immutable.
+    # The base set, as ten params. These are the hardened defaults from
+    # test-workloads/online-boutique/hardened/bases.env -- see it for why the
+    # Go runtime is hi/static and not hi/go:latest, and why node is pinned to a
+    # major rather than floating on :latest.
+    - name: GO_BUILDER
+      type: string
+      default: registry.access.redhat.com/hi/go:latest-builder
+    - name: GO_RUNTIME
+      type: string
+      default: registry.access.redhat.com/hi/static:latest
+    - name: NODE_BUILDER
+      type: string
+      default: registry.access.redhat.com/hi/nodejs:22-builder
+    - name: NODE_RUNTIME
+      type: string
+      default: registry.access.redhat.com/hi/nodejs:22
+    - name: PY_BUILDER
+      type: string
+      default: registry.access.redhat.com/hi/python:3.12-builder
+    - name: PY_RUNTIME
+      type: string
+      default: registry.access.redhat.com/hi/python:3.12
+    - name: JAVA_BUILDER
+      type: string
+      default: registry.access.redhat.com/hi/openjdk:21-builder
+    - name: JAVA_RUNTIME
+      type: string
+      default: registry.access.redhat.com/hi/openjdk:21
+    - name: DOTNET_SDK
+      type: string
+      # Not hi/dotnet:10.0-builder -- the .NET images break the naming pattern
+      # the other languages follow. Taken from bases.env, which is the source
+      # of truth for both sets.
+      default: registry.access.redhat.com/hi/dotnet-sdk:10.0
+    - name: DOTNET_RUNTIME
+      type: string
+      default: registry.access.redhat.com/hi/dotnet-runtime:10.0
+    - name: UPSTREAM_REPO
+      type: string
+      default: https://github.com/GoogleCloudPlatform/microservices-demo
+    - name: UPSTREAM_REVISION
+      type: string
+      default: v0.10.6
+    - name: RECIPES_REPO
+      type: string
+      default: https://github.com/sadiquepp/openshift
+    - name: RECIPES_REVISION
+      type: string
+      default: main
+    - name: TLS_VERIFY
+      type: string
+      default: "true"
+  workspaces:
+    - name: source
+      description: >-
+        Cloned once and then read by eleven builds at the same time. Concurrent
+        reads of one PVC are fine; see the README on why it still needs a
+        volumeClaimTemplate rather than a shared claim.
+    - name: dockerconfig
+      optional: true
+    - name: registrycerts
+      optional: true
+  tasks:
+    - name: clone-upstream
+      taskRef:
+        resolver: cluster
+        params:
+          - name: kind
+            value: task
+          - name: name
+            value: git-clone
+          - name: namespace
+            value: openshift-pipelines
+      workspaces:
+        - name: output
+          workspace: source
+      params:
+        - name: URL
+          value: $(params.UPSTREAM_REPO)
+        - name: REVISION
+          value: $(params.UPSTREAM_REVISION)
+        - name: SUBDIRECTORY
+          value: upstream
+
+    - name: clone-recipes
+      runAfter: [clone-upstream]
+      taskRef:
+        resolver: cluster
+        params:
+          - name: kind
+            value: task
+          - name: name
+            value: git-clone
+          - name: namespace
+            value: openshift-pipelines
+      workspaces:
+        - name: output
+          workspace: source
+      params:
+        - name: URL
+          value: $(params.RECIPES_REPO)
+        - name: REVISION
+          value: $(params.RECIPES_REVISION)
+        - name: SUBDIRECTORY
+          value: recipes
+
+    # One PipelineTask, eleven TaskRuns.
+    - name: build
+      runAfter: [clone-recipes]
+      taskRef:
+        name: build-service
+      workspaces:
+        - name: source
+          workspace: source
+        - name: dockerconfig
+          workspace: dockerconfig
+        - name: registrycerts
+          workspace: registrycerts
+      # Each entry carries its own IMAGE, Containerfile and context. IMAGE
+      # cannot be a shared param built from $(params.SERVICE): a matrix
+      # param is not visible to the sibling params of the same PipelineTask,
+      # only to the Task it fans out to. The clone subdirectories are baked
+      # in here too -- recipes/ for the Containerfile, upstream/ for context.
+      matrix:
+        include:
+          # frontend
+          - name: frontend
+            params:
+              - name: IMAGE
+                value: $(params.REGISTRY)/frontend:$(params.VERSION)-$(params.REVISION)$(params.TAG_SUFFIX)
+              - name: CONTAINERFILE
+                value: recipes/test-workloads/online-boutique/hardened/Containerfile.go
+              - name: CONTEXT
+                value: upstream/src/frontend
+              - name: BUILDER_BASE
+                value: $(params.GO_BUILDER)
+              - name: RUNTIME_BASE
+                value: $(params.GO_RUNTIME)
+          # productcatalogservice
+          - name: productcatalogservice
+            params:
+              - name: IMAGE
+                value: $(params.REGISTRY)/productcatalogservice:$(params.VERSION)-$(params.REVISION)$(params.TAG_SUFFIX)
+              - name: CONTAINERFILE
+                value: recipes/test-workloads/online-boutique/hardened/Containerfile.go
+              - name: CONTEXT
+                value: upstream/src/productcatalogservice
+              - name: BUILDER_BASE
+                value: $(params.GO_BUILDER)
+              - name: RUNTIME_BASE
+                value: $(params.GO_RUNTIME)
+          # checkoutservice
+          - name: checkoutservice
+            params:
+              - name: IMAGE
+                value: $(params.REGISTRY)/checkoutservice:$(params.VERSION)-$(params.REVISION)$(params.TAG_SUFFIX)
+              - name: CONTAINERFILE
+                value: recipes/test-workloads/online-boutique/hardened/Containerfile.go
+              - name: CONTEXT
+                value: upstream/src/checkoutservice
+              - name: BUILDER_BASE
+                value: $(params.GO_BUILDER)
+              - name: RUNTIME_BASE
+                value: $(params.GO_RUNTIME)
+          # shippingservice
+          - name: shippingservice
+            params:
+              - name: IMAGE
+                value: $(params.REGISTRY)/shippingservice:$(params.VERSION)-$(params.REVISION)$(params.TAG_SUFFIX)
+              - name: CONTAINERFILE
+                value: recipes/test-workloads/online-boutique/hardened/Containerfile.go
+              - name: CONTEXT
+                value: upstream/src/shippingservice
+              - name: BUILDER_BASE
+                value: $(params.GO_BUILDER)
+              - name: RUNTIME_BASE
+                value: $(params.GO_RUNTIME)
+          # currencyservice
+          - name: currencyservice
+            params:
+              - name: IMAGE
+                value: $(params.REGISTRY)/currencyservice:$(params.VERSION)-$(params.REVISION)$(params.TAG_SUFFIX)
+              - name: CONTAINERFILE
+                value: recipes/test-workloads/online-boutique/hardened/Containerfile.node
+              - name: CONTEXT
+                value: upstream/src/currencyservice
+              - name: BUILDER_BASE
+                value: $(params.NODE_BUILDER)
+              - name: RUNTIME_BASE
+                value: $(params.NODE_RUNTIME)
+              - name: ENTRY
+                value: server.js
+          # paymentservice
+          - name: paymentservice
+            params:
+              - name: IMAGE
+                value: $(params.REGISTRY)/paymentservice:$(params.VERSION)-$(params.REVISION)$(params.TAG_SUFFIX)
+              - name: CONTAINERFILE
+                value: recipes/test-workloads/online-boutique/hardened/Containerfile.node
+              - name: CONTEXT
+                value: upstream/src/paymentservice
+              - name: BUILDER_BASE
+                value: $(params.NODE_BUILDER)
+              - name: RUNTIME_BASE
+                value: $(params.NODE_RUNTIME)
+              - name: ENTRY
+                value: index.js
+          # emailservice
+          - name: emailservice
+            params:
+              - name: IMAGE
+                value: $(params.REGISTRY)/emailservice:$(params.VERSION)-$(params.REVISION)$(params.TAG_SUFFIX)
+              - name: CONTAINERFILE
+                value: recipes/test-workloads/online-boutique/hardened/Containerfile.python
+              - name: CONTEXT
+                value: upstream/src/emailservice
+              - name: BUILDER_BASE
+                value: $(params.PY_BUILDER)
+              - name: RUNTIME_BASE
+                value: $(params.PY_RUNTIME)
+              - name: ENTRY
+                value: email_server.py
+          # recommendationservice
+          - name: recommendationservice
+            params:
+              - name: IMAGE
+                value: $(params.REGISTRY)/recommendationservice:$(params.VERSION)-$(params.REVISION)$(params.TAG_SUFFIX)
+              - name: CONTAINERFILE
+                value: recipes/test-workloads/online-boutique/hardened/Containerfile.python
+              - name: CONTEXT
+                value: upstream/src/recommendationservice
+              - name: BUILDER_BASE
+                value: $(params.PY_BUILDER)
+              - name: RUNTIME_BASE
+                value: $(params.PY_RUNTIME)
+              - name: ENTRY
+                value: recommendation_server.py
+          # loadgenerator
+          - name: loadgenerator
+            params:
+              - name: IMAGE
+                value: $(params.REGISTRY)/loadgenerator:$(params.VERSION)-$(params.REVISION)$(params.TAG_SUFFIX)
+              - name: CONTAINERFILE
+                value: recipes/test-workloads/online-boutique/hardened/Containerfile.loadgenerator
+              - name: CONTEXT
+                value: upstream/src/loadgenerator
+              - name: BUILDER_BASE
+                value: $(params.PY_BUILDER)
+              - name: RUNTIME_BASE
+                value: $(params.PY_RUNTIME)
+          # adservice
+          - name: adservice
+            params:
+              - name: IMAGE
+                value: $(params.REGISTRY)/adservice:$(params.VERSION)-$(params.REVISION)$(params.TAG_SUFFIX)
+              - name: CONTAINERFILE
+                value: recipes/test-workloads/online-boutique/hardened/Containerfile.java
+              - name: CONTEXT
+                value: upstream/src/adservice
+              - name: BUILDER_BASE
+                value: $(params.JAVA_BUILDER)
+              - name: RUNTIME_BASE
+                value: $(params.JAVA_RUNTIME)
+          # cartservice
+          - name: cartservice
+            params:
+              - name: IMAGE
+                value: $(params.REGISTRY)/cartservice:$(params.VERSION)-$(params.REVISION)$(params.TAG_SUFFIX)
+              - name: CONTAINERFILE
+                value: recipes/test-workloads/online-boutique/hardened/Containerfile.dotnet
+              - name: CONTEXT
+                value: upstream/src/cartservice/src
+              - name: BUILDER_BASE
+                value: $(params.DOTNET_SDK)
+              - name: RUNTIME_BASE
+                value: $(params.DOTNET_RUNTIME)
+      params:
+        - name: VERSION
+          value: $(params.VERSION)
+        - name: REVISION
+          value: $(params.REVISION)
+        - name: BASE_SET
+          value: $(params.BASE_SET)
+        - name: TLS_VERIFY
+          value: $(params.TLS_VERIFY)

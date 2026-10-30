@@ -49,10 +49,14 @@ spec:
     - name: CONTEXT
       type: string
       description: Path under upstream/, e.g. src/frontend
+    - name: ENTRY
+      type: string
+      default: ""
+      description: Per-service entrypoint build arg, e.g. server.js
     - name: BUILD_ARGS
       type: array
       default: []
-      description: Extra build args beyond BUILDER and RUNTIME, e.g. ENTRY=server.js
+      description: Any further build args as KEY=VALUE.
     - name: BUILDER_BASE
       type: string
     - name: RUNTIME_BASE
@@ -139,35 +143,12 @@ spec:
         - name: SUBDIRECTORY
           value: recipes
 
-    # Resolved before the build, so the label records the base the build used
-    # rather than whatever the tag points at when the build finishes.
-    - name: resolve-builder
-      taskRef:
-        name: resolve-base-digest
-      workspaces:
-        - name: registrycerts
-          workspace: registrycerts
-      params:
-        - name: IMAGE
-          value: $(params.BUILDER_BASE)
-
-    - name: resolve-runtime
-      taskRef:
-        name: resolve-base-digest
-      workspaces:
-        - name: registrycerts
-          workspace: registrycerts
-      params:
-        - name: IMAGE
-          value: $(params.RUNTIME_BASE)
-
     - name: build
-      # Consuming a task's result already creates the dependency, so naming the
-      # two resolve tasks here changes nothing -- it is kept because the graph
-      # should be readable without tracing every $(tasks.*.results.*). Only
-      # clone-recipes genuinely needs declaring: nothing of it is referenced,
-      # it only leaves files in the workspace.
-      runAfter: [clone-recipes, resolve-builder, resolve-runtime]
+      # clone-recipes has to be declared: nothing of it is referenced, it only
+      # leaves files in the workspace, and a workspace creates no dependency
+      # edge. Results do; files do not. Without this the build could start
+      # before the Containerfiles existed.
+      runAfter: [clone-recipes]
       taskRef:
         name: build-service
       workspaces:
@@ -188,19 +169,14 @@ spec:
           value: recipes/$(params.CONTAINERFILE)
         - name: CONTEXT
           value: upstream/$(params.CONTEXT)
+        - name: ENTRY
+          value: $(params.ENTRY)
         - name: BUILD_ARGS
-          value:
-            - BUILDER=$(params.BUILDER_BASE)
-            - RUNTIME=$(params.RUNTIME_BASE)
-            - $(params.BUILD_ARGS[*])
+          value: ["$(params.BUILD_ARGS[*])"]
         - name: BUILDER_BASE
           value: $(params.BUILDER_BASE)
-        - name: BUILDER_BASE_DIGEST
-          value: $(tasks.resolve-builder.results.DIGEST)
         - name: RUNTIME_BASE
           value: $(params.RUNTIME_BASE)
-        - name: RUNTIME_BASE_DIGEST
-          value: $(tasks.resolve-runtime.results.DIGEST)
         - name: VERSION
           value: $(params.VERSION)
         - name: REVISION

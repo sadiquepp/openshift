@@ -163,14 +163,12 @@ Two clones, because the inputs live in two places — upstream holds the
 application source, this repository holds the Containerfiles:
 
 ```
-clone-upstream ─┐
-clone-recipes ──┼─► build ─► push ─► IMAGE_DIGEST
-resolve-builder ┤
-resolve-runtime ┘
+clone-upstream ──► clone-recipes ──► build ──► push ──► IMAGE_DIGEST
+                                     └─ step 1 resolves both base digests
 ```
 
-The two `resolve-*` tasks run `skopeo inspect` on the base tags **before** the
-build, so the digest stamped into the image is the base the build actually
+The build task's first step runs `skopeo inspect` on the base tags **before**
+the build, so the digest stamped into the image is the base the build actually
 used, not whatever the tag points at when the build finishes.
 
 ### Seeing runs in the web console
@@ -228,6 +226,75 @@ Two known issues worth recognising rather than debugging from scratch:
 
 The statistics on the Pipelines overview page need Tekton Results installed;
 without it those panels stay empty, which is not a plugin fault.
+
+## Phase 2: all eleven services
+
+One `matrix` PipelineTask, eleven TaskRuns, one base set per run. Requires
+`enable-api-fields` at `beta` or `stable` — check and set it with the commands
+in [`01-operator.yaml`](01-operator.yaml).
+
+```bash
+oc apply -f tasks/ -f pipeline-build-stack.yaml
+
+export REGISTRY=registry.example.com:8443
+for set in hardened ubi; do
+  sed -e "s|registry.example.com:8443|$REGISTRY|" \
+      -e "s|b20261030|b$(date -u +%Y%m%d%H%M)|" \
+      runs/build-stack-$set.yaml | oc -n boutique-ci create -f -
+done
+```
+
+`matrix.include` in [`pipeline-build-stack.yaml`](pipeline-build-stack.yaml) is
+the pipeline's copy of `recipe()` in `build-push.sh` — same eleven services,
+same Containerfiles, same contexts, same two entrypoint overrides. **Keep the
+two in step**; nothing enforces it.
+
+### What the matrix forces
+
+**Matrix params are strings.** An array param cannot be set from a matrix, so
+the one per-service build arg became the scalar `ENTRY` rather than an element
+of `BUILD_ARGS`. `BUILD_ARGS` survives for the single-service pipeline and the
+`cache` build, which needs `VALKEY_VERSION`.
+
+**`IMAGE` is built inside each entry, not shared.** A matrix param is not
+visible to the sibling params of the same PipelineTask — only to the Task it
+fans out to — so `$(params.SERVICE)` cannot be used to compose a shared
+`IMAGE`. Each entry carries its own, with the clone subdirectory prefixes
+baked in.
+
+**Base images are pipeline params, referenced from the entries.** That is what
+lets one matrix serve both sets: the defaults are the hardened set and
+`runs/build-stack-ubi.yaml` overrides all ten. Writing literals into the
+entries would have meant twenty-two of them. All twenty values are copied from
+`bases.env`, which stays the source of truth — note that the .NET images break
+the naming pattern the others follow (`hi/dotnet-sdk:10.0`, not
+`hi/dotnet:10.0-builder`).
+
+**The build task had to become self-contained.** A matrixed task's results are
+readable only as a flat array, with no way to ask which element was
+`emailservice`. Eleven resolve TaskRuns feeding eleven builds would have had to
+be correlated by index — fragile, and silently wrong if one failed. So base
+resolution moved into the build task as step 1, and `resolve-base-digest.yaml`
+is gone.
+
+### Eleven builds at once
+
+They all mount the one `source` workspace. Concurrent reads of a PVC are fine,
+but they must land on one node for a ReadWriteOnce volume, which is what
+Tekton's affinity assistant arranges — so eleven buildah builds, including the
+Java and .NET ones, run on a single node. Watch that node rather than the
+pipeline the first time. If it is too much, run fewer services by trimming the
+`include` list in a copy, or raise `maxMatrixCombinationsCount` only if you
+ever go past 256 combinations.
+
+`cache` is absent from the matrix, exactly as in `build-push.sh`: it is
+mirrored rather than built unless `CACHE_BUILD=1`. Mirror it with the shipped
+`skopeo-copy` task, or build it with the single-service pipeline and
+`Containerfile.valkey`.
+
+For phase 3, the matrix's results arrive as arrays —
+`$(tasks.build.results.IMAGE_DIGEST[*])` — which is what a write-back task
+consumes to pin eleven digests in one commit.
 
 ## Decisions, and why
 
@@ -302,23 +369,10 @@ for the version you run rather than from here or a blog.
 
 ## The remaining phases
 
-**Phase 2 — matrix.** `matrix` fans one PipelineTask over the eleven services;
-`BASE_SET` stays a pipeline parameter, so two PipelineRuns cover both sets. The
-per-service recipe (Containerfile, context, extra build args) moves out of the
-PipelineRun and into the matrix, mirroring `recipe()` in `build-push.sh`.
-Matrix was alpha, then beta, so your version decides whether it needs a
-feature level. Set it on the `TektonConfig` the operator created, not on the
-`feature-flags` ConfigMap — `spec.pipeline` is projected into that ConfigMap, so
-a hand edit there is liable to be reconciled away. The command is in
-[`01-operator.yaml`](01-operator.yaml).
-
-`cache` is the exception, as it is in `build-push.sh`: mirrored with
-`skopeo-copy` unless `CACHE_BUILD=1`, in which case it is a normal build from
-`Containerfile.valkey`.
-
 **Phase 3 — Argo CD.** Two Applications, one per overlay, through the Red Hat
 OpenShift GitOps operator. `redis-cart` needs a sync wave before `cartservice`.
-The write-back task from the decision above closes the loop.
+A write-back task reads the matrix's `IMAGE_DIGEST` results and commits them
+into the overlays in one commit.
 
 **Phase 4 — rebuild only what went stale.** A cron trigger runs the
 `check-bases.sh` logic and starts a PipelineRun for the services it names. This

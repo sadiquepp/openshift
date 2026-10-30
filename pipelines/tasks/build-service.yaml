@@ -2,26 +2,25 @@
 # Build one Online Boutique service and push it, stamped with the same labels
 # build-push.sh writes.
 #
+# Self-contained on purpose: it resolves its own base-image digests in step 1
+# rather than taking them as params from upstream tasks. That was a separate
+# resolve-base-digest task until the matrix arrived, and the matrix is why it
+# moved. A matrixed task's results are only readable as a flat array with no
+# way to ask "which element was emailservice", so eleven resolve TaskRuns
+# feeding eleven build TaskRuns would have had to be correlated by index --
+# fragile, and silently wrong if one failed. One self-contained TaskRun per
+# service cannot mismatch.
+#
 # WHY NOT THE SHIPPED buildah TASK?
 #
-# You can reference it with the cluster resolver (kind: task, name: buildah,
-# namespace: openshift-pipelines) and for a simple build you should. It does
-# not fit here:
-#
-#   - Every Containerfile in this workload takes two to four --build-arg
-#     values, and each image carries six --label values. The shipped task
-#     takes them through BUILD_EXTRA_ARGS, a single string. An array value
-#     containing a space broke on the migration from the deprecated
-#     ClusterTask (SRVKP-7213) and multi-line continuation fails with
-#     "accepts at most 1 arg(s)" (SRVKP-8513). Ten flags in one string with
-#     no quoting of your own is a trap.
-#   - The labels are a fixed, meaningful set for this repository -- they are
-#     what check-bases.sh reads -- so they belong as named parameters, where
-#     a missing one is a validation error rather than a silently absent label.
-#
-# So BUILD_ARGS stays an array (expanded into the script's positional
-# parameters, which is the supported way to use an array param in a script)
-# and the labels are scalars.
+# Every Containerfile here takes two to four --build-arg values and each image
+# carries seven --label values. The shipped task passes all of them through
+# BUILD_EXTRA_ARGS, a single string: an array value containing a space broke on
+# the migration from the deprecated ClusterTask (SRVKP-7213) and multi-line
+# continuation fails with "accepts at most 1 arg(s)" (SRVKP-8513). Ten flags in
+# one string with no quoting of your own is a trap. The labels are also what
+# check-bases.sh reads, so they belong as named parameters where a missing one
+# is a validation error rather than a silently absent label.
 apiVersion: tekton.dev/v1
 kind: Task
 metadata:
@@ -29,8 +28,9 @@ metadata:
   namespace: boutique-ci
 spec:
   description: >-
-    Build a Containerfile from this repository against application source
-    cloned from upstream, stamp the base-image digests as labels, and push.
+    Resolve the base image digests, build a Containerfile from this repository
+    against application source cloned from upstream, stamp the digests as
+    labels, and push.
   params:
     - name: IMAGE
       type: string
@@ -41,20 +41,23 @@ spec:
     - name: CONTEXT
       type: string
       description: Build context directory, relative to the workspace.
+    - name: BUILDER_BASE
+      type: string
+    - name: RUNTIME_BASE
+      type: string
+    - name: ENTRY
+      type: string
+      default: ""
+      description: >-
+        The one per-service build arg the matrix needs (node and python
+        services), passed as --build-arg ENTRY=. Scalar rather than part of
+        BUILD_ARGS because matrix params cannot be arrays.
     - name: BUILD_ARGS
       type: array
       default: []
-      description: Build arguments as KEY=VALUE, one array element each.
-    # The label set check-bases.sh reads. Keep these in step with the
-    # --label flags in test-workloads/online-boutique/hardened/build-push.sh.
-    - name: RUNTIME_BASE
-      type: string
-    - name: RUNTIME_BASE_DIGEST
-      type: string
-    - name: BUILDER_BASE
-      type: string
-    - name: BUILDER_BASE_DIGEST
-      type: string
+      description: >-
+        Further build args as KEY=VALUE. Not settable from a matrix; used by
+        the single-service pipeline and by the cache build.
     - name: VERSION
       type: string
     - name: REVISION
@@ -72,6 +75,9 @@ spec:
     - name: BUILDAH_IMAGE
       type: string
       default: registry.redhat.io/rhel9/buildah:latest
+    - name: SKOPEO_IMAGE
+      type: string
+      default: registry.redhat.io/rhel9/skopeo:latest
   results:
     - name: IMAGE_DIGEST
       description: Digest of the image just pushed. This is what GitOps pins.
@@ -91,7 +97,45 @@ spec:
         unknown authority": the NODES trusting your registry does not make this
         pod trust it.
       optional: true
+  volumes:
+    - name: varlibcontainers
+      emptyDir: {}
+    # Steps share the pod but not /tmp, so the digests pass between them here.
+    - name: digests
+      emptyDir: {}
   steps:
+    # Resolved BEFORE the build, so the label records the base the build used
+    # rather than whatever the tag points at when the build finishes.
+    - name: resolve-bases
+      image: $(params.SKOPEO_IMAGE)
+      volumeMounts:
+        - name: digests
+          mountPath: /digests
+      script: |
+        #!/bin/bash
+        set -euo pipefail
+        CERTS=()
+        if [ "$(workspaces.registrycerts.bound)" = "true" ]; then
+          CERTS=(--cert-dir "$(workspaces.registrycerts.path)")
+        fi
+        resolve() {
+          local img="$1" out="$2" digest
+          digest="$(skopeo inspect "${CERTS[@]}" \
+            --tls-verify=$(params.TLS_VERIFY) \
+            --format '{{.Digest}}' "docker://$img")"
+          # Fail loudly rather than stamping an empty label. A build whose base
+          # digest is unknown is one check-bases.sh cannot reason about, and an
+          # unprovable base must not read as current.
+          case "$digest" in
+            sha256:*) ;;
+            *) echo "unexpected digest for $img: '$digest'" >&2; exit 1 ;;
+          esac
+          printf '%s' "$digest" > "$out"
+          echo "$img -> $digest"
+        }
+        resolve "$(params.BUILDER_BASE)" /digests/builder
+        resolve "$(params.RUNTIME_BASE)" /digests/runtime
+
     - name: build-and-push
       image: $(params.BUILDAH_IMAGE)
       workingDir: $(workspaces.source.path)
@@ -101,14 +145,30 @@ spec:
       securityContext:
         capabilities:
           add: ["SETFCAP"]
+      volumeMounts:
+        - name: varlibcontainers
+          mountPath: /var/lib/containers
+        - name: digests
+          mountPath: /digests
       script: |
         #!/bin/bash
         set -euo pipefail
 
-        BUILD_ARGS=()
+        BUILD_ARGS=(--build-arg "BUILDER=$(params.BUILDER_BASE)"
+                    --build-arg "RUNTIME=$(params.RUNTIME_BASE)")
+        [ -n "$(params.ENTRY)" ] && BUILD_ARGS+=(--build-arg "ENTRY=$(params.ENTRY)")
         for kv in "$@"; do
           BUILD_ARGS+=(--build-arg "$kv")
         done
+
+        # buildah looks in /etc/containers/certs.d/<host:port>/ by default,
+        # which this image does not have and the task should not have to write.
+        # --cert-dir points it at the mounted directory instead; it reads every
+        # .crt in there.
+        CERTS=()
+        if [ "$(workspaces.registrycerts.bound)" = "true" ]; then
+          CERTS=(--cert-dir "$(workspaces.registrycerts.path)")
+        fi
 
         # Point buildah at the mounted credentials if the workspace is bound.
         # Both key names are accepted because `oc create secret
@@ -126,24 +186,15 @@ spec:
           }
         fi
 
-        # buildah looks in /etc/containers/certs.d/<host:port>/ by default,
-        # which this image does not have and the task should not have to write.
-        # --cert-dir points it at the mounted directory instead; it reads every
-        # .crt in there.
-        CERTS=()
-        if [ "$(workspaces.registrycerts.bound)" = "true" ]; then
-          CERTS=(--cert-dir "$(workspaces.registrycerts.path)")
-        fi
-
         buildah --storage-driver=$(params.STORAGE_DRIVER) bud \
           "${CERTS[@]}" \
           "${BUILD_ARGS[@]}" \
           --label "org.opencontainers.image.base.name=$(params.RUNTIME_BASE)" \
-          --label "org.opencontainers.image.base.digest=$(params.RUNTIME_BASE_DIGEST)" \
+          --label "org.opencontainers.image.base.digest=$(cat /digests/runtime)" \
           --label "org.opencontainers.image.version=$(params.VERSION)" \
           --label "org.opencontainers.image.revision=$(params.REVISION)" \
           --label "online-boutique.build.builder-base.name=$(params.BUILDER_BASE)" \
-          --label "online-boutique.build.builder-base.digest=$(params.BUILDER_BASE_DIGEST)" \
+          --label "online-boutique.build.builder-base.digest=$(cat /digests/builder)" \
           --label "online-boutique.build.base-set=$(params.BASE_SET)" \
           --tls-verify=$(params.TLS_VERIFY) \
           --no-cache \
@@ -158,14 +209,11 @@ spec:
           "$(params.IMAGE)" \
           "docker://$(params.IMAGE)"
 
+        # A result must not carry a trailing newline -- IMAGE_DIGEST ends up in
+        # a kustomize digest: field, where a stray one makes an unusable
+        # reference.
         digest="$(cat /tmp/image-digest)"
-        printf '%s' "$digest"           > "$(results.IMAGE_DIGEST.path)"
-        printf '%s' "$(params.IMAGE)"   > "$(results.IMAGE_URL.path)"
+        printf '%s' "$digest"         > "$(results.IMAGE_DIGEST.path)"
+        printf '%s' "$(params.IMAGE)" > "$(results.IMAGE_URL.path)"
         echo
         echo "pushed $(params.IMAGE)@${digest}"
-      volumeMounts:
-        - name: varlibcontainers
-          mountPath: /var/lib/containers
-  volumes:
-    - name: varlibcontainers
-      emptyDir: {}

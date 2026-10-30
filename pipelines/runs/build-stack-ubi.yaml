@@ -1,0 +1,67 @@
+---
+# All eleven services on UBI, for the comparison.
+#
+#   export REGISTRY=registry.example.com:8443
+#   sed -e "s|registry.example.com:8443|$REGISTRY|" \
+#       -e "s|b20261030|b$(date -u +%Y%m%d%H%M)|" \
+#       runs/build-stack-ubi.yaml | oc -n boutique-ci create -f -
+#
+# The ten base params are all overridden below -- the pipeline defaults are
+# the hardened set. These values are the UBI set from bases.env.
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: build-stack-ubi-
+  namespace: boutique-ci
+spec:
+  pipelineRef:
+    name: build-stack
+  taskRunTemplate:
+    serviceAccountName: boutique-builder
+  params:
+    - name: BASE_SET
+      value: ubi
+    - name: TAG_SUFFIX
+      value: "-ubi"
+    - name: REGISTRY
+      value: registry.example.com:8443/online-boutique
+    - name: REVISION
+      value: b20261030
+    - name: GO_BUILDER
+      value: registry.access.redhat.com/ubi9/go-toolset:latest
+    - name: GO_RUNTIME
+      value: registry.access.redhat.com/ubi9/ubi-micro:latest
+    - name: NODE_BUILDER
+      value: registry.access.redhat.com/ubi9/nodejs-22:latest
+    - name: NODE_RUNTIME
+      value: registry.access.redhat.com/ubi9/nodejs-22-minimal:latest
+    - name: PY_BUILDER
+      value: registry.access.redhat.com/ubi9/python-312:latest
+    - name: PY_RUNTIME
+      value: registry.access.redhat.com/ubi9/python-312-minimal:latest
+    - name: JAVA_BUILDER
+      value: registry.access.redhat.com/ubi9/openjdk-21:latest
+    - name: JAVA_RUNTIME
+      value: registry.access.redhat.com/ubi9/openjdk-21-runtime:latest
+    - name: DOTNET_SDK
+      value: registry.access.redhat.com/ubi9/dotnet-100:latest
+    - name: DOTNET_RUNTIME
+      value: registry.access.redhat.com/ubi9/dotnet-100-runtime:latest
+    - name: RECIPES_REVISION
+      value: claude/vigilant-babbage-4qxa4j
+  workspaces:
+    - name: source
+      volumeClaimTemplate:
+        spec:
+          accessModes: [ReadWriteOnce]
+          resources:
+            requests:
+              # Eleven builds share this read-only after the clones; the Java
+              # and .NET builds are what make it bigger than phase 1 needed.
+              storage: 20Gi
+    - name: dockerconfig
+      secret:
+        secretName: registry-auth
+    - name: registrycerts
+      configMap:
+        name: registry-ca
