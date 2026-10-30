@@ -41,6 +41,10 @@ oc get tektonconfig config -w        # wait for Ready before continuing
 # 2. namespace, service account, SCC
 oc apply -f 02-rbac.yaml
 
+#    Prove the SCC grant before running anything -- must print yes
+oc auth can-i use scc/pipelines-scc \
+  --as=system:serviceaccount:boutique-ci:boutique-builder -n boutique-ci
+
 oc -n boutique-ci create secret docker-registry registry-auth \
   --docker-server=registry.example.com:8443 \
   --docker-username='<user>' --docker-password='<password>'
@@ -262,6 +266,17 @@ Chains for build provenance. The gate is a live demonstration of the finding:
 the hardened side passes where UBI may not.
 
 ## Things that will bite
+
+**An SCC grant that silently grants nothing.** Binding to the generated
+`system:openshift:scc:<name>` ClusterRole is the usual shorthand, but a
+RoleBinding naming a ClusterRole that does not exist is created successfully
+and confers nothing. The symptom arrives one task later, when the build pod is
+rejected with `provider "pipelines-scc": Forbidden: not usable by user or
+serviceaccount` in a list of twenty other SCCs — and the clone tasks will have
+passed, because they do not request `SETFCAP` and run happily under
+`restricted-v2`. `02-rbac.yaml` spells the rule out instead of relying on a
+generated name, and the `oc auth can-i use scc/...` check above settles it in
+one command.
 
 **Two trust stores, one certificate.** Making the *nodes* trust a private
 registry CA (step 5 of the hardened README) does not make the *build pod* trust

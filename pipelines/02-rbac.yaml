@@ -42,6 +42,30 @@ metadata:
 #      versions, so copy it from there rather than from a blog.
 #   3. OpenShift Pipelines 1.20+ ships a buildah-ns task for this case.
 #   4. privileged, only with a written reason.
+# Granting an SCC means granting `use` on that one SCC object. OpenShift
+# generates a system:openshift:scc:<name> ClusterRole for its SCCs and binding
+# to that is the usual shorthand -- but it is not safe to rely on here: whether
+# one exists for an operator-created SCC like pipelines-scc varies, and a
+# RoleBinding naming a ClusterRole that does not exist is CREATED SUCCESSFULLY
+# and grants nothing. The failure then arrives much later, as
+#
+#   pods "...-build-pod" is forbidden: unable to validate against any security
+#   context constraint: [... provider "pipelines-scc": Forbidden: not usable by
+#   user or serviceaccount ...]
+#
+# which does not hint that the binding is the problem. So the rule is spelled
+# out here and the Role is ours.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: boutique-builder-use-pipelines-scc
+  namespace: boutique-ci
+rules:
+  - apiGroups: ["security.openshift.io"]
+    resources: ["securitycontextconstraints"]
+    resourceNames: ["pipelines-scc"]
+    verbs: ["use"]
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
@@ -49,8 +73,8 @@ metadata:
   namespace: boutique-ci
 roleRef:
   apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: system:openshift:scc:pipelines-scc
+  kind: Role
+  name: boutique-builder-use-pipelines-scc
 subjects:
   - kind: ServiceAccount
     name: boutique-builder
@@ -74,6 +98,15 @@ subjects:
 #   oc -n boutique-ci create configmap registry-ca \
 #     --from-file=ca-bundle.crt=/path/to/ca.crt
 #
+# Verify the SCC grant BEFORE running a pipeline -- the answer must be yes:
+#
+#   oc auth can-i use scc/pipelines-scc \
+#     --as=system:serviceaccount:boutique-ci:boutique-builder -n boutique-ci
+#
+# If it says no, check the SCC actually exists under that name
+# (`oc get scc pipelines-scc`); on a cluster where the operator named it
+# something else, put that name in resourceNames above.
+---
 # This is the same CA problem solved for the cluster in step 5 of
 # test-workloads/online-boutique/hardened/README.md. Solving it there does not
 # solve it here: that made the NODES trust the registry, this makes the BUILD
