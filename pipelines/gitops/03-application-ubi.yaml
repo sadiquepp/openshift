@@ -2,21 +2,18 @@
 # Online Boutique on the ubi base set, deployed by Argo CD.
 #
 # Modelled on sadiquepp/ocp-onpremise gitops/apps/online-boutique.yaml -- same
-# conventions, same default instance. It lives here because the overlay and the
-# digests it pins are in this repository; copy it into that repo's gitops/apps/
-# if you would rather keep every Application together.
+# operator, same default instance, same convention that the platform admin owns
+# the namespace.
 #
-# THE SOURCE REVISION IS A BRANCH, NOT A COMMIT, AND THAT IS DELIBERATE.
+# Deliberately thin. Everything that varies per cluster -- the registry, the
+# image digests, the target namespace -- is in sadiquepp/boutique-deploy, so
+# this file says only WHERE the desired state is and WHERE it goes. Nothing
+# here needs editing between clusters or between builds; the pipeline updates
+# the other repository and Argo CD notices.
 #
-# main carries placeholder values -- registry.example.com:8443 -- as everything
-# in this repository does, so an Application tracking main deploys images that
-# do not exist. The deploy branch holds the rendered state for this cluster:
-# the real registry, and an image digest per service. Immutability comes from
-# the digest, not from pinning a commit, so the branch can move without the
-# deployed artifact becoming ambiguous.
-#
-# Bootstrap the branch by hand once; after that the pipeline's write-back
-# maintains it. See ../README.md, "Phase 3".
+# targetRevision is a branch, not a commit, and that is the point: the deployed
+# artefact is pinned by digest in boutique-deploy, so pinning the commit as
+# well would mean two things to bump per build and no extra determinism.
 #
 #   oc apply -f 03-application-ubi.yaml
 apiVersion: argoproj.io/v1alpha1
@@ -31,26 +28,9 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/sadiquepp/openshift
-    targetRevision: deploy/hub1
-    path: test-workloads/online-boutique/overlays/ubi
-    kustomize:
-      # Overrides the namespace the kustomization itself sets, so the overlay
-      # needs no per-cluster copy. Verified: the rendered output puts all 12
-      # Deployments in this namespace.
-      namespace: boutique-ubi
-      patches:
-        # The overlay creates its own Namespace, which is cluster-scoped and
-        # 01-namespaces.yaml owns. Same $patch: delete technique
-        # ocp-onpremise's Application uses to drop the load generator.
-        - target:
-            kind: Namespace
-          patch: |
-            $patch: delete
-            apiVersion: v1
-            kind: Namespace
-            metadata:
-              name: online-boutique-ubi
+    repoURL: https://github.com/sadiquepp/boutique-deploy
+    targetRevision: main
+    path: hub1/ubi
   destination:
     server: https://kubernetes.default.svc
     namespace: boutique-ubi

@@ -359,43 +359,40 @@ overlay creates — the same technique `ocp-onpremise`'s Application uses to
 remove the load generator. Verified by rendering: no `Namespace` object
 survives and all 12 Deployments land in the target namespace.
 
-### The deploy branch
+### A separate repository for the deployed state
 
-`main` carries placeholder values — `registry.example.com:8443` — as
-everything in this repository does. **An Application tracking `main` deploys
-images that do not exist.** So the Applications track a branch holding the
-rendered state for this cluster:
+`main` here carries placeholder values — `registry.example.com:8443` — as
+everything in this repository does. **An Application tracking it deploys images
+that do not exist.** The real registry and the digest per service live in
+[sadiquepp/boutique-deploy](https://github.com/sadiquepp/boutique-deploy),
+which the pipeline writes and Argo CD reads:
 
-| branch | holds |
-|---|---|
-| `main` | the examples, with placeholders |
-| `deploy/hub1` | your registry, and later a digest per service |
+| repository | holds | written by |
+|---|---|---|
+| this one | overlays, Containerfiles, build scripts, placeholders | people |
+| `boutique-deploy` | registry and a digest per service, per cluster | the pipeline |
 
-`targetRevision` is a branch rather than a pinned commit on purpose. Once the
-digests are in the overlay, immutability is the digest's job — pinning the
-commit as well means every pipeline run needs a second commit elsewhere to
-bump it.
+Why split rather than use a branch here:
 
-Bootstrap it once:
+- **Least privilege.** This repository holds Terraform, Ansible and cluster
+  provisioning. A pipeline token that can change the deployed image set should
+  not also be able to change how clusters are built.
+- **No build noise** in the infrastructure repository's history.
+- **No loop** — the pipeline reads its definitions from here and writes there.
 
-```bash
-git fetch origin main
-git checkout -b deploy/hub1 origin/main
+`boutique-deploy/hub1/<variant>/kustomization.yaml` references the overlay here
+as a remote kustomize base and overrides three things: the namespace, the
+`Namespace` object (deleted), and the images. One mechanic there is worth
+knowing because it fails silently: a parent kustomization's `images:` matches
+the name **after** this overlay rewrote it —
+`registry.example.com:8443/online-boutique/<service>` — not upstream's
+`pkg.dev` name. Key it on the upstream name and nothing matches, the
+placeholder registry reaches the cluster, and it presents as
+`ImagePullBackOff`.
 
-export REGISTRY=registry.example.com:8443          # yours
-cd test-workloads/online-boutique/hardened
-./set-registry.sh                                  # rewrites both overlays
-cd -
-
-git commit -am "deploy/hub1: point the overlays at this cluster's registry"
-git push -u origin deploy/hub1
-```
-
-That branch still uses the floating `:v0.10.6` tag with
-`imagePullPolicy: Always`, which is exactly what is running now — so the first
-sync deploys something known-good and you can watch the loop work before
-adding automation. The write-back replaces those tags with digests, and then
-`Always` becomes unnecessary.
+Because each entry sets `newName` and `digest` together, the registry rewrite
+and the digest pin happen in one transform — so `set-registry.sh` is not part
+of the GitOps path at all.
 
 ### Deploying
 
@@ -406,6 +403,17 @@ oc apply -f gitops/03-application-ubi.yaml     # or just one of them
 
 oc get application -n openshift-gitops
 ```
+
+Check what will be applied before syncing — this is the same render Argo CD's
+repo-server does:
+
+```bash
+git clone https://github.com/sadiquepp/boutique-deploy && cd boutique-deploy
+kustomize build hub1/hardened | grep -E 'image:|namespace:' | sort -u
+```
+
+Every image should carry `@sha256:` except `cache`, which is mirrored rather
+than built and so has no digest from any pipeline run.
 
 Both start `OutOfSync` with no `automated` policy — press Sync in the console,
 or `argocd app sync boutique-hi`. Turn on automated sync and self-heal once a
