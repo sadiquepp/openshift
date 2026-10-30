@@ -110,7 +110,12 @@ spec:
           value: upstream
 
     - name: clone-recipes
-      runAfter: [clone-upstream]   # same workspace; git-clone wants a clean subdir
+      # Serialised, not because the clones would clobber each other -- each
+      # cleans only its own SUBDIRECTORY -- but because both mount the same
+      # RWO workspace. Tekton's affinity assistant normally pins pods sharing
+      # a PVC to one node so this works in parallel, but its default varies by
+      # version, and one clone of a shallow repo is not worth the question.
+      runAfter: [clone-upstream]
       taskRef:
         resolver: cluster
         params:
@@ -148,6 +153,11 @@ spec:
           value: $(params.RUNTIME_BASE)
 
     - name: build
+      # Consuming a task's result already creates the dependency, so naming the
+      # two resolve tasks here changes nothing -- it is kept because the graph
+      # should be readable without tracing every $(tasks.*.results.*). Only
+      # clone-recipes genuinely needs declaring: nothing of it is referenced,
+      # it only leaves files in the workspace.
       runAfter: [clone-recipes, resolve-builder, resolve-runtime]
       taskRef:
         name: build-service
