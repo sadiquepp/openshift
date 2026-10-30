@@ -322,6 +322,101 @@ For phase 3, the matrix's results arrive as arrays —
 `$(tasks.build.results.IMAGE_DIGEST[*])` — which is what a write-back task
 consumes to pin eleven digests in one commit.
 
+## Phase 3: deploying it with Argo CD
+
+Reuses the GitOps setup in
+[sadiquepp/ocp-onpremise `gitops/`](https://github.com/sadiquepp/ocp-onpremise/tree/main/gitops) —
+same operator, same default instance, same convention that the platform admin
+owns the namespace. [`gitops/`](gitops/) here adds only what is specific to
+this comparison.
+
+### Separate namespaces, on purpose
+
+`boutique-hi` and `boutique-ubi`, **not** `online-boutique` and
+`online-boutique-ubi`. Two reasons:
+
+- Those two hold the hand-applied deployments the ACS measurement in
+  [`FINDINGS.md`](../test-workloads/online-boutique/hardened/FINDINGS.md) was
+  taken against.
+- `ocp-onpremise`'s own `online-boutique` Application already claims the
+  first of them, pointing at `base` — upstream's images. It has no `automated`
+  policy, so today it only reports drift. **Enable automated sync with
+  self-heal on it and it replaces the hardened deployment with upstream
+  images**, because to that Application your hardened deployment *is* drift.
+  Check before you touch it:
+
+  ```bash
+  oc get application online-boutique -n openshift-gitops \
+    -o jsonpath='{.spec.source.path}{"\t"}{.status.sync.status}{"\t"}{.spec.syncPolicy}{"\n"}'
+  ```
+
+Each variant deploys independently, so either can be synced alone.
+
+The namespace is overridden per Application rather than copied per cluster:
+`kustomize.namespace` overrides the `namespace:` the overlay's own
+kustomization sets, and a `$patch: delete` drops the `Namespace` object the
+overlay creates — the same technique `ocp-onpremise`'s Application uses to
+remove the load generator. Verified by rendering: no `Namespace` object
+survives and all 12 Deployments land in the target namespace.
+
+### The deploy branch
+
+`main` carries placeholder values — `registry.example.com:8443` — as
+everything in this repository does. **An Application tracking `main` deploys
+images that do not exist.** So the Applications track a branch holding the
+rendered state for this cluster:
+
+| branch | holds |
+|---|---|
+| `main` | the examples, with placeholders |
+| `deploy/hub1` | your registry, and later a digest per service |
+
+`targetRevision` is a branch rather than a pinned commit on purpose. Once the
+digests are in the overlay, immutability is the digest's job — pinning the
+commit as well means every pipeline run needs a second commit elsewhere to
+bump it.
+
+Bootstrap it once:
+
+```bash
+git fetch origin main
+git checkout -b deploy/hub1 origin/main
+
+export REGISTRY=registry.example.com:8443          # yours
+cd test-workloads/online-boutique/hardened
+./set-registry.sh                                  # rewrites both overlays
+cd -
+
+git commit -am "deploy/hub1: point the overlays at this cluster's registry"
+git push -u origin deploy/hub1
+```
+
+That branch still uses the floating `:v0.10.6` tag with
+`imagePullPolicy: Always`, which is exactly what is running now — so the first
+sync deploys something known-good and you can watch the loop work before
+adding automation. The write-back replaces those tags with digests, and then
+`Always` becomes unnecessary.
+
+### Deploying
+
+```bash
+oc apply -f gitops/01-namespaces.yaml          # platform admin
+oc apply -f gitops/02-application-hardened.yaml
+oc apply -f gitops/03-application-ubi.yaml     # or just one of them
+
+oc get application -n openshift-gitops
+```
+
+Both start `OutOfSync` with no `automated` policy — press Sync in the console,
+or `argocd app sync boutique-hi`. Turn on automated sync and self-heal once a
+sync has worked; with self-heal a hand edit in that namespace is undone, which
+is the point and also a surprise the first time.
+
+`redis-cart` should come up before `cartservice` tries to reach it. Argo CD has
+no ordering here yet, so expect `cartservice` to restart a few times on the
+first sync — a sync wave annotation on `redis-cart` is the fix, and a good
+exercise.
+
 ## Decisions, and why
 
 ### Our own build task rather than the shipped `buildah`
@@ -395,10 +490,10 @@ for the version you run rather than from here or a blog.
 
 ## The remaining phases
 
-**Phase 3 — Argo CD.** Two Applications, one per overlay, through the Red Hat
-OpenShift GitOps operator. `redis-cart` needs a sync wave before `cartservice`.
-A write-back task reads the matrix's `IMAGE_DIGEST` results and commits them
-into the overlays in one commit.
+**Phase 3 — the write-back.** [`gitops/`](gitops/) already holds the
+namespaces and the two Applications (below). What is left is the task that
+reads `$(tasks.build.results.IMAGE_DIGEST[*])` and commits a digest per
+service onto the deploy branch, so a pipeline run updates what is deployed.
 
 **Phase 4 — rebuild only what went stale.** A cron trigger runs the
 `check-bases.sh` logic and starts a PipelineRun for the services it names. This

@@ -1,0 +1,29 @@
+---
+# The namespaces the Argo CD Applications deploy into, created by the platform
+# admin rather than by the apps -- the pattern from
+# sadiquepp/ocp-onpremise gitops/apps/online-boutique-namespace.yaml.
+#
+# The label is what lets the default Argo CD instance deploy here: the operator
+# sees it and gives that instance's controller the admin role in this namespace
+# and only here. Without it every sync fails with "forbidden".
+#
+# These are NOT online-boutique and online-boutique-ubi. Those two hold the
+# hand-applied deployments the ACS measurement was taken against, and
+# ocp-onpremise's own online-boutique Application already claims the first of
+# them. Deploying here conflicts with neither, and either variant can be
+# synced on its own.
+#
+#   oc apply -f 01-namespaces.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: boutique-hi
+  labels:
+    argocd.argoproj.io/managed-by: openshift-gitops
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: boutique-ubi
+  labels:
+    argocd.argoproj.io/managed-by: openshift-gitops
