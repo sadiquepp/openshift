@@ -77,8 +77,21 @@ spec:
         #!/usr/bin/env bash
         set -euo pipefail
 
+        # The default image may not ship git. On a connected cluster it can
+        # install it -- the ubi repositories need no subscription -- which
+        # costs ~20s per run. Setting GIT_IMAGE to an image that already has
+        # git skips this, and on a disconnected cluster it is the only option.
+        if ! command -v git >/dev/null; then
+          echo "git not found in $(params.GIT_IMAGE); trying to install it" >&2
+          if command -v microdnf >/dev/null; then
+            microdnf -y --nodocs install git >/dev/null 2>&1 || true
+          elif command -v dnf >/dev/null; then
+            dnf -y --nodocs --setopt=install_weak_deps=0 install git >/dev/null 2>&1 || true
+          fi
+        fi
+
         command -v git >/dev/null || {
-          echo "git is not in $(params.GIT_IMAGE)." >&2
+          echo "git is not in $(params.GIT_IMAGE), and could not be installed." >&2
           echo "Set GIT_IMAGE to an image that has git, bash and awk. The one" >&2
           echo "the cluster's own git-clone task uses is a safe choice:" >&2
           echo "  oc get task git-clone -n openshift-pipelines -o jsonpath='{.spec.steps[0].image}'" >&2
