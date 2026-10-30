@@ -1,0 +1,116 @@
+---
+# Check every image this run built against the RHACS build-stage policies.
+#
+# WHERE THE THRESHOLD LIVES: in ACS, not here. `roxctl image check` asks Central
+# to evaluate the image against the policies whose lifecycle stage includes
+# BUILD and whose enforcement is on, and exits non-zero when one is violated.
+# So "what should fail a build" is a policy decision made in the ACS portal by
+# whoever owns it -- not a number in a pipeline file that only this team sees.
+# "Fixable CVSS >= 7" is the usual starting point.
+#
+# One task, not one per image: eleven roxctl calls in a loop in a single pod is
+# simpler than a matrix over another task's array results, and the calls are
+# quick because Central has already scanned these images -- the build pushed
+# them minutes earlier.
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: acs-check
+  namespace: boutique-ci
+spec:
+  description: >-
+    Run roxctl image check against each image built by this run, and fail the
+    pipeline when ACS says a build-stage policy is violated.
+  params:
+    - name: IMAGE_REFS
+      type: array
+      description: One image:tag@sha256:... per element, from the build results.
+    - name: ROX_CENTRAL_ADDRESS
+      type: string
+      description: host:port of Central, e.g. central-stackrox.apps.example.com:443
+    - name: BLOCKING
+      type: string
+      default: "false"
+      description: >-
+        "false" reports violations and lets the pipeline continue; "true" fails
+        it. Start at false: a gate that blocks before anyone has read its output
+        teaches people to bypass gates. Turn it on once the findings are known
+        and acted on.
+    - name: ROXCTL_IMAGE
+      type: string
+      default: registry.redhat.io/advanced-cluster-security/rhacs-roxctl-rhel8:4.8.0
+      description: >-
+        Pin the tag to your Central's version. roxctl warns when the client and
+        server differ by more than a patch, and the check can behave
+        differently across a major gap.
+  results:
+    - name: VIOLATIONS
+      description: How many images violated a build-stage policy.
+  workspaces:
+    - name: roxcerts
+      description: >-
+        CA for Central, as one or more .crt files. Without it the connection
+        fails with x509 -- the same certificate problem as the registry, in a
+        fourth place.
+      optional: true
+  steps:
+    - name: check
+      image: $(params.ROXCTL_IMAGE)
+      args: ["$(params.IMAGE_REFS[*])"]
+      env:
+        # From a secret, never a param: a param is recorded on the PipelineRun
+        # and visible to anyone who can read it.
+        - name: ROX_API_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: rox-api-token
+              key: token
+      script: |
+        #!/usr/bin/env bash
+        set -uo pipefail      # not -e: a violation is a result, not a crash
+
+        [ -n "${ROX_API_TOKEN:-}" ] || {
+          echo "ROX_API_TOKEN is empty. Create the secret:" >&2
+          echo "  read -rs TOKEN" >&2
+          echo "  oc -n boutique-ci create secret generic rox-api-token \\" >&2
+          echo "    --from-literal=token=\"\$TOKEN\"" >&2
+          exit 2
+        }
+
+        CA=()
+        if [ "$(workspaces.roxcerts.bound)" = "true" ]; then
+          for f in "$(workspaces.roxcerts.path)"/*.crt; do
+            [ -f "$f" ] && { CA=(--ca "$f"); break; }
+          done
+        fi
+        [ "${#CA[@]}" -gt 0 ] || echo "NOTE: no CA bound; Central must present a publicly trusted certificate" >&2
+
+        fail=0
+        for img in "$@"; do
+          echo
+          echo "== $img"
+          # --force makes Central re-pull rather than serve a cached scan. The
+          # tag is new on every run so a cache miss is expected, but an image
+          # rebuilt under the SAME tag is exactly the case where a cached
+          # result silently describes the previous image.
+          if roxctl -e "$(params.ROX_CENTRAL_ADDRESS)" "${CA[@]}" \
+               image check --force --image "$img"; then
+            echo "   no build-stage policy violated"
+          else
+            echo "   VIOLATION" >&2
+            fail=$((fail+1))
+          fi
+        done
+
+        printf '%s' "$fail" > "$(results.VIOLATIONS.path)"
+        echo
+        if [ "$fail" -eq 0 ]; then
+          echo "all $# images passed"
+          exit 0
+        fi
+        echo "$fail of $# images violated a build-stage policy"
+        if [ "$(params.BLOCKING)" = "true" ]; then
+          exit 1
+        fi
+        echo "BLOCKING=false, so this is reported and not enforced." >&2
+        echo "Set BLOCKING=true once these findings are understood." >&2

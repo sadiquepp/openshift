@@ -116,6 +116,19 @@ spec:
       type: string
       default: "false"
       description: '"true" prints the diff and pushes nothing.'
+    - name: ACS_CHECK
+      type: string
+      default: "false"
+      description: '"true" checks each built image against RHACS build-stage policies.'
+    - name: ACS_BLOCKING
+      type: string
+      default: "false"
+      description: >-
+        "true" fails the run on a violation, which also stops the write-back,
+        so a policy-violating image is never pinned as the deployed state.
+    - name: ROX_CENTRAL_ADDRESS
+      type: string
+      default: ""
   workspaces:
     - name: source
       description: >-
@@ -134,6 +147,9 @@ spec:
         Dependency caches, kept between runs. Optional -- without it every
         build downloads everything again, which is slower and is where a
         transient module-proxy failure comes from.
+      optional: true
+    - name: roxcerts
+      description: CA for Central. Only needed with ACS_CHECK=true.
       optional: true
   tasks:
     - name: clone-upstream
@@ -368,12 +384,38 @@ spec:
         - name: TLS_VERIFY
           value: $(params.TLS_VERIFY)
 
+    # The gate. Placed BEFORE write-back and depended on by it, so a failing
+    # check stops the digests being pinned -- a policy-violating image is then
+    # never the deployed state, which is the whole point of gating at build
+    # time rather than reporting after deployment.
+    - name: acs-check
+      runAfter: [build]
+      when:
+        - input: $(params.ACS_CHECK)
+          operator: in
+          values: ["true"]
+      taskRef:
+        name: acs-check
+      workspaces:
+        - name: roxcerts
+          workspace: roxcerts
+      params:
+        - name: IMAGE_REFS
+          value: ["$(tasks.build.results.IMAGE_REF[*])"]
+        - name: ROX_CENTRAL_ADDRESS
+          value: $(params.ROX_CENTRAL_ADDRESS)
+        - name: BLOCKING
+          value: $(params.ACS_BLOCKING)
+
     # Closes the loop: the digests this run produced become the deployed state.
     # One commit for all eleven services, not one per service -- concurrent
     # per-service commits to the same file is how write-back collides with
     # itself.
     - name: write-back
-      runAfter: [build]
+      # acs-check is skipped when ACS_CHECK is false, and a skipped task does
+      # not block what runs after it -- so naming it here costs nothing when
+      # the gate is off and sequences correctly when it is on.
+      runAfter: [build, acs-check]
       when:
         - input: $(params.WRITE_BACK)
           operator: in

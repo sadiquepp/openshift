@@ -599,6 +599,47 @@ deploy one service's digest under another's name.
 
 Eleven separate commits to one file would also collide with themselves.
 
+## The ACS build gate
+
+Off by default. Switched on, [`tasks/acs-check.yaml`](tasks/acs-check.yaml) runs
+`roxctl image check` against each image this run built, **before** the
+write-back and depended on by it — so a failing check stops the digests being
+pinned and a policy-violating image never becomes the deployed state. That
+ordering is the entire reason to gate at build time rather than report after
+deployment.
+
+```bash
+read -rs TOKEN       # an ACS API token; Continuous Integration role
+oc -n boutique-ci create secret generic rox-api-token --from-literal=token="$TOKEN"
+
+# Central presents the ingress certificate once its defaultTLSSecret is
+# patched; this is the same router CA ../acs/ uses
+oc -n boutique-ci create configmap rox-ca --from-file=ca.crt=router-ca.crt
+```
+
+Then set `ACS_CHECK=true` and `ROX_CENTRAL_ADDRESS` on a run.
+
+**The threshold is not in this repository.** `roxctl image check` asks Central
+to evaluate the image against the policies whose lifecycle stage includes BUILD
+and whose enforcement is on. So "what fails a build" is a policy decision made
+in the ACS portal by whoever owns it, not a number in a pipeline file only this
+team reads. "Fixable CVSS >= 7" is the usual starting point.
+
+`ACS_BLOCKING` defaults to `false` on purpose: violations are reported and the
+run continues. A gate that blocks before anyone has read its output teaches
+people to route around gates. Turn it on once the findings are understood.
+
+Two things it needs from ACS, both of which already hold if
+[`../acs/acs-scan.sh`](../acs/acs-scan.sh) works: a registry integration so
+Central can pull from your registry, and a token that may read vulnerability
+data. It passes `--force` for the same reason the scan script does — Central
+caches per image name, and a tag rebuilt in place otherwise returns the
+previous image's result.
+
+It is one task looping over the eleven images rather than a matrix over the
+build's array results: simpler to read, one pod, and the calls are quick
+because Central scanned these images minutes earlier when the build pushed them.
+
 ## Decisions, and why
 
 ### Our own build task rather than the shipped `buildah`
@@ -681,11 +722,8 @@ service onto the deploy branch, so a pipeline run updates what is deployed.
 `check-bases.sh` logic and starts a PipelineRun for the services it names. This
 is the phase that pays for the whole exercise.
 
-**Phase 5 — gate and provenance.** `roxctl image check` against an RHACS policy
-such as "fixable CVSS >= 7", failing the build. Red Hat's pattern downloads
-`roxctl` from Central each run so client and server versions match. Then Tekton
-Chains for build provenance. The gate is a live demonstration of the finding:
-the hardened side passes where UBI may not.
+**Phase 5 — provenance.** Tekton Chains, signing the images and recording
+what produced them. The ACS gate below is the other half and is already here.
 
 ## Things that will bite
 

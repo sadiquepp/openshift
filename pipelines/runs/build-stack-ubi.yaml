@@ -54,6 +54,13 @@ spec:
     # the credential or the path is wrong.
     #
     #   sed -e 's|WRITE_BACK$|WRITE_BACK|' ...   # see ../README.md
+    # ACS build gate: off, and non-blocking when first switched on.
+    - name: ACS_CHECK
+      value: "false"
+    - name: ACS_BLOCKING
+      value: "false"
+    - name: ROX_CENTRAL_ADDRESS
+      value: central-stackrox.apps.example.com:443
     - name: WRITE_BACK
       value: "false"
     - name: WRITE_BACK_DRY_RUN
@@ -89,3 +96,10 @@ spec:
     - name: cache
       persistentVolumeClaim:
         claimName: boutique-build-cache
+    # Harmless when ACS_CHECK is "false". Central presents the cluster
+    # ingress certificate once its defaultTLSSecret is patched, so this is the
+    # router CA -- the same file ../../acs/ uses.
+    - name: roxcerts
+      configMap:
+        name: rox-ca
+        optional: true
