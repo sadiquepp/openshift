@@ -78,6 +78,9 @@ spec:
     - name: dockerconfig
       description: Registry push credentials.
       optional: true
+    - name: registrycerts
+      description: CA for a registry with a private CA; see tasks/build-service.yaml.
+      optional: true
   results:
     - name: IMAGE_DIGEST
       description: What a GitOps overlay should pin.
@@ -141,6 +144,9 @@ spec:
     - name: resolve-builder
       taskRef:
         name: resolve-base-digest
+      workspaces:
+        - name: registrycerts
+          workspace: registrycerts
       params:
         - name: IMAGE
           value: $(params.BUILDER_BASE)
@@ -148,6 +154,9 @@ spec:
     - name: resolve-runtime
       taskRef:
         name: resolve-base-digest
+      workspaces:
+        - name: registrycerts
+          workspace: registrycerts
       params:
         - name: IMAGE
           value: $(params.RUNTIME_BASE)
@@ -166,6 +175,8 @@ spec:
           workspace: source
         - name: dockerconfig
           workspace: dockerconfig
+        - name: registrycerts
+          workspace: registrycerts
       params:
         # The immutable tag. build-push.sh pushes <version>-<build-id> as well
         # as a floating tag; the pipeline pushes only this one, because the

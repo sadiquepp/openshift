@@ -84,6 +84,13 @@ spec:
       description: >-
         Registry credentials as config.json or .dockerconfigjson at the root.
       optional: true
+    - name: registrycerts
+      description: >-
+        CA certificates for a registry with a private CA, as one or more .crt
+        files. Needed when the push fails with "x509: certificate signed by
+        unknown authority": the NODES trusting your registry does not make this
+        pod trust it.
+      optional: true
   steps:
     - name: build-and-push
       image: $(params.BUILDAH_IMAGE)
@@ -119,7 +126,17 @@ spec:
           }
         fi
 
+        # buildah looks in /etc/containers/certs.d/<host:port>/ by default,
+        # which this image does not have and the task should not have to write.
+        # --cert-dir points it at the mounted directory instead; it reads every
+        # .crt in there.
+        CERTS=()
+        if [ "$(workspaces.registrycerts.bound)" = "true" ]; then
+          CERTS=(--cert-dir "$(workspaces.registrycerts.path)")
+        fi
+
         buildah --storage-driver=$(params.STORAGE_DRIVER) bud \
+          "${CERTS[@]}" \
           "${BUILD_ARGS[@]}" \
           --label "org.opencontainers.image.base.name=$(params.RUNTIME_BASE)" \
           --label "org.opencontainers.image.base.digest=$(params.RUNTIME_BASE_DIGEST)" \
@@ -135,7 +152,7 @@ spec:
           "$(params.CONTEXT)"
 
         buildah --storage-driver=$(params.STORAGE_DRIVER) push \
-          "${AUTH[@]}" \
+          "${AUTH[@]}" "${CERTS[@]}" \
           --tls-verify=$(params.TLS_VERIFY) \
           --digestfile /tmp/image-digest \
           "$(params.IMAGE)" \

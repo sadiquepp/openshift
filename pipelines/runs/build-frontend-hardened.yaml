@@ -52,3 +52,10 @@ spec:
     - name: dockerconfig
       secret:
         secretName: registry-auth
+    # The CA that signed your registry certificate. Create it with:
+    #   oc -n boutique-ci create configmap registry-ca \
+    #     --from-file=ca.crt=/path/to/registry-ca.crt
+    # The key must end in .crt -- buildah reads every .crt in the directory.
+    - name: registrycerts
+      configMap:
+        name: registry-ca

@@ -49,6 +49,11 @@ oc -n boutique-ci create secret docker-registry registry-auth \
   --docker-server=registry.example.com:8443 \
   --docker-username='<user>' --docker-password='<password>'
 
+#    and the CA that signed the registry certificate, if it is a private one.
+#    Already trusting it on the NODES does not make this pod trust it.
+oc -n boutique-ci create configmap registry-ca \
+  --from-file=ca.crt=/path/to/registry-ca.crt
+
 oc apply -f tasks/ -f pipeline-build-service.yaml
 
 # 3. start a run. The committed example carries the placeholder registry, as
@@ -280,8 +285,27 @@ one command.
 
 **Two trust stores, one certificate.** Making the *nodes* trust a private
 registry CA (step 5 of the hardened README) does not make the *build pod* trust
-it. The push fails with an x509 error that looks identical to the cluster-level
-one already solved.
+it. The build succeeds and the push fails:
+
+```
+Error: pushing image ... pinging container registry registry.example.com:8443:
+tls: failed to verify certificate: x509: certificate signed by unknown authority
+```
+
+The `registrycerts` workspace carries the CA, and the tasks pass it as
+`--cert-dir`; buildah would otherwise look only in
+`/etc/containers/certs.d/<host:port>/`, which the image does not have. If you
+do not have the CA file to hand, the cluster has it — it is in the ConfigMap
+the image config points at:
+
+```bash
+oc get image.config.openshift.io/cluster -o jsonpath='{.spec.additionalTrustedCA.name}{"\n"}'
+oc -n openshift-config get cm <that-name> -o json | jq -r '.data | to_entries[0].value' \
+  > registry-ca.crt
+```
+
+The key in that ConfigMap is the registry hostname with the port written
+`..8443`, which is OpenShift's own encoding, not a typo.
 
 **`--docker-server` must match exactly**, port included, or buildah will not
 find the credential entry and the push fails as a 401 that reads like bad

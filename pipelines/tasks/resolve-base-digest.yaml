@@ -30,6 +30,12 @@ spec:
       # registry.redhat.io needs the cluster pull secret. quay.io/skopeo/stable
       # is the alternative if this namespace cannot pull from registry.redhat.io.
       default: registry.redhat.io/rhel9/skopeo:latest
+  workspaces:
+    # Only needed when the BASE images come from a registry with a private CA,
+    # e.g. a disconnected mirror. Public registry.access.redhat.com does not
+    # need it.
+    - name: registrycerts
+      optional: true
   results:
     - name: DIGEST
       description: The sha256 digest the tag resolves to.
@@ -39,7 +45,11 @@ spec:
       script: |
         #!/bin/bash
         set -euo pipefail
-        digest="$(skopeo inspect \
+        CERTS=()
+        if [ "$(workspaces.registrycerts.bound)" = "true" ]; then
+          CERTS=(--cert-dir "$(workspaces.registrycerts.path)")
+        fi
+        digest="$(skopeo inspect "${CERTS[@]}" \
           --tls-verify=$(params.TLS_VERIFY) \
           --format '{{.Digest}}' \
           "docker://$(params.IMAGE)")"
