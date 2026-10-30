@@ -67,6 +67,42 @@ sed -e "s|registry.example.com:8443|$REGISTRY|" \
 tkn -n boutique-ci pipelinerun logs -L -f
 ```
 
+### Getting `tkn`, or doing without it
+
+`tkn` is convenience, not a requirement. The operator serves a version-matched
+binary from the cluster, which also works on a disconnected one, so prefer that
+over a download from the internet:
+
+```bash
+oc get consoleclidownload                       # what this cluster offers
+oc get consoleclidownload tkn \
+  -o jsonpath='{range .spec.links[*]}{.href}{"\t"}{.text}{"\n"}{end}'
+
+# then the linux-amd64 link from that list; the route uses the ingress
+# certificate, so --cacert takes the router CA (same file ../acs/ uses)
+curl -sSL --cacert router-ca.crt -o /tmp/tkn.tar.gz '<href>'
+sudo tar xzf /tmp/tkn.tar.gz -C /usr/local/bin tkn
+tkn version
+```
+
+Everything here can be done with `oc` alone:
+
+| `tkn` | `oc` |
+|---|---|
+| `tkn pipelinerun logs -L -f` | `oc logs -f -l tekton.dev/pipelineRun=<run> --all-containers --max-log-requests=10` |
+| `tkn pipelinerun list` | `oc get pipelinerun` |
+| `tkn pipelinerun describe <run>` | `oc describe pipelinerun <run>` |
+| `tkn taskrun list` | `oc get taskrun` |
+
+`--max-log-requests` is needed because a PipelineRun has several pods and `oc`
+refuses to stream more than five at once by default. For a single failing task
+it is simpler to go straight at its pod:
+
+```bash
+oc get taskrun -o custom-columns=NAME:.metadata.name,OK:.status.conditions[0].reason
+oc logs <taskrun>-pod --all-containers
+```
+
 If you would rather keep a filled-in copy, name it `runs/local-<something>.yaml`
 — that pattern is gitignored here.
 
