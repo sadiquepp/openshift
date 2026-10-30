@@ -67,6 +67,7 @@ spec:
         A .git-credentials file for the deploy repository. Mount a secret; the
         token is never passed as an argument, so it stays out of the process
         list and the run's parameters.
+      optional: true
   steps:
     - name: pin-and-push
       image: $(params.GIT_IMAGE)
@@ -90,10 +91,23 @@ spec:
           exit 2
         }
 
-        # Credentials from the workspace, never from the command line.
+        # Credentials from the workspace, never from the command line. The
+        # workspace is optional on this task so that a build-stack run with
+        # WRITE_BACK=false need not bind one; reaching this step without it is
+        # a configuration error, not a reason to carry on.
+        [ "$(workspaces.gitauth.bound)" = "true" ] || {
+          echo "write-back ran but no gitauth workspace is bound." >&2
+          echo "Bind the credential secret in the PipelineRun:" >&2
+          echo "    - name: gitauth" >&2
+          echo "      secret:" >&2
+          echo "        secretName: boutique-deploy-git" >&2
+          exit 2
+        }
         CRED="$(workspaces.gitauth.path)/.git-credentials"
         [ -f "$CRED" ] || {
-          echo "no .git-credentials in the gitauth workspace" >&2
+          echo "the gitauth workspace holds no .git-credentials file." >&2
+          echo "The secret's key must be exactly .git-credentials:" >&2
+          echo "  oc -n boutique-ci get secret boutique-deploy-git -o jsonpath='{.data}' | jq keys" >&2
           exit 2
         }
 
