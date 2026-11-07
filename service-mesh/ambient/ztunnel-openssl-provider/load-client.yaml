@@ -1,0 +1,59 @@
+# A curl pod for the connection-churn test in README.md.
+#
+# It is the same kind of pod as ../online-boutique/mesh-client.yaml, with one
+# difference: it is never scheduled on the node that runs frontend. That puts a
+# different ztunnel on each end of every request, so each request costs one
+# outbound handshake (client node's ztunnel) and one inbound handshake (frontend
+# node's ztunnel), the way real cross-node traffic does.
+#
+# Its own service account gives it its own SPIFFE identity. None of the policies
+# in ../online-boutique restrict who may call frontend, so it works with or
+# without them.
+#
+# quay.io/curl/curl is Alpine-based: it has sh, awk and sort, which churn.sh
+# needs. Mirror it on a disconnected cluster.
+#
+#   oc apply -f load-client.yaml
+#   oc -n online-boutique-ambient wait --for=condition=Ready pod/load-client
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: load-client
+  namespace: online-boutique-ambient
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: load-client
+  namespace: online-boutique-ambient
+  labels:
+    app: load-client
+spec:
+  serviceAccountName: load-client
+  terminationGracePeriodSeconds: 1
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app: frontend
+          topologyKey: kubernetes.io/hostname
+  securityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: curl
+      image: quay.io/curl/curl:latest
+      command: ["sleep", "infinity"]
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+      resources:
+        requests:
+          cpu: 100m
+          memory: 32Mi
+        limits:
+          memory: 128Mi

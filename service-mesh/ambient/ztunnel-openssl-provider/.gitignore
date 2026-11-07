@@ -1,0 +1,8 @@
+# build-test-image.sh: source checkout and extracted binaries
+.work/
+# pprof captures and binaries copied out of images while testing
+*.pb
+*.pb.gz
+ztunnel-*
+!ztunnel-*.md
+results/

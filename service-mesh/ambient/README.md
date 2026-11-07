@@ -63,6 +63,8 @@ service-mesh/ambient/
     30-waypoint.yaml               the L7 proxy for the namespace
     40-authz-l7-payment.yaml       waypoint-enforced: only checkout may Charge
     45-authz-paymentservice-via-waypoint.yaml   no path around the waypoint
+  ztunnel-openssl-provider/        ztunnel CPU stalls on new mTLS connections (OpenSSL/FIPS):
+                                   write-up, patch, and a reproduction with this app
 
 test-workloads/online-boutique/overlays/ambient/
   kustomization.yaml               default overlay + namespace labels + Route -> gateway
@@ -637,6 +639,10 @@ Envoy only where you use what Envoy does.
 | The cart breaks after step 5.3 | redis-cart was not opted out of the waypoint (see 5.3). |
 | Every request denied after adding a policy | An L7 rule in a `selector` policy. ztunnel turned the ALLOW into a DENY. Use `targetRefs`. |
 | NetworkPolicies in the namespace and cross-node traffic fails | Allow TCP **15008** between pods. All meshed traffic arrives on that port, not on the app's port. |
+
+If ztunnel spends a lot of CPU on new connections on FIPS-mode nodes (a profile shows
+`EVP_PKEY_generate` under `ztunnel::tls::lib::provider`), see
+[`ztunnel-openssl-provider/`](ztunnel-openssl-provider/README.md).
 
 `istioctl ztunnel-config workloads | services | policies | certificates -n ztunnel` shows
 what ztunnel knows, and that is the fastest way to check it matches what you expect.
