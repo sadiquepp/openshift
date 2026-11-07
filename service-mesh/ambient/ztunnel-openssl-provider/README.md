@@ -27,6 +27,7 @@ follow it. Each of those is explained where it matters.
 - [5. Run C: patched image, FIPS forced on](#5-run-c-patched-image-fips-forced-on)
 - [6. Read the results](#6-read-the-results)
 - [7. Record the results](#7-record-the-results)
+- [Results of a test run](#results-of-a-test-run)
 - [Clean up](#clean-up)
 - [Troubleshooting](#troubleshooting)
 - [References](#references)
@@ -46,6 +47,9 @@ follow it. Each of those is explained where it matters.
   opens no new connections at all.
 - The fix is a one-function patch that builds the provider once per process. Every
   input to it is already fixed for the life of the process.
+- In a [test run](#results-of-a-test-run) with FIPS on, the patch cut ztunnel's CPU per
+  new connection about 8 times and request latency about 5 times. Without FIPS it still
+  cut CPU per connection by almost half.
 
 ## The problem
 
@@ -556,6 +560,94 @@ image digests, node names and profiles.
 ```bash
 tar czf ztunnel-openssl-provider-results.tgz -C $D results
 ```
+
+## Results of a test run
+
+The procedure above, run once on a lab cluster. Use it as a reference for what the
+four runs look like.
+
+### Environment
+
+| | |
+|---|---|
+| Service Mesh | OSSM 3, `ZTunnel` `spec.version: v1.31.1` |
+| Stock image | `registry.redhat.io/openshift-service-mesh/istio-ztunnel-rhel9@sha256:432a1070feec34efea46560dfd48b97234f740eef07fa6c24ab216f48f1a4ae8` (RHEL 9.8, OpenSSL 3.5.8) |
+| Stock binary | built from `openshift-service-mesh/ztunnel` `864cf7d` (`release-1.31.1`), `rustls-openssl` 0.4.2 |
+| Patched image | the stock image with the binary rebuilt from `864cf7d` plus the patch, by `build-test-image.sh` |
+| Nodes | FIPS not enabled; FIPS forced inside ztunnel with `OPENSSL_FORCE_FIPS_MODE=1` for runs B and C (5 `fips.so` mappings per process) |
+| ztunnel resources | CPU request 200m, no CPU limit, `ZTUNNEL_WORKER_THREADS=2` |
+| Test settings | `POOL_MAX_STREAMS_PER_CONNECTION=1`, `REQUESTS=1000`, `WORKERS=4`, `loadgenerator` scaled to 0, `load-client` and frontend on different workers, no waypoint |
+
+### Numbers
+
+| | A: stock, no FIPS | B: stock, FIPS | C: patched, FIPS | D: patched, no FIPS |
+|---|---|---|---|---|
+| Sequential p50 / p95 / p99 (ms) | 9.26 / 11.14 / 12.29 | 42.43 / 50.63 / 56.06 | 8.27 / 9.79 / 10.91 | 6.11 / 7.31 / 8.02 |
+| Sequential max (ms) | 54.00 | 68.21 | 13.50 | 17.41 |
+| Concurrent p50 / p95 / p99 (ms) | 21.59 / 26.08 / 29.20 | 185.14 / 206.85 / 226.80 | 14.89 / 18.67 / 20.91 | 7.58 / 11.09 / 14.13 |
+| ztunnel CPU per request, client (ms) | 5.21 | 31.01 | 3.97 | 2.78 |
+| ztunnel CPU per request, server (ms) | 3.92 | 17.78 | 3.80 | 2.61 |
+| Client ztunnel CPU under `provider()` | 51% | 87% | 0% | 0% |
+| Errors | 0 | 0 | 0 | 0 |
+
+Run A was done three times (the first with `loadgenerator` still running). Sequential
+p50 was 9.26 to 9.62 ms and client CPU per request 5.21 to 5.64 ms, so differences of a
+few percent between runs are noise.
+
+Compared with the stock image:
+
+| | With FIPS: B → C | Without FIPS: A → D |
+|---|---|---|
+| Sequential p50 | 5.1x lower | 34% lower |
+| Concurrent p50 | 12x lower | 65% lower |
+| Client ztunnel CPU per request | 7.8x lower | 47% lower |
+| Server ztunnel CPU per request | 4.7x lower | 33% lower |
+
+### What the profiles showed
+
+**Run A (stock, no FIPS):** 51% of the client ztunnel's CPU under `provider()`, spread
+evenly over the four call sites: `outbound_connector` 11%, `verify_cert_chain` 14%,
+`verify_tls13_signature` 13%, `supported_verify_schemes` 13%. Inside, P-256 and P-384
+key generation (`EcKxGroup::start` → `EVP_PKEY_generate` → `EC_KEY_generate_key` →
+`EC_POINT_mul`) took 33% and the hybrid X25519MLKEM768 group
+(`X25519HybridKxGroup::start` → `EVP_PKEY_Q_keygen`) 13%.
+
+**Run B (stock, FIPS):** 87% under `provider()`, again evenly over the same four call
+sites (21 to 23% each). Nearly all of it was `EcKxGroup::start` → `EVP_PKEY_generate`,
+83% of it flat in `EVP_PKEY_generate`: the work runs inside the FIPS provider, which has
+no symbols the profiler can name. The hybrid group was not probed, since X25519 is not
+allowed in FIPS mode. This is the same stack as in the environment where the problem
+was first found.
+
+**Runs C and D (patched):** `provider()` at 0%.
+
+From CPU per request × the share under `provider()` ÷ four rebuilds per connection, one
+rebuild costs about 0.7 ms of CPU without FIPS and about 6.7 ms with it.
+
+### Findings
+
+- **The patch removes the regression.** With FIPS on, the patched ztunnel used 7.8
+  times less client CPU per request than the stock image, and its latency was 5 times
+  lower at p50 and 5 times lower at p99.
+- **Nearly all of the FIPS cost was the thrown-away probe keys.** With the patch, FIPS
+  mode (C) was only about 2 ms slower at p50 than no FIPS (D), and it was faster than
+  the stock image without FIPS (A).
+- **The waste matters without FIPS too.** The stock image spent half of the client
+  ztunnel's CPU on rebuilds even without FIPS, because the test makes every request a
+  new connection. The patch cut client CPU per request by 47% and latency by about a
+  third. This applies to any ztunnel built with the OpenSSL backend, including
+  upstream.
+- **The expensive key is probably P-384.** In run C, the client's whole handshake cost
+  about 4 ms of CPU, including the one real key generation, so the real key (P-256,
+  the first group allowed in FIPS mode) is cheap. The several milliseconds per rebuild
+  in run B therefore most likely come from P-384, which the probe generates and the
+  handshake never uses. The FIPS provider has no symbols, so the profile cannot
+  confirm this. Why P-384 key generation is that slow in the FIPS provider is a
+  question for the OpenSSL package owners.
+- **Queueing multiplies the cost.** In the concurrent pass, requests to the same
+  destination wait for each other's handshakes, so B's concurrent p50 was 4.4 times
+  its sequential p50. The cheaper the handshake, the shorter the queue, which is why
+  the concurrent numbers improved most.
 
 ## Clean up
 
