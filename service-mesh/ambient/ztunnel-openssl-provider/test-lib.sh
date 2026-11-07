@@ -57,6 +57,26 @@ zt_cpu() {
                 awk -v hz="$(getconf CLK_TCK)" "{ printf \"%.3f\n\", (\$14 + \$15) / hz }" /proc/$p/stat'
 }
 
+# Patches the ZTunnel CR and waits until the operator has updated the DaemonSet and
+# the rollout has finished. A plain `oc patch` + `oc rollout status` can return before
+# the operator acts, and then reports the old, already rolled-out DaemonSet.
+#   zt_patch '{"spec":{"values":{"ztunnel":{"env":{"OPENSSL_FORCE_FIPS_MODE":"1"}}}}}'
+zt_patch() {
+  local before i
+  before=$(oc -n ztunnel get ds ztunnel -o jsonpath='{.metadata.generation}')
+  oc patch ztunnel default --type merge -p "${1:?usage: zt_patch <merge-patch>}" || return 1
+  for i in $(seq 1 60); do
+    [ "$(oc -n ztunnel get ds ztunnel -o jsonpath='{.metadata.generation}')" != "$before" ] && break
+    sleep 1
+  done
+  if [ "$i" = 60 ]; then
+    echo "warning: the ztunnel DaemonSet did not change within 60s; check the ZTunnel CR status:" >&2
+    oc get ztunnel default -o jsonpath='{range .status.conditions[*]}{.type}={.status} {.message}{"\n"}{end}' >&2
+    return 1
+  fi
+  oc -n ztunnel rollout status ds/ztunnel --timeout=5m
+}
+
 # What is running: image digest and FIPS state per node, and the test env vars.
 zt_status() {
   oc -n ztunnel rollout status ds/ztunnel --timeout=5m >/dev/null || return 1

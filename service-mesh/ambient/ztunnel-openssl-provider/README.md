@@ -371,22 +371,21 @@ Expect `errors=0 ok=20`.
 **Set the settings used by every run:**
 
 ```bash
-oc patch ztunnel default --type merge -p '
-spec:
-  values:
-    ztunnel:
-      env:
-        POOL_MAX_STREAMS_PER_CONNECTION: "1"
-        ZTUNNEL_WORKER_THREADS: "2"
-'
-oc -n ztunnel rollout status ds/ztunnel --timeout=5m
+zt_patch '{"spec":{"values":{"ztunnel":{"env":{
+  "POOL_MAX_STREAMS_PER_CONNECTION":"1","ZTUNNEL_WORKER_THREADS":"2"}}}}}'
 ```
+
+`zt_patch` (from `test-lib.sh`) patches the `ZTunnel` CR, waits for the operator to
+update the DaemonSet, then waits for the rollout. Use it for every ztunnel change in
+this test: a plain `oc patch` followed straight away by `oc rollout status` can return
+before the operator has acted, and report the old DaemonSet as rolled out.
 
 The helpers in `test-lib.sh`, for reference:
 
 | Helper | Does |
 |---|---|
 | `nodes` | sets `CLIENT_NODE` and `SERVER_NODE` |
+| `zt_patch '<json>'` | merge-patches the `ZTunnel` CR and waits until the DaemonSet has changed and rolled out |
 | `zt_status` | per node: ztunnel pod, image digest, number of `fips.so` mappings; plus the test env vars |
 | `fips_maps <node>` | how many times the FIPS provider (`ossl-modules/fips.so`) is mapped into that node's ztunnel process; above 0 means FIPS mode is on in that process |
 | `zt_cpu <node>` | CPU seconds used so far by that node's ztunnel |
@@ -407,14 +406,7 @@ on both nodes. A run takes a few minutes.
 ## 4. Run B: stock image, FIPS forced on
 
 ```bash
-oc patch ztunnel default --type merge -p '
-spec:
-  values:
-    ztunnel:
-      env:
-        OPENSSL_FORCE_FIPS_MODE: "1"
-'
-oc -n ztunnel rollout status ds/ztunnel --timeout=5m
+zt_patch '{"spec":{"values":{"ztunnel":{"env":{"OPENSSL_FORCE_FIPS_MODE":"1"}}}}}'
 zt_status
 ```
 
@@ -437,18 +429,12 @@ zt_status
 Switch to the patched image. `values.ztunnel.image` takes a full image reference.
 
 ```bash
-oc patch ztunnel default --type merge -p "
-spec:
-  values:
-    ztunnel:
-      image: $PATCHED
-"
-oc -n ztunnel rollout status ds/ztunnel --timeout=5m
+zt_patch "{\"spec\":{\"values\":{\"ztunnel\":{\"image\":\"$PATCHED\"}}}}"
 zt_status
 ```
 
-If the registry needs credentials, add `imagePullSecrets: [<secret-name>]` next to
-`image` in the same patch.
+If the registry needs credentials, add `"imagePullSecrets":["<secret-name>"]` next to
+`"image"` in the same patch.
 
 Check that both nodes now show the patched digest and still show `fips.so` mappings.
 Then:
@@ -528,8 +514,7 @@ workloads moves them.
   run C:
 
   ```bash
-  oc patch ztunnel default --type merge -p '{"spec":{"values":{"ztunnel":{"env":{"OPENSSL_FORCE_FIPS_MODE":null}}}}}'
-  oc -n ztunnel rollout status ds/ztunnel --timeout=5m
+  zt_patch '{"spec":{"values":{"ztunnel":{"env":{"OPENSSL_FORCE_FIPS_MODE":null}}}}}'
   run_test D-patched-nofips
   ```
 
@@ -577,19 +562,12 @@ tar czf ztunnel-openssl-provider-results.tgz -C $D results
 Put ztunnel back. Setting a key to `null` in a merge patch removes it.
 
 ```bash
-oc patch ztunnel default --type merge -p '
-spec:
-  values:
-    ztunnel:
-      image: null
-      env:
-        POOL_MAX_STREAMS_PER_CONNECTION: null
-        ZTUNNEL_WORKER_THREADS: null
-        OPENSSL_FORCE_FIPS_MODE: null
-'
-oc -n ztunnel rollout status ds/ztunnel --timeout=5m
+zt_patch '{"spec":{"values":{"ztunnel":{"image":null,"env":{
+  "POOL_MAX_STREAMS_PER_CONNECTION":null,"ZTUNNEL_WORKER_THREADS":null,"OPENSSL_FORCE_FIPS_MODE":null}}}}}'
 oc get ztunnel default -o jsonpath='{.spec.values.ztunnel}{"\n"}'
 ```
+
+If you started a new shell, `source $D/test-lib.sh` first.
 
 Compare with `ztunnel-before.yaml`, and put back anything the CR had before (for
 example its own `ZTUNNEL_WORKER_THREADS`, or a CPU limit you removed).
@@ -616,6 +594,7 @@ If you removed the waypoint for the test, put it back:
 | `pprof` shows addresses, not function names | The binary is stripped. The stock and patched images built here are not. |
 | Build: `The patch does not apply` | The base image is from a ztunnel version whose `src/tls/lib.rs` differs. The patch needs rebasing onto that commit. |
 | Build: `cargo` fails on OpenSSL | UBI's `openssl-devel` must be 3.x. The builder prints `openssl version`. |
+| `zt_status` shows the old image or env right after a change | The operator had not updated the DaemonSet yet. Use `zt_patch`, which waits for it, or run `zt_status` again. |
 | Pods `ImagePullBackOff` after switching image | The cluster cannot pull from your registry. Add a pull secret to the `ztunnel` namespace and `imagePullSecrets` to the CR. |
 
 ## References
