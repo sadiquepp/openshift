@@ -1,0 +1,76 @@
+From 96111d41653c25c63fc1ec3e3dd72408fa0b1b2a Mon Sep 17 00:00:00 2001
+From: Sadique <sadiqueklr@gmail.com>
+Date: Fri, 6 Nov 2026 12:07:49 +0800
+Subject: [PATCH] tls: cache the OpenSSL CryptoProvider instead of rebuilding
+ it per call
+
+provider() is called several times per new connection (outbound connector,
+verify_cert_chain, verify_tls13_signature, supported_verify_schemes). For the
+OpenSSL backend each call evaluated rustls_openssl::default_provider(), which
+probes every default kx group via start() and so generates and discards real
+EC key pairs. Since rustls-openssl 0.4.2 that keygen goes through
+EVP_PKEY_keygen and, on FIPS-enabled hosts, the FIPS provider, which made each
+probe ~30x more expensive and stalled a tokio worker for ~10ms per new
+double-HBONE connection.
+
+All inputs to the provider are process-lifetime statics, so build it once.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01EcokL9v8kQ3SXV2v6bUZZv
+---
+ src/tls/lib.rs | 30 ++++++++++++++++++++++++++++++
+ 1 file changed, 30 insertions(+)
+
+diff --git a/src/tls/lib.rs b/src/tls/lib.rs
+index 213b76f..cc99828 100644
+--- a/src/tls/lib.rs
++++ b/src/tls/lib.rs
+@@ -176,8 +176,25 @@ pub(super) fn provider() -> Arc<CryptoProvider> {
+     Arc::new(provider)
+ }
+ 
++// Built once per process. Every input (MESH_CIPHER_SUITES, TLS12_ENABLED, PQC_ENABLED and the
++// OpenSSL FIPS state) is fixed for the life of the process, so there is nothing to rebuild.
++//
++// Building the provider is expensive: `rustls_openssl::default_provider()` probes every default
++// key exchange group by calling `start()`, which generates and discards a real key pair. Since
++// rustls-openssl 0.4.2 that runs through `EVP_PKEY_keygen`, i.e. inside the FIPS provider when
++// FIPS is enabled, and `provider()` is called several times per connection (connector setup and
++// certificate/signature verification). Rebuilding it on every call stalled a tokio worker for
++// ~10ms per new double-HBONE connection on FIPS-enabled nodes.
++#[cfg(feature = "tls-openssl")]
++static OPENSSL_PROVIDER: Lazy<Arc<CryptoProvider>> = Lazy::new(build_openssl_provider);
++
+ #[cfg(feature = "tls-openssl")]
+ pub(super) fn provider() -> Arc<CryptoProvider> {
++    OPENSSL_PROVIDER.clone()
++}
++
++#[cfg(feature = "tls-openssl")]
++fn build_openssl_provider() -> Arc<CryptoProvider> {
+     let cipher_suites = if let Some(suites) = MESH_CIPHER_SUITES.as_ref() {
+         suites.clone()
+     } else {
+@@ -375,6 +392,19 @@ pub mod tests {
+         );
+     }
+ 
++    #[test]
++    #[cfg(feature = "tls-openssl")]
++    fn test_openssl_provider_is_cached() {
++        // provider() is on the per-connection path; it must not rebuild (and re-probe) the
++        // CryptoProvider on every call.
++        let a = super::provider();
++        let b = super::provider();
++        assert!(
++            std::sync::Arc::ptr_eq(&a, &b),
++            "provider() should return the cached instance"
++        );
++    }
++
+     #[test]
+     #[cfg(feature = "tls-openssl")]
+     fn test_openssl_provider_excludes_x25519_in_fips_mode() {
+-- 
+2.43.0
+

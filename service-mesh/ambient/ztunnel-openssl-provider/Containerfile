@@ -1,0 +1,53 @@
+# Test image: the ztunnel image your mesh already runs, with only the ztunnel
+# binary replaced by one built from the same source plus
+# 0001-tls-cache-openssl-cryptoprovider.patch.
+#
+# Stage 1 builds ztunnel on UBI 9 against the RHEL OpenSSL headers, with the
+# same cargo command as the downstream CI (ossm/ci/pre-submit.sh in
+# openshift-service-mesh/ztunnel): --no-default-features --features tls-openssl.
+#
+# Stage 2 copies the binary over the original image, so libcrypto, the FIPS
+# provider and its configuration stay exactly as Red Hat ships them.
+#
+# Use build-test-image.sh rather than building this by hand: it works out BASE,
+# ZTUNNEL_PATH and the source commit, and checks the result.
+# Build context: a checkout of the ztunnel source with the patch applied.
+
+ARG BUILDER=registry.access.redhat.com/ubi9/ubi:latest
+ARG BASE
+
+FROM ${BUILDER} AS build
+ARG RUST_TOOLCHAIN=stable
+ARG PROTOC_VERSION=30.2
+
+RUN dnf -y install gcc make git unzip openssl-devel pkgconf-pkg-config glibc-devel \
+ && dnf clean all
+
+# protoc: build.rs compiles the xDS protos.
+RUN arch=$(uname -m) && case "$arch" in aarch64) arch=aarch_64 ;; esac \
+ && curl -sSfL -o /tmp/protoc.zip \
+      "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-${arch}.zip" \
+ && unzip -q /tmp/protoc.zip -d /usr/local bin/protoc 'include/*' \
+ && rm /tmp/protoc.zip
+
+ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo PATH=/opt/cargo/bin:$PATH
+RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain ${RUST_TOOLCHAIN}
+
+WORKDIR /src
+COPY . .
+RUN cargo build --release --no-default-features --features tls-openssl
+
+# Fail the build unless the binary is what we want to test: dynamically linked
+# to the system libcrypto, and carrying the patch. "22build_openssl_provider"
+# is part of the patched function's symbol name under both Rust mangling
+# schemes, so a plain grep finds it without demangling.
+RUN B=out/rust/release/ztunnel \
+ && echo "builder: $(openssl version)" \
+ && ldd "$B" | grep -E 'libssl|libcrypto' \
+ && grep -a -q '22build_openssl_provider' "$B" \
+ && echo "rustls-openssl: $(grep -a -o 'rustls-openssl-0\.[0-9]*\.[0-9]*' "$B" | head -1)" \
+ && cp "$B" /ztunnel
+
+FROM ${BASE}
+ARG ZTUNNEL_PATH=/usr/local/bin/ztunnel
+COPY --from=build /ztunnel ${ZTUNNEL_PATH}
