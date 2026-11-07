@@ -307,6 +307,12 @@ secret in the `ztunnel` namespace and add it to the CR when you switch images (s
 
 ## 2. Prepare the test
 
+Run everything from the repository root. If this is a new shell, set `D` again:
+
+```bash
+D=service-mesh/ambient/ztunnel-openssl-provider
+```
+
 **Save the current ZTunnel configuration**, so you can compare against it when you
 clean up:
 
@@ -326,6 +332,15 @@ oc -n ztunnel get ds ztunnel -o jsonpath='{.spec.template.spec.containers[0].res
 
 If it has a `limits.cpu`, remove it for the test, or record it and keep it the same in
 all three runs.
+
+**Stop the load generator.** Online Boutique's `loadgenerator` sends traffic through
+the same two ztunnels all the time. With connection reuse off it also opens new
+connections in the background, which adds to the measured CPU per request and competes
+with the timed requests. Keep it at zero for all runs:
+
+```bash
+oc -n online-boutique-ambient scale deploy/loadgenerator --replicas=0
+```
 
 **Deploy the load client** and load the helpers:
 
@@ -441,7 +456,8 @@ run_test C-patched-fips
 **Latency and CPU per request:**
 
 ```bash
-for r in A-stock-nofips B-stock-fips C-patched-fips; do
+for r in A-stock-nofips B-stock-fips C-patched-fips D-patched-nofips; do
+  [ -d $D/results/$r ] || continue
   echo "== $r"
   cat $D/results/$r/latency-sequential.txt $D/results/$r/latency-concurrent.txt $D/results/$r/cpu-per-request.txt
 done
@@ -450,7 +466,8 @@ done
 **Where the client-side ztunnel's CPU goes:**
 
 ```bash
-for r in A-stock-nofips B-stock-fips C-patched-fips; do
+for r in A-stock-nofips B-stock-fips C-patched-fips D-patched-nofips; do
+  [ -d $D/results/$r ] || continue
   echo "== $r"
   go tool pprof -top -focus='tls::lib::provider' $D/results/$r/cpu-client-ztunnel.pb 2>/dev/null |
     grep -E '^Duration|^Showing nodes'
@@ -488,6 +505,17 @@ workloads moves them.
 
 **Optional extra runs:**
 
+- **Patched image, FIPS off (run D).** Shows how much the patch saves without FIPS.
+  It matters if run A already spends a large share of CPU under `provider()`. After
+  run C:
+
+  ```bash
+  oc patch ztunnel default --type merge -p '{"spec":{"values":{"ztunnel":{"env":{"OPENSSL_FORCE_FIPS_MODE":null}}}}}'
+  oc -n ztunnel rollout status ds/ztunnel --timeout=5m
+  run_test D-patched-nofips
+  ```
+
+  Check `zt_status` shows the patched digest and `0` `fips.so` mappings.
 - **The waypoint path.** Put the waypoint back
   (`oc label ns online-boutique-ambient istio.io/use-waypoint=waypoint`, as in step
   5.3) and repeat B and C with new labels, for example `run_test B-stock-fips-waypoint`.
@@ -504,6 +532,7 @@ Fill this in from `$D/results/`:
 | A stock, no FIPS | | | | | | | | |
 | B stock, FIPS | | | | | | | | |
 | C patched, FIPS | | | | | | | | |
+| D patched, no FIPS (optional) | | | | | | | | |
 
 Environment:
 
@@ -549,6 +578,7 @@ example its own `ZTUNNEL_WORKER_THREADS`, or a CPU limit you removed).
 
 ```bash
 oc delete -f $D/load-client.yaml
+oc -n online-boutique-ambient scale deploy/loadgenerator --replicas=1
 ```
 
 If you removed the waypoint for the test, put it back:

@@ -85,11 +85,16 @@ churn() {
 #   pass 2: requests with WORKERS concurrent loops, CPU profile of the client-side ztunnel
 run_test() {
   local label=${1:?usage: run_test <label>}
-  local out=$RESULTS/$label c0 s0 c1 s1 t0 secs pf prof
+  local out=$RESULTS/$label c0 s0 c1 s1 t0 secs pf prof monitor=0
   mkdir -p "$out"
+  # Interactive bash announces background jobs ("[1] 1234", "Done"); keep the output clean.
+  case $- in *m*) monitor=1; set +m ;; esac
 
   echo "== $label: status"
   zt_status | tee "$out/status.txt"
+  if [ "$(oc -n "$NS" get deploy loadgenerator -o jsonpath='{.spec.replicas}' 2>/dev/null)" != 0 ]; then
+    echo "warning: loadgenerator is running; its traffic skews the results" >&2
+  fi
 
   echo "== $label: warm-up"
   churn 50 0 >/dev/null
@@ -116,5 +121,6 @@ run_test() {
   kill "$pf" 2>/dev/null
   wait "$pf" 2>/dev/null
   ls -l "$out/cpu-client-ztunnel.pb"
+  [ "$monitor" = 1 ] && set -m
   echo "== $label: done, results in $out"
 }
