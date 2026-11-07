@@ -125,8 +125,10 @@ All three must be true:
 | It is not patched | `grep -a -c 22build_openssl_provider ztunnel` prints `0` |
 
 The regression is large only on **nodes in FIPS mode**
-(`/proc/sys/crypto/fips_enabled` is `1`). Without FIPS, the repeated key generation
-still happens, but each one is cheap.
+(`/proc/sys/crypto/fips_enabled` is `1`). Without FIPS the repeated key generation
+still happens at a lower cost per key. It has been there in every version, and on
+traffic that opens many connections it is still a large share of ztunnel's CPU: about
+half of it in this test with FIPS off.
 
 To check the image a cluster runs, copy the binary out of it:
 
@@ -210,7 +212,7 @@ Three runs, changing one thing at a time:
 
 | Run | ztunnel image | FIPS in ztunnel | Shows |
 |---|---|---|---|
-| A | stock | off | the baseline: rebuilds happen, but are cheap |
+| A | stock | off | the baseline: rebuilds happen at non-FIPS cost |
 | B | stock | forced on | the regression |
 | C | patched | forced on | the fix, under the same conditions as B |
 
@@ -484,12 +486,20 @@ go tool pprof -peek 'EVP_PKEY_generate' $D/results/B-stock-fips/cpu-client-ztunn
 
 **What to expect:**
 
-| | A: stock, no FIPS | B: stock, FIPS | C: patched, FIPS |
-|---|---|---|---|
-| CPU share under `provider()` | small | large; `EVP_PKEY_generate` dominates | near zero |
-| ztunnel CPU per request | baseline | much higher than A | about A, or lower |
-| Latency, sequential | baseline | several ms higher than A | about A |
-| Latency, concurrent | baseline | higher still, with a long tail | about A |
+| | A: stock, no FIPS | B: stock, FIPS | C: patched, FIPS | D: patched, no FIPS |
+|---|---|---|---|---|
+| CPU share under `provider()` | large, around half: every request is a new connection | larger still; `EVP_PKEY_generate` dominates | near zero | near zero |
+| ztunnel CPU per request | baseline | much higher than A | about A, or lower | well below A |
+| Latency, sequential | baseline | several ms higher than A | about A, or lower | below A |
+| Latency, concurrent | baseline | higher still, with a long tail | about A, or lower | below A |
+
+The share under `provider()` is high even in run A because the test makes connection
+setup most of what ztunnel does, and the rebuilds are most of connection setup. The
+effect of FIPS shows in the absolute numbers: B's CPU per request and latency against
+A's. Under `provider()` expect four call sites of about equal cost
+(`outbound_connector`, `verify_cert_chain`, `verify_tls13_signature`,
+`supported_verify_schemes`), and inside them EC key generation for P-256 and P-384
+(`EcKxGroup::start`) and the hybrid post-quantum group (`X25519HybridKxGroup::start`).
 
 **How to read it:**
 
