@@ -185,9 +185,9 @@ the FIPS state cannot change at runtime. The patch adds a unit test that `provid
 returns the same instance twice.
 
 The patch applies cleanly to the `release-1.30`, `release-1.30.5-2`, `release-1.31`
-and `release-1.31.1` branches of `openshift-service-mesh/ztunnel`. A variant for
-upstream `istio/ztunnel` `master` is on
-[`sadiquepp/ztunnel`, branch `fix/cache-openssl-provider`](https://github.com/sadiquepp/ztunnel/tree/fix/cache-openssl-provider).
+and `release-1.31.1` branches of `openshift-service-mesh/ztunnel`. The same change for
+upstream `istio/ztunnel` `master` is proposed in
+[istio/ztunnel#2246](https://github.com/istio/ztunnel/pull/2246).
 
 After the patch, a new connection does one key generation, for the handshake's own key
 share, instead of roughly nine.
@@ -698,6 +698,8 @@ If you removed the waypoint for the test, put it back:
   (`ossm/ci/pre-submit.sh`).
 - [`istio/ztunnel`](https://github.com/istio/ztunnel): upstream. `provider()` is in
   `src/tls/lib.rs`.
+- [istio/ztunnel#2246](https://github.com/istio/ztunnel/pull/2246): the upstream pull
+  request for this fix.
 - [Handling FIPS mode in upstream projects for RHEL](https://developers.redhat.com/articles/2024/02/27/handling-fips-mode-upstream-projects-rhel)
 - [OpenSSL FIPS on Fedora](https://hackmd.io/@jaruga/SJXFQ0PNh): describes
   `OPENSSL_FORCE_FIPS_MODE`.
