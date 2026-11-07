@@ -87,7 +87,9 @@ run_test() {
   local label=${1:?usage: run_test <label>}
   local out=$RESULTS/$label c0 s0 c1 s1 t0 secs pf prof monitor=0
   mkdir -p "$out"
-  # Interactive bash announces background jobs ("[1] 1234", "Done"); keep the output clean.
+  # Interactive bash announces background jobs: "[1] 1234" on stderr when they start
+  # (silenced by the { … & } 2>/dev/null wrappers below) and "Done" when they end
+  # (silenced by turning job control off for the run).
   case $- in *m*) monitor=1; set +m ;; esac
 
   echo "== $label: status"
@@ -110,14 +112,14 @@ run_test() {
       (c1 - c0) * 1000 / n, (s1 - s0) * 1000 / n, n, t }' | tee "$out/cpu-per-request.txt"
 
   echo "== $label: pass 2, $REQUESTS requests + $WORKERS concurrent loops, profiling client ztunnel"
-  oc -n ztunnel port-forward "pod/$(zt_pod "$CLIENT_NODE")" "$PPROF_PORT:15000" >/dev/null 2>&1 &
+  { oc -n ztunnel port-forward "pod/$(zt_pod "$CLIENT_NODE")" "$PPROF_PORT:15000" >/dev/null 2>&1 & } 2>/dev/null
   pf=$!
   sleep 3
-  curl -sS -o "$out/cpu-client-ztunnel.pb" \
-    "http://localhost:$PPROF_PORT/debug/pprof/profile?seconds=30&frequency=1000" &
+  { curl -sS -o "$out/cpu-client-ztunnel.pb" \
+      "http://localhost:$PPROF_PORT/debug/pprof/profile?seconds=30&frequency=1000" 2>"$out/pprof.err" & } 2>/dev/null
   prof=$!
   churn "$REQUESTS" "$WORKERS" | tee "$out/latency-concurrent.txt"
-  wait "$prof"
+  wait "$prof" || echo "warning: profile capture failed: $(cat "$out/pprof.err")" >&2
   kill "$pf" 2>/dev/null
   wait "$pf" 2>/dev/null
   ls -l "$out/cpu-client-ztunnel.pb"
