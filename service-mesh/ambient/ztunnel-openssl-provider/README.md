@@ -220,8 +220,12 @@ Each run measures, in the same way:
 
 - **Latency.** `churn.sh` sends sequential requests from `load-client` to
   `frontend/_healthz`, each on a new connection, and reports p50, p90, p95, p99 and
-  max. A second pass adds concurrent background requests, which shows the worker
-  stalls hurting other connections.
+  max. A second pass adds concurrent background requests to the same service. ztunnel
+  opens new connections to one destination one at a time (it holds a per-destination
+  lock in its connection pool while the handshake runs, so that waiting requests can
+  share the result). With one request per connection, concurrent requests therefore
+  queue behind each other's handshakes, which multiplies the handshake cost. This pass
+  shows that queueing, not worker threads stalling unrelated connections.
 - **ztunnel CPU per request** on both nodes, read from `/proc` on each node before
   and after the sequential pass.
 - **Where the CPU goes.** A 30-second CPU profile of the client-side ztunnel, from its
@@ -491,7 +495,7 @@ go tool pprof -peek 'EVP_PKEY_generate' $D/results/B-stock-fips/cpu-client-ztunn
 | CPU share under `provider()` | large, around half: every request is a new connection | larger still; `EVP_PKEY_generate` dominates | near zero | near zero |
 | ztunnel CPU per request | baseline | much higher than A | about A, or lower | well below A |
 | Latency, sequential | baseline | several ms higher than A | about A, or lower | below A |
-| Latency, concurrent | baseline | higher still, with a long tail | about A, or lower | below A |
+| Latency, concurrent | baseline | several times sequential: requests queue behind each other's handshakes | about A, or lower | below A |
 
 The share under `provider()` is high even in run A because the test makes connection
 setup most of what ztunnel does, and the rebuilds are most of connection setup. The
@@ -499,7 +503,11 @@ effect of FIPS shows in the absolute numbers: B's CPU per request and latency ag
 A's. Under `provider()` expect four call sites of about equal cost
 (`outbound_connector`, `verify_cert_chain`, `verify_tls13_signature`,
 `supported_verify_schemes`), and inside them EC key generation for P-256 and P-384
-(`EcKxGroup::start`) and the hybrid post-quantum group (`X25519HybridKxGroup::start`).
+(`EcKxGroup::start`) and, without FIPS, the hybrid post-quantum group
+(`X25519HybridKxGroup::start`). In FIPS mode X25519 is not allowed, so only P-256 and
+P-384 are probed, and nearly all the time shows as "flat" in `EVP_PKEY_generate`: the
+work runs inside the FIPS provider (`fips.so`), whose internal functions have no
+exported symbols for the profiler to name.
 
 **How to read it:**
 
