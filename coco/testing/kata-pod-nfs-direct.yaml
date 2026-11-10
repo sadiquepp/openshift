@@ -27,7 +27,7 @@ spec:
     # need it mirrored.
     image: quay.io/rh-ee-chbutler/ubi-storage-util:latest
     securityContext:
-      privileged: true # mount(2) needs CAP_SYS_ADMIN, and modprobe needs CAP_SYS_MODULE - both only inside the Kata VM
+      privileged: true # mount(2) needs CAP_SYS_ADMIN, and only inside the Kata VM - see the README on narrowing this
       runAsUser: 0
     env:
       - name: NFS_SERVER

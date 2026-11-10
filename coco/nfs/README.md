@@ -436,6 +436,37 @@ What to expect to differ under `kata-cc`:
 * Guest memory: NFS page cache plus the extra container pushes memory use up;
   keep or raise `io.katacontainers.config.hypervisor.default_memory`.
 
+### What privileges the mount needs
+
+The mount is made by a `privileged: true` container running as root, in every
+manifest here. `mount(2)` needs `CAP_SYS_ADMIN`, and the `RuntimeDefault`
+seccomp profile only permits the `mount` syscall when that capability is
+present, so there is no way to mount from an unprivileged container.
+
+What that costs is smaller than it looks, because the capability applies
+*inside the Kata guest*. A privileged container in a VM-isolated pod can
+reach the guest kernel, not the node - the same reasoning the block-device
+example gives in its own comment. Note also that nothing here touches the host
+any more: the `hostPath` that the old module workaround needed is gone, so the
+pod has no path to the node at all.
+
+It can be narrowed, now that `CAP_SYS_MODULE` is no longer needed either:
+
+```yaml
+    securityContext:
+      runAsUser: 0
+      capabilities:
+        add: ["SYS_ADMIN"]
+```
+
+That needs an SCC permitting `SYS_ADMIN` - `restricted-v2` does not, so either
+the `privileged` SCC or a custom one with `allowedCapabilities: ["SYS_ADMIN"]`.
+Untested here; the manifests keep `privileged: true` because that is what was
+actually run. The app container in the sidecar manifest is privileged for a
+different reason - reading another container's `/proc/<pid>/root` - and what
+its true minimum is (possibly nothing, since both containers run as root in one
+PID namespace) is also untested.
+
 ## Security note for the confidential case
 
 `sec=sys` gives you no authentication and no encryption - the share is trusted
