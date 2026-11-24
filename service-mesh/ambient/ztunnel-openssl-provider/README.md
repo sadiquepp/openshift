@@ -27,8 +27,8 @@ follow it. Each of those is explained where it matters.
 - [5. Run C: patched image, FIPS forced on](#5-run-c-patched-image-fips-forced-on)
 - [6. Read the results](#6-read-the-results)
 - [7. Record the results](#7-record-the-results)
-- [8. Optional: check the other crypto backends](#8-optional-check-the-other-crypto-backends)
 - [Results of a test run](#results-of-a-test-run)
+- [Test plan: the cached provider on every crypto backend](#test-plan-the-cached-provider-on-every-crypto-backend)
 - [Clean up](#clean-up)
 - [Troubleshooting](#troubleshooting)
 - [References](#references)
@@ -311,7 +311,8 @@ The script:
 4. Builds ztunnel on UBI 9 against RHEL's OpenSSL, with the same `cargo` command as
    the downstream CI, then copies only the binary over the base image. libcrypto, the
    FIPS provider and its configuration stay exactly as shipped. `BACKEND=aws-lc`,
-   `ring` or `boring` builds with another crypto backend instead (step 8).
+   `ring` or `boring` builds with another crypto backend instead (see the
+   [test plan for every backend](#test-plan-the-cached-provider-on-every-crypto-backend)).
 5. Checks the new image contains the patch, pushes it, and prints the reference to use.
 
 Note the reference it prints:
@@ -571,69 +572,6 @@ image digests, node names and profiles.
 tar czf ztunnel-openssl-provider-results.tgz -C $D results
 ```
 
-## 8. Optional: check the other crypto backends
-
-Upstream ztunnel can be built with four crypto backends: OpenSSL (what OSSM ships),
-aws-lc (upstream's default), ring and boring. The second patch moves all four onto the
-cached provider. Building a provider is cheap for aws-lc, ring and boring, so expect no
-performance change for them. This check makes sure ztunnel built with each backend
-still works end to end with the change.
-
-**Build one image per backend**, on the same base image as step 1:
-
-```bash
-for b in aws-lc ring boring; do
-  BACKEND=$b ./service-mesh/ambient/ztunnel-openssl-provider/build-test-image.sh \
-    "$BASE" <registry>/<namespace>/ztunnel:patched-$b
-done
-```
-
-Note each digest the script prints. These binaries carry their own crypto and do not
-use the image's OpenSSL. The boring backend is built with `fips-only`, as upstream
-builds it, so it offers only the AES-GCM cipher suites and the FIPS key exchange
-groups. That is fine: every ztunnel on the cluster runs the same image. The aws-lc and
-boring builds need extra build tools (CMake, Clang, and Go for boring), which the script
-installs from the UBI repositories.
-
-**Run each one.** Keep the step 2 settings. If `OPENSSL_FORCE_FIPS_MODE` is still set
-from run C, remove it first; it only affects OpenSSL:
-
-```bash
-zt_patch '{"spec":{"values":{"ztunnel":{"env":{"OPENSSL_FORCE_FIPS_MODE":null}}}}}'
-```
-
-Then, for aws-lc (repeat with the ring and boring digests, and labels `F-patched-ring`
-and `G-patched-boring`):
-
-```bash
-IMG=<registry>/<namespace>/ztunnel@sha256:<digest of the aws-lc image>
-zt_patch "{\"spec\":{\"values\":{\"ztunnel\":{\"image\":\"$IMG\"}}}}"
-zt_status
-run_test E-patched-aws-lc
-istioctl ztunnel-config certificates -n ztunnel | head
-```
-
-**A backend passes when:**
-
-- `zt_status` shows its image digest on both nodes.
-- Both passes report `errors=0` and `ok` equal to `REQUESTS`. Every request needed a
-  new mTLS handshake on both ztunnels, all through the cached provider.
-- `istioctl ztunnel-config certificates` lists valid workload certificates. ztunnel
-  fetches them from istiod over TLS, which also goes through the provider.
-- `oc -n ztunnel logs ds/ztunnel --since=10m | grep -iE 'tls|handshake|error' | head`
-  shows no TLS errors.
-- The profile shows no time under `provider()`:
-  `go tool pprof -top -focus='tls::lib::provider' $D/results/E-patched-aws-lc/cpu-client-ztunnel.pb 2>/dev/null | grep -E '^Showing nodes'`
-
-Latency and CPU per request are useful context next to run D, but they are not pass
-criteria: each backend has its own handshake cost.
-
-| Backend | Image on both nodes | errors (seq / conc) | Certificates valid | `provider()` share | p50 seq / conc (ms) |
-|---|---|---|---|---|---|
-| aws-lc | | | | | |
-| ring | | | | | |
-| boring | | | | | |
-
 ## Results of a test run
 
 The procedure above, run once on a lab cluster. Use it as a reference for what the
@@ -722,13 +660,172 @@ rebuild costs about 0.7 ms of CPU without FIPS and about 6.7 ms with it.
   its sequential p50. The cheaper the handshake, the shorter the queue, which is why
   the concurrent numbers improved most.
 
+## Test plan: the cached provider on every crypto backend
+
+### Purpose
+
+The second patch moves all four crypto backends onto the cached provider, as the
+upstream reviewers asked. For aws-lc, ring and boring, building a provider only copies
+static tables, so nothing here is about performance. The plan checks that ztunnel
+built with each backend still works end to end with the change: certificates from
+istiod, mTLS between ztunnels, and application traffic, in each configuration that
+changes what a backend's provider contains.
+
+### Scope
+
+| Backend | Build feature | What its provider depends on | Already covered |
+|---|---|---|---|
+| OpenSSL | `tls-openssl` | `TLS12_ENABLED`, `COMPLIANCE_POLICY=pqc`, `MESH_CIPHER_SUITES`, FIPS state | default configuration: runs C and D |
+| aws-lc | `tls-aws-lc` | `TLS12_ENABLED`, `COMPLIANCE_POLICY=pqc` | unit tests only |
+| ring | `tls-ring` | `TLS12_ENABLED` | unit tests only |
+| boring | `tls-boring` (`fips-only`) | nothing: fixed FIPS cipher suites and groups | unit tests only |
+
+Out of scope: performance, since each backend has its own handshake cost; a
+FIPS-validated aws-lc or BoringSSL module; and mixing backends on one cluster.
+
+### Before the cluster
+
+These checks ran on Red Hat's source (`openshift-service-mesh/ztunnel` `864cf7d`) with
+both patches:
+
+| Backend | Library tests | Clippy in `src/tls` | Release build has the patch symbol |
+|---|---|---|---|
+| OpenSSL | 229 passed, 0 failed | clean | yes, links the system libcrypto |
+| aws-lc | 225 passed, 0 failed | clean | not built |
+| ring | 225 passed, 0 failed | clean | yes |
+| boring | 226 passed, 0 failed | clean | not built |
+
+The library tests include `test_provider_is_cached`, which runs for every backend. The
+`inpod` tests were skipped because the build machine cannot create network namespaces.
+
+### Configurations
+
+Each configuration exercises a different branch of a backend's `build_provider()`:
+
+| ID | ztunnel env | Changes | Applies to |
+|---|---|---|---|
+| V1 | none (the step 2 settings) | TLS 1.3 cipher suites, default key exchange groups | all four |
+| V2 | `TLS12_ENABLED=true` | adds the TLS 1.2 cipher suites | OpenSSL, aws-lc, ring |
+| V3 | `COMPLIANCE_POLICY=pqc` | only the hybrid post-quantum group X25519MLKEM768 | OpenSSL, aws-lc |
+
+ring and boring ignore `COMPLIANCE_POLICY`, and boring ignores `TLS12_ENABLED`, so those
+combinations test nothing new and are left out. That makes eight runs, one of which (the
+default configuration on OpenSSL) is run D.
+
+### Checks
+
+| ID | Check | How | Passes when |
+|---|---|---|---|
+| T1 | Rollout | `zt_status` | the backend's image digest on both nodes |
+| T2 | Certificates from istiod | `istioctl ztunnel-config certificates -n ztunnel` | workload certificates listed, valid, not expired. ztunnel fetches them over TLS through the provider. |
+| T3 | New connections, one at a time | `run_test`, pass 1 | `errors=0`, `ok` equals `REQUESTS` |
+| T4 | New connections, concurrent | `run_test`, pass 2 | `errors=0`, `ok` equals `REQUESTS` |
+| T5 | Provider cached | profile from `run_test` | no time under `tls::lib::provider` |
+| T6 | Application traffic | `oc -n online-boutique-ambient exec mesh-client -- curl -s -o /dev/null -w '%{http_code}\n' http://frontend/` | `200`. The page makes several gRPC calls across both nodes. |
+| T7 | Clean logs | `oc -n ztunnel logs ds/ztunnel --since=15m \| grep -iE 'tls\|handshake\|certificate' \| grep -iE 'error\|fail' \| head` | no output |
+
+For V1 run all seven. For V2 and V3, T1, T2, T3, T6 and T7 are enough, with a shorter
+pass: `REQUESTS=200`.
+
+### Procedure
+
+**1. Build the images.** One per backend, on the same base image as step 1:
+
+```bash
+for b in aws-lc ring boring; do
+  BACKEND=$b ./service-mesh/ambient/ztunnel-openssl-provider/build-test-image.sh \
+    "$BASE" <registry>/<namespace>/ztunnel:patched-$b
+done
+```
+
+Note each digest. The OpenSSL image is the patched image from step 1, rebuilt from both
+patches: `build-test-image.sh` applies every `0*.patch`. These binaries carry their own
+crypto and do not use the image's OpenSSL. The aws-lc and boring builds need CMake and
+Clang (and Go for boring) from the UBI repositories.
+
+**2. Prepare.** As in step 2: `loadgenerator` at 0, `load-client` and `mesh-client`
+running, the helpers loaded, and the step 2 env settings in place. Remove
+`OPENSSL_FORCE_FIPS_MODE` if it is still set. It affects only OpenSSL.
+
+```bash
+zt_patch '{"spec":{"values":{"ztunnel":{"env":{"OPENSSL_FORCE_FIPS_MODE":null}}}}}'
+oc apply -f service-mesh/ambient/online-boutique/mesh-client.yaml
+```
+
+**3. For each backend, run V1:**
+
+```bash
+IMG=<registry>/<namespace>/ztunnel@sha256:<digest for this backend>
+zt_patch "{\"spec\":{\"values\":{\"ztunnel\":{\"image\":\"$IMG\"}}}}"
+zt_status                                                    # T1
+istioctl ztunnel-config certificates -n ztunnel | head       # T2
+run_test V1-aws-lc                                           # T3, T4, T5
+go tool pprof -top -focus='tls::lib::provider' $D/results/V1-aws-lc/cpu-client-ztunnel.pb 2>/dev/null | grep -E '^Showing nodes'
+oc -n online-boutique-ambient exec mesh-client -- curl -s -o /dev/null -w '%{http_code}\n' http://frontend/   # T6
+oc -n ztunnel logs ds/ztunnel --since=15m | grep -iE 'tls|handshake|certificate' | grep -iE 'error|fail' | head  # T7
+```
+
+Use labels `V1-ring` and `V1-boring` for the others.
+
+**4. Then V2 and V3 on the backends that use them,** with the image of that backend in
+place:
+
+```bash
+zt_patch '{"spec":{"values":{"ztunnel":{"env":{"TLS12_ENABLED":"true"}}}}}'
+zt_status; istioctl ztunnel-config certificates -n ztunnel | head
+REQUESTS=200 run_test V2-aws-lc
+# T6 and T7 as above
+zt_patch '{"spec":{"values":{"ztunnel":{"env":{"TLS12_ENABLED":null,"COMPLIANCE_POLICY":"pqc"}}}}}'
+zt_status; istioctl ztunnel-config certificates -n ztunnel | head
+REQUESTS=200 run_test V3-aws-lc
+# T6 and T7 as above
+zt_patch '{"spec":{"values":{"ztunnel":{"env":{"COMPLIANCE_POLICY":null}}}}}'
+```
+
+V2 adds TLS 1.2 suites, but two ztunnels still agree on TLS 1.3. The run checks that the
+provider builds and works with the longer list. V3 also needs istiod to accept
+X25519MLKEM768 for T2.
+
+**5. If a check fails,** repeat it with an unpatched build of the same backend before
+counting it against the change:
+
+```bash
+BACKEND=aws-lc PATCHES=none ./service-mesh/ambient/ztunnel-openssl-provider/build-test-image.sh \
+  "$BASE" <registry>/<namespace>/ztunnel:unpatched-aws-lc
+```
+
+Only a failure that the unpatched build does not have is caused by the change.
+
+### Exit criteria
+
+Every applicable check passes in every run, or fails the same way with the unpatched
+build of that backend.
+
+### Results
+
+| Run | Backend | Config | T1 | T2 | T3 | T4 | T5 | T6 | T7 | p50 seq (ms) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| D | OpenSSL | V1 | pass | not checked | pass | pass | pass (0%) | not checked | not checked | 6.11 |
+| V2-openssl | OpenSSL | V2 | | | | | | | | |
+| V3-openssl | OpenSSL | V3 | | | | | | | | |
+| V1-aws-lc | aws-lc | V1 | | | | | | | | |
+| V2-aws-lc | aws-lc | V2 | | | | | | | | |
+| V3-aws-lc | aws-lc | V3 | | | | | | | | |
+| V1-ring | ring | V1 | | | | | | | | |
+| V2-ring | ring | V2 | | | | | | | | |
+| V1-boring | boring | V1 | | | | | | | | |
+
+For the OpenSSL V2 and V3 runs, use the patched OpenSSL image. Run D was built from the
+first patch only, but the OpenSSL code is the same with both.
+
 ## Clean up
 
 Put ztunnel back. Setting a key to `null` in a merge patch removes it.
 
 ```bash
 zt_patch '{"spec":{"values":{"ztunnel":{"image":null,"env":{
-  "POOL_MAX_STREAMS_PER_CONNECTION":null,"ZTUNNEL_WORKER_THREADS":null,"OPENSSL_FORCE_FIPS_MODE":null}}}}}'
+  "POOL_MAX_STREAMS_PER_CONNECTION":null,"ZTUNNEL_WORKER_THREADS":null,"OPENSSL_FORCE_FIPS_MODE":null,
+  "TLS12_ENABLED":null,"COMPLIANCE_POLICY":null}}}}}'
 oc get ztunnel default -o jsonpath='{.spec.values.ztunnel}{"\n"}'
 ```
 

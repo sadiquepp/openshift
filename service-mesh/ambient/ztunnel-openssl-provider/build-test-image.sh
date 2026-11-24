@@ -16,7 +16,8 @@
 #   SOURCE_URL      ztunnel git repo, if the base image does not record it
 #   SOURCE_COMMIT   ztunnel commit, if the base image does not record it
 #   WORK            source checkout directory (default ./.work/ztunnel)
-#   PATCHES         patch files to apply, in order (default ./0*.patch)
+#   PATCHES         patch files to apply, in order (default ./0*.patch), or "none"
+#                   for an unpatched control build of the same backend
 #
 # Needs podman and git, and `podman login` to the base image's registry
 # (registry.redhat.io for OSSM) and to the target registry. Build on a host of
@@ -29,7 +30,9 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 BACKEND=${BACKEND:-openssl}
 PLATFORM=${PLATFORM:-linux/amd64}
 WORK=${WORK:-$HERE/.work/ztunnel}
-if [ -n "${PATCHES:-}" ]; then
+if [ "${PATCHES:-}" = none ]; then
+  PATCH_LIST=()
+elif [ -n "${PATCHES:-}" ]; then
   read -r -a PATCH_LIST <<<"$PATCHES"
 else
   PATCH_LIST=("$HERE"/0*.patch)
@@ -103,8 +106,10 @@ done
 git -C "$WORK" log --oneline -$((${#PATCH_LIST[@]} + 1))
 
 # A build with only the OpenSSL-only patch has no shared provider; check for its own symbol.
+# An unpatched control build (PATCHES=none) has neither.
 EXPECT=$MARKER
 git -C "$WORK" grep -q 'static PROVIDER' -- src/tls/lib.rs || EXPECT=$MARKER_OPENSSL_ONLY
+[ "${#PATCH_LIST[@]}" -eq 0 ] && EXPECT=""
 if [ "$EXPECT" = "$MARKER_OPENSSL_ONLY" ] && [ "$BACKEND" != openssl ]; then
   echo "The applied patches only change the OpenSSL backend; BACKEND=$BACKEND would test nothing." >&2
   exit 1
@@ -123,11 +128,14 @@ podman build --platform "$PLATFORM" \
 
 say "Verifying $TARGET"
 extract_binary "$TARGET" "$HERE/.work/ztunnel-test" >/dev/null
-if ! grep -a -q "$EXPECT" "$HERE/.work/ztunnel-test"; then
+if [ -z "$EXPECT" ]; then
+  echo "patch:   none (unpatched control build)"
+elif grep -a -q "$EXPECT" "$HERE/.work/ztunnel-test"; then
+  echo "patch:   present"
+else
   echo "The built image does not contain the patch." >&2
   exit 1
 fi
-echo "patch:   present"
 echo "backend: $BACKEND"
 [ "$BACKEND" = openssl ] &&
   echo "rustls-openssl: $(grep -a -o 'rustls-openssl-0\.[0-9]*\.[0-9]*' "$HERE/.work/ztunnel-test" | head -1)"
