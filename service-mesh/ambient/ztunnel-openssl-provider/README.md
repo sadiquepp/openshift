@@ -402,6 +402,7 @@ The helpers in `test-lib.sh`, for reference:
 | `nodes` | sets `CLIENT_NODE` and `SERVER_NODE` |
 | `zt_patch '<json>'` | merge-patches the `ZTunnel` CR and waits until the DaemonSet has changed and rolled out |
 | `zt_status` | per node: ztunnel pod, image digest, number of `fips.so` mappings; plus the test env vars |
+| `zt_certs` | per node: the workload certificates that node's ztunnel holds |
 | `fips_maps <node>` | how many times the FIPS provider (`ossl-modules/fips.so`) is mapped into that node's ztunnel process; above 0 means FIPS mode is on in that process |
 | `zt_cpu <node>` | CPU seconds used so far by that node's ztunnel |
 | `churn <requests> <workers>` | runs `churn.sh` in `load-client` |
@@ -717,7 +718,7 @@ default configuration on OpenSSL) is run D.
 | ID | Check | How | Passes when |
 |---|---|---|---|
 | T1 | Rollout | `zt_status` | the backend's image digest on both nodes |
-| T2 | Certificates from istiod | `istioctl ztunnel-config certificates -n ztunnel` | workload certificates listed, valid, not expired. ztunnel fetches them over TLS through the provider. |
+| T2 | Certificates from istiod | `zt_certs` | on both nodes, the Online Boutique workload certificates are listed with status `Available`, `VALID CERT` `true` and a `NOT AFTER` date in the future. ztunnel fetches them from istiod over TLS, through the provider. |
 | T3 | New connections, one at a time | `run_test`, pass 1 | `errors=0`, `ok` equals `REQUESTS` |
 | T4 | New connections, concurrent | `run_test`, pass 2 | `errors=0`, `ok` equals `REQUESTS` |
 | T5 | Provider cached | profile from `run_test` | no time under `tls::lib::provider` |
@@ -752,32 +753,37 @@ zt_patch '{"spec":{"values":{"ztunnel":{"env":{"OPENSSL_FORCE_FIPS_MODE":null}}}
 oc apply -f service-mesh/ambient/online-boutique/mesh-client.yaml
 ```
 
-**3. For each backend, run V1:**
+**3. For each backend, run V1.** Set `B` to the backend and `IMG` to its image, then
+run the block. Repeat with `B=ring` and `B=boring` and their images. `B` names the
+results folder, so each run keeps its own results.
 
 ```bash
-IMG=<registry>/<namespace>/ztunnel@sha256:<digest for this backend>
+B=aws-lc
+IMG=<registry>/<namespace>/ztunnel@sha256:<digest of the $B image>
+
 zt_patch "{\"spec\":{\"values\":{\"ztunnel\":{\"image\":\"$IMG\"}}}}"
-zt_status                                                    # T1
-istioctl ztunnel-config certificates -n ztunnel | head       # T2
-run_test V1-aws-lc                                           # T3, T4, T5
-go tool pprof -top -focus='tls::lib::provider' $D/results/V1-aws-lc/cpu-client-ztunnel.pb 2>/dev/null | grep -E '^Showing nodes'
-oc -n online-boutique-ambient exec mesh-client -- curl -s -o /dev/null -w '%{http_code}\n' http://frontend/   # T6
-oc -n ztunnel logs ds/ztunnel --since=15m | grep -iE 'tls|handshake|certificate' | grep -iE 'error|fail' | head  # T7
+zt_status                                                     # T1
+zt_certs                                                      # T2
+run_test V1-$B                                                # T3, T4, T5
+go tool pprof -top -focus='tls::lib::provider' $D/results/V1-$B/cpu-client-ztunnel.pb 2>/dev/null | grep -E '^Showing nodes'
+oc -n online-boutique-ambient exec mesh-client -- curl -s -o /dev/null -w '%{http_code}\n' http://frontend/    # T6
+oc -n ztunnel logs ds/ztunnel --since=15m | grep -iE 'tls|handshake|certificate' | grep -iE 'error|fail' | head   # T7
 ```
 
-Use labels `V1-ring` and `V1-boring` for the others.
+If you open a new shell partway through, run `source $D/test-lib.sh` and `nodes` again
+first.
 
 **4. Then V2 and V3 on the backends that use them,** with the image of that backend in
 place:
 
 ```bash
 zt_patch '{"spec":{"values":{"ztunnel":{"env":{"TLS12_ENABLED":"true"}}}}}'
-zt_status; istioctl ztunnel-config certificates -n ztunnel | head
-REQUESTS=200 run_test V2-aws-lc
+zt_status; zt_certs
+REQUESTS=200 run_test V2-$B
 # T6 and T7 as above
 zt_patch '{"spec":{"values":{"ztunnel":{"env":{"TLS12_ENABLED":null,"COMPLIANCE_POLICY":"pqc"}}}}}'
-zt_status; istioctl ztunnel-config certificates -n ztunnel | head
-REQUESTS=200 run_test V3-aws-lc
+zt_status; zt_certs
+REQUESTS=200 run_test V3-$B
 # T6 and T7 as above
 zt_patch '{"spec":{"values":{"ztunnel":{"env":{"COMPLIANCE_POLICY":null}}}}}'
 ```

@@ -31,6 +31,14 @@ nodes() {
   fi
 }
 
+# Fails with a hint unless `nodes` has set CLIENT_NODE and SERVER_NODE in this shell.
+need_nodes() {
+  if [ -z "${CLIENT_NODE:-}" ] || [ -z "${SERVER_NODE:-}" ]; then
+    echo "CLIENT_NODE and SERVER_NODE are not set in this shell: run nodes first" >&2
+    return 1
+  fi
+}
+
 # ztunnel pod name on node $1.
 zt_pod() {
   oc -n ztunnel get pod -l app=ztunnel --field-selector spec.nodeName="$1" \
@@ -79,6 +87,7 @@ zt_patch() {
 
 # What is running: image digest and FIPS state per node, and the test env vars.
 zt_status() {
+  need_nodes || return 1
   oc -n ztunnel rollout status ds/ztunnel --timeout=5m >/dev/null || return 1
   local n p
   for n in "$CLIENT_NODE" "$SERVER_NODE"; do
@@ -95,6 +104,17 @@ zt_status() {
   echo
 }
 
+# Workload certificates held by each node's ztunnel, which fetched them from istiod
+# over TLS. zt_certs [lines-per-node]
+zt_certs() {
+  need_nodes || return 1
+  local n
+  for n in "$CLIENT_NODE" "$SERVER_NODE"; do
+    echo "== $n"
+    istioctl ztunnel-config certificates "$(zt_pod "$n")" -n ztunnel | head -n "${1:-8}"
+  done
+}
+
 # Runs churn.sh in load-client: churn <requests> <workers>
 churn() {
   oc -n "$NS" exec -i load-client -- sh -s -- "$1" "$2" < "$D/churn.sh"
@@ -106,6 +126,7 @@ churn() {
 run_test() {
   local label=${1:?usage: run_test <label>}
   local out=$RESULTS/$label c0 s0 c1 s1 t0 secs pf prof monitor=0
+  need_nodes || return 1
   mkdir -p "$out"
   # Interactive bash announces background jobs: "[1] 1234" on stderr when they start
   # (silenced by the { … & } 2>/dev/null wrappers below) and "Done" when they end
