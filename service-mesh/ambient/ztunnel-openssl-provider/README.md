@@ -403,6 +403,7 @@ The helpers in `test-lib.sh`, for reference:
 | `zt_patch '<json>'` | merge-patches the `ZTunnel` CR and waits until the DaemonSet has changed and rolled out |
 | `zt_status` | per node: ztunnel pod, image digest, number of `fips.so` mappings; plus the test env vars |
 | `zt_certs` | per node: the workload certificates that node's ztunnel holds |
+| `zt_tls_errors` | per node: TLS, handshake or certificate errors in that node's ztunnel logs from the last 15 minutes |
 | `fips_maps <node>` | how many times the FIPS provider (`ossl-modules/fips.so`) is mapped into that node's ztunnel process; above 0 means FIPS mode is on in that process |
 | `zt_cpu <node>` | CPU seconds used so far by that node's ztunnel |
 | `churn <requests> <workers>` | runs `churn.sh` in `load-client` |
@@ -723,7 +724,7 @@ default configuration on OpenSSL) is run D.
 | T4 | New connections, concurrent | `run_test`, pass 2 | `errors=0`, `ok` equals `REQUESTS` |
 | T5 | Provider cached | profile from `run_test` | no time under `tls::lib::provider` |
 | T6 | Application traffic | `oc -n online-boutique-ambient exec mesh-client -- curl -s -o /dev/null -w '%{http_code}\n' http://frontend/` | `200`. The page makes several gRPC calls across both nodes. |
-| T7 | Clean logs | `oc -n ztunnel logs ds/ztunnel --since=15m \| grep -iE 'tls\|handshake\|certificate' \| grep -iE 'error\|fail' \| head` | no output |
+| T7 | Clean logs | `zt_tls_errors` | no lines under either node |
 
 For V1 run all seven. For V2 and V3, T1, T2, T3, T6 and T7 are enough, with a shorter
 pass: `REQUESTS=200`.
@@ -767,7 +768,7 @@ zt_certs                                                      # T2
 run_test V1-$B                                                # T3, T4, T5
 go tool pprof -top -focus='tls::lib::provider' $D/results/V1-$B/cpu-client-ztunnel.pb 2>/dev/null | grep -E '^Showing nodes'
 oc -n online-boutique-ambient exec mesh-client -- curl -s -o /dev/null -w '%{http_code}\n' http://frontend/    # T6
-oc -n ztunnel logs ds/ztunnel --since=15m | grep -iE 'tls|handshake|certificate' | grep -iE 'error|fail' | head   # T7
+zt_tls_errors                                                 # T7
 ```
 
 If you open a new shell partway through, run `source $D/test-lib.sh` and `nodes` again

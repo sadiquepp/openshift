@@ -115,6 +115,18 @@ zt_certs() {
   done
 }
 
+# TLS, handshake or certificate errors logged by each node's ztunnel in the last
+# 15 minutes (or $1, e.g. 30m). No lines under a node means none.
+zt_tls_errors() {
+  need_nodes || return 1
+  local n
+  for n in "$CLIENT_NODE" "$SERVER_NODE"; do
+    echo "== $n"
+    oc -n ztunnel logs "$(zt_pod "$n")" --since="${1:-15m}" |
+      grep -iE 'tls|handshake|certificate' | grep -iE 'error|fail' | head
+  done
+}
+
 # Runs churn.sh in load-client: churn <requests> <workers>
 churn() {
   oc -n "$NS" exec -i load-client -- sh -s -- "$1" "$2" < "$D/churn.sh"
