@@ -795,14 +795,17 @@ V2 adds TLS 1.2 suites, but two ztunnels still agree on TLS 1.3. The run checks 
 provider builds and works with the longer list. V3 also needs istiod to accept
 X25519MLKEM768 for T2.
 
-**Don't profile aws-lc with `COMPLIANCE_POLICY=pqc`.** In the first test, the aws-lc
-ztunnel crashed (exit code 139) about a second after the CPU profile started, twice in
-a row. The kernel logged a `general protection fault` in `libgcc_s`, the library the
-profiler uses to walk call stacks. Every V3 request until then had succeeded, and V1 and
-V2 on the same image profiled cleanly, so the profiler's stack walk most likely fails in
-aws-lc's post-quantum (ML-KEM) code. The crash comes from the `/debug/pprof` profiler,
-not from serving traffic, so run V3 on aws-lc with `PROFILE=0` and leave T5 unchecked
-there. `run_test` warns if a ztunnel restarts during a run.
+**Don't profile aws-lc with `COMPLIANCE_POLICY=pqc`, or boring at all.** In the first
+test, ztunnel crashed (exit code 139) about a second after the CPU profile started:
+twice in a row on aws-lc V3, and once on boring V1. Each time the kernel logged a
+`general protection fault` in `libgcc_s`, the library the profiler uses to walk call
+stacks. Every request until then had succeeded, and the same loads ran without a restart
+when not profiled. aws-lc V1 and V2, ring, and OpenSSL profiled cleanly. So the
+profiler's stack walk most likely fails in hand-written assembly: aws-lc's post-quantum
+(ML-KEM) code, and BoringSSL's code. The crash comes from the `/debug/pprof` profiler,
+not from serving traffic, so run those with `PROFILE=0` and leave T5 unchecked there.
+The unit test `test_provider_is_cached` covers caching on every backend. `run_test` warns
+if a ztunnel restarts during a run.
 
 **5. If a check fails,** repeat it with an unpatched build of the same backend before
 counting it against the change:
@@ -821,20 +824,49 @@ build of that backend.
 
 ### Results
 
+From the first run of this plan, on the same lab cluster as the earlier results, with
+OSSM ztunnel `v1.31.1`, `REQUESTS=1000` for V1 and `REQUESTS=200` for V2 and V3:
+
 | Run | Backend | Config | T1 | T2 | T3 | T4 | T5 | T6 | T7 | p50 seq (ms) |
 |---|---|---|---|---|---|---|---|---|---|---|
 | D | OpenSSL | V1 | pass | not checked | pass | pass | pass (0%) | not checked | not checked | 6.11 |
-| V2-openssl | OpenSSL | V2 | | | | | | | | |
-| V3-openssl | OpenSSL | V3 | | | | | | | | |
-| V1-aws-lc | aws-lc | V1 | | | | | | | | |
-| V2-aws-lc | aws-lc | V2 | | | | | | | | |
-| V3-aws-lc | aws-lc | V3 | | | | | | | | |
-| V1-ring | ring | V1 | | | | | | | | |
-| V2-ring | ring | V2 | | | | | | | | |
-| V1-boring | boring | V1 | | | | | | | | |
+| V2-openssl | OpenSSL | V2 | pass | pass | pass | pass | not checked | pass | pass | 7.16 |
+| V3-openssl | OpenSSL | V3 | pass | pass | pass | pass | not run (`PROFILE=0`) | pass | pass | 7.32 |
+| V1-aws-lc | aws-lc | V1 | pass | pass | pass | pass | pass (0%) | pass | pass | 5.15 |
+| V2-aws-lc | aws-lc | V2 | pass | pass | pass | pass | not checked | pass | pass | 5.71 |
+| V3-aws-lc | aws-lc | V3 | pass | pass | pass | pass (`PROFILE=0`) | not possible: profiler crash | pass | pass | 5.56 |
+| V1-ring | ring | V1 | pass | pass | pass | pass | pass (0%) | pass | pass | 5.11 |
+| V2-ring | ring | V2 | pass | pass | pass | pass | not checked | pass | pass | 5.10 |
+| V1-boring | boring | V1 | pass | pass | pass | pass (`PROFILE=0`) | not possible: profiler crash | pass | pass | 14.14 |
 
-For the OpenSSL V2 and V3 runs, use the patched OpenSSL image. Run D was built from the
-first patch only, but the OpenSSL code is the same with both.
+All runs had `errors=0` in both passes. For the OpenSSL V2 and V3 runs, the image was the
+patched image from step 1, built from the first patch only. Its OpenSSL code is the same
+as with both patches.
+
+**Outcome:** the exit criteria are met. ztunnel built with each of the four backends
+worked end to end with the cached provider, in every configuration that changes what the
+provider contains:
+
+- **Certificates (T2):** after each restart, istiod issued new workload certificates to
+  the new ztunnels, so the TLS connection to istiod worked through the cached provider.
+  That includes the post-quantum key exchange on OpenSSL and aws-lc (V3).
+- **New connections (T3, T4):** every request opened a new mTLS connection on both
+  ztunnels, and none failed.
+- **The application (T6) and the logs (T7):** the application answered every time, and
+  there were no TLS errors apart from those caused by the profiler crashes below.
+
+Two observations unrelated to the change:
+
+- **The profiler crashes ztunnel** on aws-lc with `COMPLIANCE_POLICY=pqc` and on boring,
+  as described in the procedure. The crash is in the `/debug/pprof` stack walk
+  (`libgcc_s`), not in the cached provider. Whether it also happens without the patch is
+  not checked yet. That needs an unpatched build (`PATCHES=none`), and it would be
+  needed before reporting the crash upstream as a separate issue.
+- **boring is slower:** p50 14.14 ms sequential and 42.86 ms concurrent, against about
+  5 ms and 6 ms for aws-lc and ring. ztunnel used 6.5 ms of CPU per request against about
+  2 ms. For boring, the cached provider only saves copying a few static tables, so this
+  comes from the BoringSSL build, not from the change. An unpatched boring build would
+  confirm it.
 
 ## Clean up
 
