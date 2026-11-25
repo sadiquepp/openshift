@@ -11,12 +11,15 @@
 #   REQUESTS  timed requests per pass          (default 1000)
 #   WORKERS   background loops, concurrent pass (default 4)
 #   RESULTS   where results are written        (default $D/results)
+#   PROFILE   0 to skip the CPU profile in pass 2 (default 1). Profiling the aws-lc
+#             build with COMPLIANCE_POLICY=pqc crashes ztunnel; see README.
 
 D=${D:-service-mesh/ambient/ztunnel-openssl-provider}
 NS=${NS:-online-boutique-ambient}
 REQUESTS=${REQUESTS:-1000}
 WORKERS=${WORKERS:-4}
 RESULTS=${RESULTS:-$D/results}
+PROFILE=${PROFILE:-1}
 PPROF_PORT=${PPROF_PORT:-25000}
 
 # Sets CLIENT_NODE (load-client) and SERVER_NODE (frontend).
@@ -177,18 +180,23 @@ run_test() {
     printf "ztunnel CPU per request: client %.3f ms, server %.3f ms (%d requests, window %ds incl. ~10s idle)\n",
       (c1 - c0) * 1000 / n, (s1 - s0) * 1000 / n, n, t }' | tee "$out/cpu-per-request.txt"
 
-  echo "== $label: pass 2, $REQUESTS requests + $WORKERS concurrent loops, profiling client ztunnel"
-  { oc -n ztunnel port-forward "pod/$(zt_pod "$CLIENT_NODE")" "$PPROF_PORT:15000" >/dev/null 2>&1 & } 2>/dev/null
-  pf=$!
-  sleep 3
-  { curl -sS -o "$out/cpu-client-ztunnel.pb" \
-      "http://localhost:$PPROF_PORT/debug/pprof/profile?seconds=30&frequency=1000" 2>"$out/pprof.err" & } 2>/dev/null
-  prof=$!
-  churn "$REQUESTS" "$WORKERS" | tee "$out/latency-concurrent.txt"
-  wait "$prof" || echo "warning: profile capture failed: $(cat "$out/pprof.err")" >&2
-  kill "$pf" 2>/dev/null
-  wait "$pf" 2>/dev/null
-  ls -l "$out/cpu-client-ztunnel.pb"
+  if [ "$PROFILE" = 0 ]; then
+    echo "== $label: pass 2, $REQUESTS requests + $WORKERS concurrent loops (no profile: PROFILE=0)"
+    churn "$REQUESTS" "$WORKERS" | tee "$out/latency-concurrent.txt"
+  else
+    echo "== $label: pass 2, $REQUESTS requests + $WORKERS concurrent loops, profiling client ztunnel"
+    { oc -n ztunnel port-forward "pod/$(zt_pod "$CLIENT_NODE")" "$PPROF_PORT:15000" >/dev/null 2>&1 & } 2>/dev/null
+    pf=$!
+    sleep 3
+    { curl -sS -o "$out/cpu-client-ztunnel.pb" \
+        "http://localhost:$PPROF_PORT/debug/pprof/profile?seconds=30&frequency=1000" 2>"$out/pprof.err" & } 2>/dev/null
+    prof=$!
+    churn "$REQUESTS" "$WORKERS" | tee "$out/latency-concurrent.txt"
+    wait "$prof" || echo "warning: profile capture failed: $(cat "$out/pprof.err")" >&2
+    kill "$pf" 2>/dev/null
+    wait "$pf" 2>/dev/null
+    ls -l "$out/cpu-client-ztunnel.pb"
+  fi
   [ "$monitor" = 1 ] && set -m
   r1=$(zt_restarts)
   if [ "$r0" != "$r1" ]; then

@@ -404,12 +404,14 @@ The helpers in `test-lib.sh`, for reference:
 | `zt_status` | per node: ztunnel pod, image digest, number of `fips.so` mappings; plus the test env vars |
 | `zt_certs` | per node: the workload certificates that node's ztunnel holds |
 | `zt_tls_errors` | per node: TLS, handshake or certificate errors in that node's ztunnel logs from the last 15 minutes |
+| `zt_restarts` | both test nodes' ztunnel pods and their restart counts |
 | `fips_maps <node>` | how many times the FIPS provider (`ossl-modules/fips.so`) is mapped into that node's ztunnel process; above 0 means FIPS mode is on in that process |
 | `zt_cpu <node>` | CPU seconds used so far by that node's ztunnel |
 | `churn <requests> <workers>` | runs `churn.sh` in `load-client` |
 | `run_test <label>` | a full run: status, warm-up, sequential pass with CPU per request, concurrent pass with a CPU profile. Results go to `$D/results/<label>/` |
 
 `REQUESTS` (default 1000) and `WORKERS` (default 4) set the size of each pass.
+`PROFILE=0` skips the CPU profile in the concurrent pass.
 
 ## 3. Run A: stock image, FIPS off
 
@@ -784,7 +786,7 @@ REQUESTS=200 run_test V2-$B
 # T6 and T7 as above
 zt_patch '{"spec":{"values":{"ztunnel":{"env":{"TLS12_ENABLED":null,"COMPLIANCE_POLICY":"pqc"}}}}}'
 zt_status; zt_certs
-REQUESTS=200 run_test V3-$B
+PROFILE=0 REQUESTS=200 run_test V3-$B      # no profile on aws-lc: see the note below
 # T6 and T7 as above
 zt_patch '{"spec":{"values":{"ztunnel":{"env":{"COMPLIANCE_POLICY":null}}}}}'
 ```
@@ -792,6 +794,15 @@ zt_patch '{"spec":{"values":{"ztunnel":{"env":{"COMPLIANCE_POLICY":null}}}}}'
 V2 adds TLS 1.2 suites, but two ztunnels still agree on TLS 1.3. The run checks that the
 provider builds and works with the longer list. V3 also needs istiod to accept
 X25519MLKEM768 for T2.
+
+**Don't profile aws-lc with `COMPLIANCE_POLICY=pqc`.** In the first test, the aws-lc
+ztunnel crashed (exit code 139) about a second after the CPU profile started, twice in
+a row. The kernel logged a `general protection fault` in `libgcc_s`, the library the
+profiler uses to walk call stacks. Every V3 request until then had succeeded, and V1 and
+V2 on the same image profiled cleanly, so the profiler's stack walk most likely fails in
+aws-lc's post-quantum (ML-KEM) code. The crash comes from the `/debug/pprof` profiler,
+not from serving traffic, so run V3 on aws-lc with `PROFILE=0` and leave T5 unchecked
+there. `run_test` warns if a ztunnel restarts during a run.
 
 **5. If a check fails,** repeat it with an unpatched build of the same backend before
 counting it against the change:
