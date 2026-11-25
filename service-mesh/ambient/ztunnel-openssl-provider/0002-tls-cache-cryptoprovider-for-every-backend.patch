@@ -1,0 +1,144 @@
+From 3ac143fb4661081dc31ad05a3a641b7a40c88e02 Mon Sep 17 00:00:00 2001
+From: Sadique <sputhenp@redhat.com>
+Date: Tue, 24 Nov 2026 12:32:59 +0800
+Subject: [PATCH] tls: cache the CryptoProvider for every crypto backend
+
+Extend the cached provider to the aws-lc, ring and boring backends so
+all four follow the same model: a single process-wide PROVIDER built on
+first use, and one build_provider() per backend with its previous body
+unchanged.
+
+For aws-lc, ring and boring, building a provider only copies static
+tables into a few small Vecs, so this is a consistency change rather
+than a performance fix. It also means a future backend release that
+makes default_provider() more expensive, as rustls-openssl 0.4.2 did,
+cannot reintroduce per-connection cost.
+
+The cached-provider test now runs for every backend.
+---
+ src/tls/lib.rs | 57 ++++++++++++++++++++++----------------------------
+ 1 file changed, 25 insertions(+), 32 deletions(-)
+
+diff --git a/src/tls/lib.rs b/src/tls/lib.rs
+index cc99828..d713cf3 100644
+--- a/src/tls/lib.rs
++++ b/src/tls/lib.rs
+@@ -19,7 +19,6 @@ use crate::PQC_ENABLED;
+ use crate::TLS12_ENABLED;
+ use crate::identity::{self, Identity};
+ 
+-#[cfg(feature = "tls-openssl")]
+ use once_cell::sync::Lazy;
+ #[cfg(feature = "tls-openssl")]
+ use std::env;
+@@ -121,15 +120,27 @@ pub static CRYPTO_PROVIDER: &str = "tls-openssl";
+ // One exception is CSR generation which doesn't currently have a plugin mechanism (https://github.com/rustls/rcgen/issues/228);
+ // In that case, and any future ones, it is critical to guard the code with appropriate `cfg` guards.
+ 
+-#[cfg(feature = "tls-boring")]
++// The provider is built once per process, on first use. Every input (the crypto backend,
++// MESH_CIPHER_SUITES, TLS12_ENABLED, PQC_ENABLED and, for OpenSSL, the FIPS state) is fixed for
++// the life of the process, and provider() is called several times per new connection. Building
++// one can be expensive: for example, `rustls_openssl::default_provider()` probes each default key
++// exchange group by generating and discarding a real key pair (inside the FIPS provider when FIPS
++// is enabled, since rustls-openssl 0.4.2).
++static PROVIDER: Lazy<Arc<CryptoProvider>> = Lazy::new(|| Arc::new(build_provider()));
++
+ pub(super) fn provider() -> Arc<CryptoProvider> {
++    PROVIDER.clone()
++}
++
++#[cfg(feature = "tls-boring")]
++fn build_provider() -> CryptoProvider {
+     // Due to 'fips-only' feature on the boring provider, this will use only AES_256_GCM_SHA384
+     // and AES_128_GCM_SHA256
+-    Arc::new(boring_rustls_provider::provider())
++    boring_rustls_provider::provider()
+ }
+ 
+ #[cfg(feature = "tls-ring")]
+-pub(super) fn provider() -> Arc<CryptoProvider> {
++fn build_provider() -> CryptoProvider {
+     let mut cipher_suites = vec![
+         rustls::crypto::ring::cipher_suite::TLS13_AES_256_GCM_SHA384,
+         rustls::crypto::ring::cipher_suite::TLS13_AES_128_GCM_SHA256,
+@@ -143,14 +154,14 @@ pub(super) fn provider() -> Arc<CryptoProvider> {
+             rustls::crypto::ring::cipher_suite::TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+         ]);
+     }
+-    Arc::new(CryptoProvider {
++    CryptoProvider {
+         cipher_suites,
+         ..rustls::crypto::ring::default_provider()
+-    })
++    }
+ }
+ 
+ #[cfg(feature = "tls-aws-lc")]
+-pub(super) fn provider() -> Arc<CryptoProvider> {
++fn build_provider() -> CryptoProvider {
+     let mut cipher_suites = vec![
+         rustls::crypto::aws_lc_rs::cipher_suite::TLS13_AES_256_GCM_SHA384,
+         rustls::crypto::aws_lc_rs::cipher_suite::TLS13_AES_128_GCM_SHA256,
+@@ -173,28 +184,11 @@ pub(super) fn provider() -> Arc<CryptoProvider> {
+         provider.kx_groups = vec![rustls::crypto::aws_lc_rs::kx_group::X25519MLKEM768]
+     }
+ 
+-    Arc::new(provider)
++    provider
+ }
+ 
+-// Built once per process. Every input (MESH_CIPHER_SUITES, TLS12_ENABLED, PQC_ENABLED and the
+-// OpenSSL FIPS state) is fixed for the life of the process, so there is nothing to rebuild.
+-//
+-// Building the provider is expensive: `rustls_openssl::default_provider()` probes every default
+-// key exchange group by calling `start()`, which generates and discards a real key pair. Since
+-// rustls-openssl 0.4.2 that runs through `EVP_PKEY_keygen`, i.e. inside the FIPS provider when
+-// FIPS is enabled, and `provider()` is called several times per connection (connector setup and
+-// certificate/signature verification). Rebuilding it on every call stalled a tokio worker for
+-// ~10ms per new double-HBONE connection on FIPS-enabled nodes.
+-#[cfg(feature = "tls-openssl")]
+-static OPENSSL_PROVIDER: Lazy<Arc<CryptoProvider>> = Lazy::new(build_openssl_provider);
+-
+ #[cfg(feature = "tls-openssl")]
+-pub(super) fn provider() -> Arc<CryptoProvider> {
+-    OPENSSL_PROVIDER.clone()
+-}
+-
+-#[cfg(feature = "tls-openssl")]
+-fn build_openssl_provider() -> Arc<CryptoProvider> {
++fn build_provider() -> CryptoProvider {
+     let cipher_suites = if let Some(suites) = MESH_CIPHER_SUITES.as_ref() {
+         suites.clone()
+     } else {
+@@ -242,11 +236,11 @@ fn build_openssl_provider() -> Arc<CryptoProvider> {
+         groups
+     };
+ 
+-    Arc::new(CryptoProvider {
++    CryptoProvider {
+         cipher_suites,
+         kx_groups,
+         ..rustls_openssl::default_provider()
+-    })
++    }
+ }
+ 
+ /// Returns true if the given [`std::io::Error`] wraps a rustls
+@@ -393,10 +387,9 @@ pub mod tests {
+     }
+ 
+     #[test]
+-    #[cfg(feature = "tls-openssl")]
+-    fn test_openssl_provider_is_cached() {
+-        // provider() is on the per-connection path; it must not rebuild (and re-probe) the
+-        // CryptoProvider on every call.
++    fn test_provider_is_cached() {
++        // provider() is on the per-connection path; it must not rebuild the CryptoProvider on
++        // every call.
+         let a = super::provider();
+         let b = super::provider();
+         assert!(
+-- 
+2.43.0
+

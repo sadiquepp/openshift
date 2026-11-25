@@ -11,12 +11,15 @@
 #   REQUESTS  timed requests per pass          (default 1000)
 #   WORKERS   background loops, concurrent pass (default 4)
 #   RESULTS   where results are written        (default $D/results)
+#   PROFILE   0 to skip the CPU profile in pass 2 (default 1). Profiling the aws-lc
+#             build with COMPLIANCE_POLICY=pqc crashes ztunnel; see README.
 
 D=${D:-service-mesh/ambient/ztunnel-openssl-provider}
 NS=${NS:-online-boutique-ambient}
 REQUESTS=${REQUESTS:-1000}
 WORKERS=${WORKERS:-4}
 RESULTS=${RESULTS:-$D/results}
+PROFILE=${PROFILE:-1}
 PPROF_PORT=${PPROF_PORT:-25000}
 
 # Sets CLIENT_NODE (load-client) and SERVER_NODE (frontend).
@@ -27,6 +30,14 @@ nodes() {
   echo "server node (frontend):    $SERVER_NODE"
   if [ -z "$CLIENT_NODE" ] || [ -z "$SERVER_NODE" ] || [ "$CLIENT_NODE" = "$SERVER_NODE" ]; then
     echo "load-client and frontend must run on two different nodes" >&2
+    return 1
+  fi
+}
+
+# Fails with a hint unless `nodes` has set CLIENT_NODE and SERVER_NODE in this shell.
+need_nodes() {
+  if [ -z "${CLIENT_NODE:-}" ] || [ -z "${SERVER_NODE:-}" ]; then
+    echo "CLIENT_NODE and SERVER_NODE are not set in this shell: run nodes first" >&2
     return 1
   fi
 }
@@ -79,20 +90,54 @@ zt_patch() {
 
 # What is running: image digest and FIPS state per node, and the test env vars.
 zt_status() {
+  need_nodes || return 1
   oc -n ztunnel rollout status ds/ztunnel --timeout=5m >/dev/null || return 1
   local n p
   for n in "$CLIENT_NODE" "$SERVER_NODE"; do
     p=$(zt_pod "$n")
-    printf '%s  %s\n    image:    %s\n    fips.so:  %s mapping(s)\n' "$n" "$p" \
+    printf '%s  %s\n    image:    %s\n    restarts: %s\n    fips.so:  %s mapping(s)\n' "$n" "$p" \
       "$(oc -n ztunnel get pod "$p" -o jsonpath='{.status.containerStatuses[0].imageID}')" \
+      "$(oc -n ztunnel get pod "$p" -o jsonpath='{.status.containerStatuses[0].restartCount}')" \
       "$(fips_maps "$n")"
   done
   printf 'env: '
   oc -n ztunnel get ds ztunnel \
     -o jsonpath='{range .spec.template.spec.containers[0].env[*]}{.name}={.value}{"\n"}{end}' |
-    grep -E '^(POOL_MAX_STREAMS_PER_CONNECTION|ZTUNNEL_WORKER_THREADS|OPENSSL_FORCE_FIPS_MODE)=' |
+    grep -E '^(POOL_MAX_STREAMS_PER_CONNECTION|ZTUNNEL_WORKER_THREADS|OPENSSL_FORCE_FIPS_MODE|TLS12_ENABLED|COMPLIANCE_POLICY)=' |
     tr '\n' ' '
   echo
+}
+
+# Workload certificates held by each node's ztunnel, which fetched them from istiod
+# over TLS. zt_certs [lines-per-node]
+zt_certs() {
+  need_nodes || return 1
+  local n
+  for n in "$CLIENT_NODE" "$SERVER_NODE"; do
+    echo "== $n"
+    istioctl ztunnel-config certificates "$(zt_pod "$n")" -n ztunnel | head -n "${1:-8}"
+  done
+}
+
+# TLS, handshake or certificate errors logged by each node's ztunnel in the last
+# 15 minutes (or $1, e.g. 30m). No lines under a node means none.
+zt_tls_errors() {
+  need_nodes || return 1
+  local n
+  for n in "$CLIENT_NODE" "$SERVER_NODE"; do
+    echo "== $n"
+    oc -n ztunnel logs "$(zt_pod "$n")" --since="${1:-15m}" |
+      grep -iE 'tls|handshake|certificate' | grep -iE 'error|fail' | head
+  done
+}
+
+# "<pod>:<restartCount>" for both test nodes' ztunnels, to spot a restart during a run.
+zt_restarts() {
+  local n p
+  for n in "$CLIENT_NODE" "$SERVER_NODE"; do
+    p=$(zt_pod "$n")
+    printf '%s:%s ' "$p" "$(oc -n ztunnel get pod "$p" -o jsonpath='{.status.containerStatuses[0].restartCount}')"
+  done
 }
 
 # Runs churn.sh in load-client: churn <requests> <workers>
@@ -106,6 +151,7 @@ churn() {
 run_test() {
   local label=${1:?usage: run_test <label>}
   local out=$RESULTS/$label c0 s0 c1 s1 t0 secs pf prof monitor=0
+  need_nodes || return 1
   mkdir -p "$out"
   # Interactive bash announces background jobs: "[1] 1234" on stderr when they start
   # (silenced by the { … & } 2>/dev/null wrappers below) and "Done" when they end
@@ -117,6 +163,9 @@ run_test() {
   if [ "$(oc -n "$NS" get deploy loadgenerator -o jsonpath='{.spec.replicas}' 2>/dev/null)" != 0 ]; then
     echo "warning: loadgenerator is running; its traffic skews the results" >&2
   fi
+
+  local r0 r1
+  r0=$(zt_restarts)
 
   echo "== $label: warm-up"
   churn 50 0 >/dev/null
@@ -131,18 +180,27 @@ run_test() {
     printf "ztunnel CPU per request: client %.3f ms, server %.3f ms (%d requests, window %ds incl. ~10s idle)\n",
       (c1 - c0) * 1000 / n, (s1 - s0) * 1000 / n, n, t }' | tee "$out/cpu-per-request.txt"
 
-  echo "== $label: pass 2, $REQUESTS requests + $WORKERS concurrent loops, profiling client ztunnel"
-  { oc -n ztunnel port-forward "pod/$(zt_pod "$CLIENT_NODE")" "$PPROF_PORT:15000" >/dev/null 2>&1 & } 2>/dev/null
-  pf=$!
-  sleep 3
-  { curl -sS -o "$out/cpu-client-ztunnel.pb" \
-      "http://localhost:$PPROF_PORT/debug/pprof/profile?seconds=30&frequency=1000" 2>"$out/pprof.err" & } 2>/dev/null
-  prof=$!
-  churn "$REQUESTS" "$WORKERS" | tee "$out/latency-concurrent.txt"
-  wait "$prof" || echo "warning: profile capture failed: $(cat "$out/pprof.err")" >&2
-  kill "$pf" 2>/dev/null
-  wait "$pf" 2>/dev/null
-  ls -l "$out/cpu-client-ztunnel.pb"
+  if [ "$PROFILE" = 0 ]; then
+    echo "== $label: pass 2, $REQUESTS requests + $WORKERS concurrent loops (no profile: PROFILE=0)"
+    churn "$REQUESTS" "$WORKERS" | tee "$out/latency-concurrent.txt"
+  else
+    echo "== $label: pass 2, $REQUESTS requests + $WORKERS concurrent loops, profiling client ztunnel"
+    { oc -n ztunnel port-forward "pod/$(zt_pod "$CLIENT_NODE")" "$PPROF_PORT:15000" >/dev/null 2>&1 & } 2>/dev/null
+    pf=$!
+    sleep 3
+    { curl -sS -o "$out/cpu-client-ztunnel.pb" \
+        "http://localhost:$PPROF_PORT/debug/pprof/profile?seconds=30&frequency=1000" 2>"$out/pprof.err" & } 2>/dev/null
+    prof=$!
+    churn "$REQUESTS" "$WORKERS" | tee "$out/latency-concurrent.txt"
+    wait "$prof" || echo "warning: profile capture failed: $(cat "$out/pprof.err")" >&2
+    kill "$pf" 2>/dev/null
+    wait "$pf" 2>/dev/null
+    ls -l "$out/cpu-client-ztunnel.pb"
+  fi
   [ "$monitor" = 1 ] && set -m
+  r1=$(zt_restarts)
+  if [ "$r0" != "$r1" ]; then
+    echo "warning: a ztunnel restarted or was replaced during this run: before [$r0] after [$r1]" | tee "$out/restarted.txt" >&2
+  fi
   echo "== $label: done, results in $out"
 }
