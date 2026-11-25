@@ -92,14 +92,15 @@ zt_status() {
   local n p
   for n in "$CLIENT_NODE" "$SERVER_NODE"; do
     p=$(zt_pod "$n")
-    printf '%s  %s\n    image:    %s\n    fips.so:  %s mapping(s)\n' "$n" "$p" \
+    printf '%s  %s\n    image:    %s\n    restarts: %s\n    fips.so:  %s mapping(s)\n' "$n" "$p" \
       "$(oc -n ztunnel get pod "$p" -o jsonpath='{.status.containerStatuses[0].imageID}')" \
+      "$(oc -n ztunnel get pod "$p" -o jsonpath='{.status.containerStatuses[0].restartCount}')" \
       "$(fips_maps "$n")"
   done
   printf 'env: '
   oc -n ztunnel get ds ztunnel \
     -o jsonpath='{range .spec.template.spec.containers[0].env[*]}{.name}={.value}{"\n"}{end}' |
-    grep -E '^(POOL_MAX_STREAMS_PER_CONNECTION|ZTUNNEL_WORKER_THREADS|OPENSSL_FORCE_FIPS_MODE)=' |
+    grep -E '^(POOL_MAX_STREAMS_PER_CONNECTION|ZTUNNEL_WORKER_THREADS|OPENSSL_FORCE_FIPS_MODE|TLS12_ENABLED|COMPLIANCE_POLICY)=' |
     tr '\n' ' '
   echo
 }
@@ -127,6 +128,15 @@ zt_tls_errors() {
   done
 }
 
+# "<pod>:<restartCount>" for both test nodes' ztunnels, to spot a restart during a run.
+zt_restarts() {
+  local n p
+  for n in "$CLIENT_NODE" "$SERVER_NODE"; do
+    p=$(zt_pod "$n")
+    printf '%s:%s ' "$p" "$(oc -n ztunnel get pod "$p" -o jsonpath='{.status.containerStatuses[0].restartCount}')"
+  done
+}
+
 # Runs churn.sh in load-client: churn <requests> <workers>
 churn() {
   oc -n "$NS" exec -i load-client -- sh -s -- "$1" "$2" < "$D/churn.sh"
@@ -150,6 +160,9 @@ run_test() {
   if [ "$(oc -n "$NS" get deploy loadgenerator -o jsonpath='{.spec.replicas}' 2>/dev/null)" != 0 ]; then
     echo "warning: loadgenerator is running; its traffic skews the results" >&2
   fi
+
+  local r0 r1
+  r0=$(zt_restarts)
 
   echo "== $label: warm-up"
   churn 50 0 >/dev/null
@@ -177,5 +190,9 @@ run_test() {
   wait "$pf" 2>/dev/null
   ls -l "$out/cpu-client-ztunnel.pb"
   [ "$monitor" = 1 ] && set -m
+  r1=$(zt_restarts)
+  if [ "$r0" != "$r1" ]; then
+    echo "warning: a ztunnel restarted or was replaced during this run: before [$r0] after [$r1]" | tee "$out/restarted.txt" >&2
+  fi
   echo "== $label: done, results in $out"
 }
